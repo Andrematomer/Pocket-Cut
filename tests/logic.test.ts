@@ -1,0 +1,188 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { cropForAspect, resizeCrop, frameTransform, outputSize, rotateCrop, rotatedSize } from '../src/geometry.ts';
+import { layout, locate, planParts } from '../src/timeline.ts';
+import { timeStretch } from '../src/stretch.ts';
+import { emptyProject, type Clip } from '../src/types.ts';
+
+const close = (a: number, b: number, eps = 1e-6) => assert.ok(Math.abs(a - b) <= eps, `${a} !~ ${b}`);
+
+/** Where a point of the source frame ends up on the output canvas. */
+function map(sw: number, sh: number, o: Parameters<typeof frameTransform>[2], px: number, py: number) {
+  const t = frameTransform(sw, sh, o);
+  const x = px - sw / 2;
+  const y = py - sh / 2;
+  const c = Math.cos(t.angle);
+  const s = Math.sin(t.angle);
+  return { x: t.tx + t.scale * (x * c - y * s), y: t.ty + t.scale * (x * s + y * c) };
+}
+
+test('rotation 90 clockwise moves the source top-left to the top-right', () => {
+  // source 200x100, rotated frame is 100x200, output the same shape
+  const o = { rotation: 90 as const, crop: null, outW: 100, outH: 200, fit: 'contain' as const };
+  const tl = map(200, 100, o, 0, 0);
+  close(tl.x, 100);
+  close(tl.y, 0);
+  const br = map(200, 100, o, 200, 100);
+  close(br.x, 0);
+  close(br.y, 200);
+});
+
+test('crop maps the crop rectangle onto the whole canvas', () => {
+  const o = { rotation: 0 as const, crop: { x: 0.25, y: 0.5, w: 0.5, h: 0.25 }, outW: 200, outH: 100, fit: 'contain' as const };
+  // source 400x400 -> crop is x 100..300, y 200..300 -> 200x100 px, scale 1
+  const a = map(400, 400, o, 100, 200);
+  close(a.x, 0);
+  close(a.y, 0);
+  const b = map(400, 400, o, 300, 300);
+  close(b.x, 200);
+  close(b.y, 100);
+});
+
+test('contain letterboxes, cover fills', () => {
+  const contain = frameTransform(1920, 1080, { rotation: 0, crop: null, outW: 1080, outH: 1920, fit: 'contain' });
+  close(contain.dest.w, 1080);
+  close(contain.dest.h, 607.5);
+  const cover = frameTransform(1920, 1080, { rotation: 0, crop: null, outW: 1080, outH: 1920, fit: 'cover' });
+  close(cover.dest.h, 1920);
+  assert.ok(cover.dest.w > 1080);
+});
+
+test('rotateCrop cw then ccw is identity, and four cw turns return home', () => {
+  const c = { x: 0.1, y: 0.2, w: 0.3, h: 0.4 };
+  const back = rotateCrop(rotateCrop(c, 'cw'), 'ccw')!;
+  for (const k of ['x', 'y', 'w', 'h'] as const) close(back[k], c[k]);
+  let r: typeof c | null = c;
+  for (let i = 0; i < 4; i++) r = rotateCrop(r, 'cw');
+  for (const k of ['x', 'y', 'w', 'h'] as const) close(r![k], c[k]);
+});
+
+test('rotateCrop agrees with the pixel rotation', () => {
+  // 200x100 source, crop the left half -> after 90 cw the crop must be the top half of the 100x200 frame
+  const c = rotateCrop({ x: 0, y: 0, w: 0.5, h: 1 }, 'cw')!;
+  close(c.x, 0);
+  close(c.y, 0);
+  close(c.w, 1);
+  close(c.h, 0.5);
+});
+
+test('cropForAspect gives the requested shape, centered', () => {
+  const rw = 1920;
+  const rh = 1080;
+  const c = cropForAspect(rw, rh, 9 / 16);
+  close((c.w * rw) / (c.h * rh), 9 / 16);
+  close(c.x + c.w / 2, 0.5);
+  close(c.h, 1);
+  const tall = cropForAspect(1080, 1920, 1);
+  close((tall.w * 1080) / (tall.h * 1920), 1);
+  close(tall.w, 1);
+});
+
+test('rotatedSize swaps for 90/270', () => {
+  assert.deepEqual(rotatedSize(10, 20, 90), { w: 20, h: 10 });
+  assert.deepEqual(rotatedSize(10, 20, 180), { w: 10, h: 20 });
+});
+
+test('outputSize: auto follows the first clip, presets are even-sized', () => {
+  const p = emptyProject();
+  p.media.a = { id: 'a', name: 'a', duration: 10, width: 1920, height: 1080, hasAudio: true };
+  const clip: Clip = { id: 'c', mediaId: 'a', start: 0, end: 10, speed: 1, rotation: 90, crop: null, cropAspect: null, muted: false };
+  p.clips = [clip];
+  assert.deepEqual(outputSize(p), { w: 1080, h: 1920 });
+  p.settings.aspect = '4:5';
+  assert.deepEqual(outputSize(p), { w: 1080, h: 1350 });
+  p.settings.aspect = '16:9';
+  assert.deepEqual(outputSize(p), { w: 1920, h: 1080 });
+  p.settings.resolution = 720;
+  p.settings.aspect = '9:16';
+  assert.deepEqual(outputSize(p), { w: 720, h: 1280 });
+});
+
+test('layout and locate honour speed', () => {
+  const mk = (id: string, start: number, end: number, speed: number): Clip => ({ id, mediaId: 'a', start, end, speed, rotation: 0, crop: null, cropAspect: null, muted: false });
+  const l = layout([mk('1', 0, 10, 2), mk('2', 5, 8, 1)]);
+  assert.deepEqual(l.durations, [5, 3]);
+  close(l.total, 8);
+  assert.equal(locate(l, 4.9)!.index, 0);
+  const at = locate(l, 6)!;
+  assert.equal(at.index, 1);
+  close(at.local, 1);
+  assert.equal(locate(l, 99)!.index, 1);
+});
+
+test('planParts: fixed length, remainder last', () => {
+  const p = planParts(150, 60, false, 30);
+  assert.equal(p.length, 3);
+  assert.deepEqual(p.map((x) => x.end - x.start), [60, 60, 30]);
+  assert.equal(p[0]!.endFrame, p[1]!.startFrame); // no frame lost or doubled at the seams
+  assert.equal(p[2]!.endFrame, 150 * 30);
+});
+
+test('planParts: equal parts all stay under the limit', () => {
+  const p = planParts(130, 60, true, 30);
+  assert.equal(p.length, 3);
+  for (const x of p) assert.ok(x.end - x.start <= 60 + 1e-9);
+  close(p[0]!.end - p[0]!.start, 130 / 3, 0.04);
+  assert.equal(p[2]!.endFrame, 130 * 30);
+});
+
+test('planParts: short video is one file, exact multiple has no empty tail, off = one file', () => {
+  assert.equal(planParts(45, 60, false, 30).length, 1);
+  assert.equal(planParts(120, 60, false, 30).length, 2);
+  assert.equal(planParts(120.0000001, 60, false, 30).length, 2);
+  assert.equal(planParts(500, null, false, 30).length, 1);
+  assert.equal(planParts(0, 60, false, 30).length, 0);
+});
+
+/** frequency estimate from upward zero crossings */
+function freq(x: Float32Array, rate: number): number {
+  let z = 0;
+  for (let i = 1; i < x.length; i++) if (x[i - 1]! < 0 && x[i]! >= 0) z++;
+  return z / (x.length / rate);
+}
+
+const sine = (f: number, rate: number, secs: number) => {
+  const a = new Float32Array(Math.round(rate * secs));
+  for (let i = 0; i < a.length; i++) a[i] = 0.6 * Math.sin((2 * Math.PI * f * i) / rate);
+  return a;
+};
+
+test('timeStretch keeps pitch and scales length (2x faster, 0.5x slower)', () => {
+  const rate = 48000;
+  const input = [sine(440, rate, 3), sine(440, rate, 3)];
+  for (const speed of [2, 0.5, 1.5, 4]) {
+    const out = timeStretch(input, rate, speed);
+    close(out[0]!.length / rate, 3 / speed, 0.01);
+    const body = out[0]!.subarray(Math.round(rate * 0.1), out[0]!.length - Math.round(rate * 0.1));
+    const f = freq(body, rate);
+    assert.ok(Math.abs(f - 440) < 12, `speed ${speed}: ${f} Hz`);
+    // no big holes: every 50 ms window carries energy
+    const win = rate * 0.05;
+    for (let i = rate * 0.1; i + win < out[0]!.length - rate * 0.1; i += win) {
+      let e = 0;
+      for (let j = 0; j < win; j++) e += out[0]![i + j]! ** 2;
+      assert.ok(Math.sqrt(e / win) > 0.25, `speed ${speed}: dip at ${i / rate}s`);
+    }
+  }
+});
+
+test('timeStretch is a no-op at speed 1', () => {
+  const input = [sine(300, 48000, 0.5)];
+  assert.equal(timeStretch(input, 48000, 1), input);
+});
+
+test('resizeCrop keeps the opposite corner fixed and the aspect locked', () => {
+  const start = { x: 0.25, y: 0.25, w: 0.5, h: 0.5 };
+  const free = resizeCrop(start, 'br', 0.1, -0.1, null, 1000, 1000);
+  close(free.x, 0.25);
+  close(free.y, 0.25);
+  close(free.w, 0.6);
+  close(free.h, 0.4);
+  const locked = resizeCrop(start, 'tl', -0.1, 0, 1, 1000, 1000);
+  close(locked.x + locked.w, 0.75);
+  close(locked.y + locked.h, 0.75);
+  close((locked.w * 1000) / (locked.h * 1000), 1);
+  const edge = resizeCrop(start, 'br', 5, 5, 9 / 16, 1920, 1080);
+  assert.ok(edge.x + edge.w <= 1 + 1e-9 && edge.y + edge.h <= 1 + 1e-9);
+  close((edge.w * 1920) / (edge.h * 1080), 9 / 16, 1e-6);
+});
