@@ -1,9 +1,40 @@
-import { render } from 'preact';
+import { Component, render, type ComponentChildren } from 'preact';
 import './styles.css';
 import { toast } from './store.ts';
 import { App } from './ui/App.tsx';
 
-render(<App />, document.getElementById('app')!);
+/** If something in the UI throws, show it instead of a blank screen. */
+class Boundary extends Component<{ children: ComponentChildren }, { error: Error | null }> {
+  state = { error: null as Error | null };
+  componentDidCatch(error: Error) {
+    this.setState({ error });
+  }
+  render() {
+    if (!this.state.error) return this.props.children;
+    return (
+      <main class="fatal">
+        <h1>Something broke</h1>
+        <p>Pocket Cut is a work in progress. If you are testing it, send this text to the developer:</p>
+        <pre>
+          {navigator.userAgent}
+          {'\n\n'}
+          {String(this.state.error.stack || this.state.error.message || this.state.error).slice(0, 1500)}
+        </pre>
+        <button class="btn" onClick={() => location.reload()}>
+          Reload
+        </button>
+      </main>
+    );
+  }
+}
+
+render(
+  <Boundary>
+    <App />
+  </Boundary>,
+  document.getElementById('app')!,
+);
+document.getElementById('boot')?.remove();
 
 // Offline support. Only in the production build: the dev server must never be cached.
 if (import.meta.env.PROD && 'serviceWorker' in navigator) {

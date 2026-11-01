@@ -2,6 +2,7 @@ import { useEffect, useState } from 'preact/hooks';
 import { fmtBytes } from '../files.ts';
 import { storageEstimate } from '../persist.ts';
 import { discardProject, useStore } from '../store.ts';
+import { browserInfo, checkSupport } from '../support.ts';
 import { Sheet } from './Sheet.tsx';
 
 interface InstallEvent extends Event {
@@ -54,6 +55,19 @@ export function SettingsSheet({ onClose }: { onClose: () => void }) {
             </button>
           </div>
         )}
+      </section>
+
+      <section>
+        <h3>This device</h3>
+        <ul class="checks">
+          {checkSupport().rows.map((r) => (
+            <li key={r.name} class={r.ok ? 'yes' : 'no'}>
+              {r.ok ? '✓' : '✗'} {r.name}
+              {!r.ok && <small> {r.missing}</small>}
+            </li>
+          ))}
+        </ul>
+        <p class="hint small-print">{browserInfo()}</p>
       </section>
 
       <section>

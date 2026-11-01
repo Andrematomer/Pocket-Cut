@@ -45,6 +45,8 @@ export interface ExportSettings {
   resolution: 480 | 720 | 1080;
   fps: 24 | 30 | 60;
   quality: 'small' | 'medium' | 'high';
+  /** target video bitrate in Mbps; null = pick from the quality preset */
+  bitrateMbps: number | null;
   /** max seconds per output file, null = one single file */
   splitSeconds: number | null;
   /** true: make all parts the same length (all <= splitSeconds) */
@@ -66,6 +68,7 @@ export const DEFAULT_SETTINGS: ExportSettings = {
   resolution: 1080,
   fps: 30,
   quality: 'medium',
+  bitrateMbps: null,
   splitSeconds: 60,
   equalParts: false,
 };

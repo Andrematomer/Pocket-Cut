@@ -16,6 +16,7 @@ import {
   type InputVideoTrack,
   type WrappedCanvas,
 } from 'mediabunny';
+import { videoBitrate } from './bitrate.ts';
 import { drawFrame, outputSize } from './geometry.ts';
 import { timeStretch } from './stretch.ts';
 import { layout, locate, planParts, sourceTimeAt, type Layout, type Part } from './timeline.ts';
@@ -42,8 +43,6 @@ export interface ExportResult {
   parts: ExportedPart[];
   warnings: string[];
 }
-
-const BITS_PER_PIXEL = { small: 0.05, medium: 0.08, high: 0.12 } as const;
 
 interface Src {
   input: Input;
@@ -184,12 +183,16 @@ export async function exportProject(
   const parts = planParts(L.total, settings.splitSeconds, settings.equalParts, fps);
   if (parts.length === 0) throw new FriendlyError('Nothing to export: the clips are empty.');
   const { w: outW, h: outH } = outputSize(project);
-  const bitrate = Math.max(800_000, Math.round(outW * outH * fps * BITS_PER_PIXEL[settings.quality]));
+  const bitrate = videoBitrate(settings, outW, outH);
   const warnings: string[] = [];
 
   const codec = await getFirstEncodableVideoCodec(['avc', 'vp9'], { width: outW, height: outH, frameRate: fps, quality: new Quality({ bitrate }) });
   if (!codec) {
-    throw new FriendlyError(`This device can't encode video at ${outW}×${outH}. Try a lower resolution or 30 fps.`);
+    throw new FriendlyError(
+      settings.bitrateMbps != null
+        ? `This device can't encode video at ${outW}×${outH} with a ${(bitrate / 1e6).toFixed(1)} Mbps target. Try a lower bitrate, a lower resolution or 30 fps.`
+        : `This device can't encode video at ${outW}×${outH}. Try a lower resolution or 30 fps.`,
+    );
   }
   if (codec !== 'avc') warnings.push("This device can't make H.264 video, so the files use VP9. Some apps may not accept them.");
 

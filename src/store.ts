@@ -3,7 +3,7 @@ import { cropForAspect, rotateCrop, rotatedSize } from './geometry.ts';
 import { dropAllMedia, dropMedia, mediaBlob, newId, probeVideo, registerMedia, UnsupportedMediaError } from './media.ts';
 import { clearSaved, loadSaved, requestPersistence, saveMedia, saveProject } from './persist.ts';
 import { layout, MAX_SPEED, MIN_CLIP, MIN_SPEED, locate } from './timeline.ts';
-import { emptyProject, type Clip, type ExportSettings, type Project } from './types.ts';
+import { DEFAULT_SETTINGS, emptyProject, type Clip, type ExportSettings, type Project } from './types.ts';
 
 export type Tool = 'trim' | 'speed' | 'rotate' | 'crop' | 'sound' | 'clip';
 export type Sheet = 'none' | 'export' | 'settings';
@@ -201,7 +201,8 @@ export async function importFiles(files: File[]): Promise<void> {
 // ---------- saved project ----------
 
 export async function restore(): Promise<void> {
-  const saved = await loadSaved();
+  // IndexedDB can hang forever in some Safari modes (for example private browsing). Don't wait for it.
+  const saved = await Promise.race([loadSaved(), new Promise<null>((resolve) => setTimeout(() => resolve(null), 3000))]);
   if (saved && saved.project.clips.length > 0) {
     const usable = new Set<string>();
     for (const [id, m] of saved.media) {
@@ -209,7 +210,7 @@ export async function restore(): Promise<void> {
       usable.add(id);
     }
     const clips = saved.project.clips.filter((c) => usable.has(c.mediaId));
-    set({ project: { ...saved.project, clips }, selected: 0, ready: true });
+    set({ project: { ...saved.project, clips, settings: { ...DEFAULT_SETTINGS, ...saved.project.settings } }, selected: 0, ready: true });
   } else {
     set({ ready: true });
   }

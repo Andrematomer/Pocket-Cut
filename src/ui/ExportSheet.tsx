@@ -1,6 +1,7 @@
 import { useRef, useState } from 'preact/hooks';
 import { FriendlyError, exportProject, type ExportProgress, type ExportResult } from '../exporter.ts';
 import { engine } from '../engine.ts';
+import { MAX_MBPS, MIN_MBPS, estimateBytes, fmtMbps, videoBitrate } from '../bitrate.ts';
 import { fmtBytes, saveBlob, shareFiles } from '../files.ts';
 import { outputSize } from '../geometry.ts';
 import { blobFor, setSettings, useStore } from '../store.ts';
@@ -8,6 +9,14 @@ import { fmtTime, layout, planParts } from '../timeline.ts';
 import type { AspectChoice, ExportSettings } from '../types.ts';
 import { Download, Share } from './icons.tsx';
 import { Sheet } from './Sheet.tsx';
+
+const RATES: { label: string; value: number | null }[] = [
+  { label: 'Auto', value: null },
+  { label: '2 Mbps', value: 2 },
+  { label: '4 Mbps', value: 4 },
+  { label: '8 Mbps', value: 8 },
+  { label: '12 Mbps', value: 12 },
+];
 
 const SPLITS: { label: string; value: number | null }[] = [
   { label: 'Off', value: null },
@@ -34,6 +43,7 @@ export function ExportSheet({ onClose }: { onClose: () => void }) {
   const project = useStore((s) => s.project);
   const [phase, setPhase] = useState<Phase>({ name: 'setup' });
   const [custom, setCustom] = useState(false);
+  const [customRate, setCustomRate] = useState(false);
   const abort = useRef<AbortController | null>(null);
   const [note, setNote] = useState('');
 
@@ -42,6 +52,10 @@ export function ExportSheet({ onClose }: { onClose: () => void }) {
   const parts = planParts(total, s.splitSeconds, s.equalParts, s.fps);
   const size = outputSize(project);
   const isCustomValue = s.splitSeconds !== null && !SPLITS.some((x) => x.value === s.splitSeconds);
+  const rateIsCustom = s.bitrateMbps != null && !RATES.some((x) => x.value === s.bitrateMbps);
+  const vbps = videoBitrate(s, size.w, size.h);
+  const withSound = project.clips.some((c) => !c.muted && project.media[c.mediaId]?.hasAudio);
+  const longest = parts.reduce((m, p) => Math.max(m, p.end - p.start), 0);
 
   const run = async () => {
     engine.pause();
@@ -141,10 +155,47 @@ export function ExportSheet({ onClose }: { onClose: () => void }) {
               ]}
             />
             <Chips<ExportSettings['fps']> label="Frame rate" value={s.fps} onPick={(v) => setN({ fps: v })} options={[{ label: '24 fps', value: 24 }, { label: '30 fps', value: 30 }, { label: '60 fps', value: 60 }]} />
-            <Chips<ExportSettings['quality']> label="Quality" value={s.quality} onPick={(v) => setN({ quality: v })} options={[{ label: 'Small file', value: 'small' }, { label: 'Balanced', value: 'medium' }, { label: 'Best', value: 'high' }]} />
+            {s.bitrateMbps === null && (
+              <Chips<ExportSettings['quality']> label="Quality" value={s.quality} onPick={(v) => setN({ quality: v })} options={[{ label: 'Small file', value: 'small' }, { label: 'Balanced', value: 'medium' }, { label: 'Best', value: 'high' }]} />
+            )}
+          </section>
+
+          <section>
+            <h3>Video bitrate</h3>
+            <div class="chips" role="group" aria-label="Target video bitrate">
+              {RATES.map((o) => (
+                <button key={o.label} class={`chip num ${!customRate && !rateIsCustom && s.bitrateMbps === o.value ? 'on' : ''}`} onClick={() => (setCustomRate(false), setN({ bitrateMbps: o.value }))}>
+                  {o.label}
+                </button>
+              ))}
+              <button class={`chip ${customRate || rateIsCustom ? 'on' : ''}`} onClick={() => (setCustomRate(true), setN({ bitrateMbps: s.bitrateMbps ?? Math.round((vbps / 1e6) * 2) / 2 }))}>
+                Custom
+              </button>
+            </div>
+            {(customRate || rateIsCustom) && (
+              <label class="field">
+                Target in Mbps
+                <input
+                  class="num"
+                  type="number"
+                  inputMode="decimal"
+                  min={MIN_MBPS}
+                  max={MAX_MBPS}
+                  step={0.5}
+                  value={s.bitrateMbps ?? ''}
+                  onInput={(e) => {
+                    const v = Number((e.currentTarget as HTMLInputElement).value);
+                    if (v > 0) setN({ bitrateMbps: Math.min(MAX_MBPS, Math.max(MIN_MBPS, v)) });
+                  }}
+                />
+              </label>
+            )}
             <p class="hint num">
-              {size.w}×{size.h}, MP4
+              {size.w}×{size.h}, MP4 · {fmtMbps(vbps)}
+              {s.bitrateMbps === null ? ' (from quality)' : ' target'}
+              {longest > 0 && ` · up to about ${fmtBytes(estimateBytes(vbps, longest, withSound))}${parts.length > 1 ? ' per file' : ''}`}
             </p>
+            <p class="hint">This is a target. Simple pictures with little motion usually come out smaller, and very busy ones can run a bit over.</p>
           </section>
 
           <button class="cta" onClick={run} disabled={parts.length === 0}>

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { cropForAspect, resizeCrop, frameTransform, outputSize, rotateCrop, rotatedSize } from '../src/geometry.ts';
 import { layout, locate, planParts } from '../src/timeline.ts';
 import { timeStretch } from '../src/stretch.ts';
+import { MAX_MBPS, MIN_MBPS, autoBitrate, estimateBytes, fmtMbps, videoBitrate } from '../src/bitrate.ts';
 import { emptyProject, type Clip } from '../src/types.ts';
 
 const close = (a: number, b: number, eps = 1e-6) => assert.ok(Math.abs(a - b) <= eps, `${a} !~ ${b}`);
@@ -185,4 +186,24 @@ test('resizeCrop keeps the opposite corner fixed and the aspect locked', () => {
   const edge = resizeCrop(start, 'br', 5, 5, 9 / 16, 1920, 1080);
   assert.ok(edge.x + edge.w <= 1 + 1e-9 && edge.y + edge.h <= 1 + 1e-9);
   close((edge.w * 1920) / (edge.h * 1080), 9 / 16, 1e-6);
+});
+
+test('bitrate: a target overrides the quality preset, is clamped, and null falls back to auto', () => {
+  const base = { quality: 'medium' as const, fps: 30 as const };
+  assert.equal(videoBitrate({ ...base, bitrateMbps: 4 }, 1080, 1920), 4_000_000);
+  assert.equal(videoBitrate({ ...base, bitrateMbps: 2.5 }, 480, 854), 2_500_000);
+  assert.equal(videoBitrate({ ...base, bitrateMbps: 9999 }, 1080, 1920), MAX_MBPS * 1_000_000);
+  assert.equal(videoBitrate({ ...base, bitrateMbps: 0.01 }, 1080, 1920), MIN_MBPS * 1_000_000);
+  assert.equal(videoBitrate({ ...base, bitrateMbps: null }, 1080, 1920), autoBitrate(1080, 1920, 30, 'medium'));
+  assert.ok(autoBitrate(1080, 1920, 30, 'high') > autoBitrate(1080, 1920, 30, 'small'));
+  assert.ok(autoBitrate(64, 64, 30, 'small') >= 800_000);
+});
+
+test('bitrate: size estimate and label', () => {
+  // 4 Mbps video + 128 kbps audio for 60 s
+  assert.equal(estimateBytes(4_000_000, 60, true), Math.round((4_128_000 * 60) / 8));
+  assert.equal(estimateBytes(4_000_000, 60, false), 30_000_000);
+  assert.equal(fmtMbps(4_000_000), '4 Mbps');
+  assert.equal(fmtMbps(2_500_000), '2.5 Mbps');
+  assert.equal(fmtMbps(12_000_000), '12 Mbps');
 });

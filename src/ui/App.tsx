@@ -7,7 +7,10 @@ import { Gear, Plus } from './icons.tsx';
 import { Preview, Transport } from './Preview.tsx';
 import { SettingsSheet } from './SettingsSheet.tsx';
 import { Strip } from './Strip.tsx';
+import { browserInfo, checkSupport } from '../support.ts';
 import { Tools } from './Tools.tsx';
+
+const support = checkSupport();
 
 export function App() {
   const ready = useStore((s) => s.ready);
@@ -31,7 +34,7 @@ export function App() {
         {hasClips ? (
           <input class="title" value={name} onInput={(e) => setName((e.currentTarget as HTMLInputElement).value)} aria-label="Project name" maxLength={60} />
         ) : (
-          <span class="title plain">Video editor</span>
+          <span class="title plain">Pocket Cut</span>
         )}
         <button class="icon" onClick={() => set({ sheet: 'settings' })} aria-label="About and storage">
           <Gear />
@@ -43,7 +46,9 @@ export function App() {
 
       {busy && <div class="busy">{busy}</div>}
 
-      {!ready ? null : hasClips ? (
+      {!support.ok ? (
+        <Unsupported />
+      ) : !ready ? null : hasClips ? (
         <main class="editor">
           <Preview />
           <Transport />
@@ -89,6 +94,24 @@ function Empty() {
       <button class="cta" onClick={pickVideos}>
         <Plus /> Choose videos
       </button>
+      <p class="wip">Work in progress. Not ready to use yet: things may break, so keep your original videos.</p>
+    </main>
+  );
+}
+
+function Unsupported() {
+  return (
+    <main class="fatal">
+      <h1>This browser can't run Pocket Cut yet</h1>
+      <p>It needs video encoding (WebCodecs). On iPhone and iPad that means a recent iOS (16.4 or newer) with Safari. On Android, use a recent Chrome.</p>
+      <ul class="checks">
+        {support.rows.map((r) => (
+          <li key={r.name} class={r.ok ? 'yes' : 'no'}>
+            {r.ok ? '✓' : '✗'} {r.name}
+          </li>
+        ))}
+      </ul>
+      <pre>{browserInfo()}</pre>
     </main>
   );
 }

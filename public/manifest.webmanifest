@@ -1,7 +1,7 @@
 {
-  "name": "Video Editor",
-  "short_name": "Video Editor",
-  "description": "Trim, rotate, crop, speed up and join videos on your phone. Works offline.",
+  "name": "Pocket Cut",
+  "short_name": "Pocket Cut",
+  "description": "Work in progress: trim, rotate, crop, speed up and join videos on your phone. Works offline.",
   "id": "./",
   "start_url": "./",
   "scope": "./",
