@@ -102,3 +102,19 @@ export function timeStretch(input: Float32Array[], sampleRate: number, speed: nu
     return res;
   });
 }
+
+/** Plays the sound faster or slower like a tape: the pitch follows the speed. Linear interpolation. */
+export function resample(channels: Float32Array[], speed: number): Float32Array[] {
+  if (Math.abs(speed - 1) < 1e-9) return channels;
+  return channels.map((x) => {
+    const n = Math.max(1, Math.floor(x.length / speed));
+    const out = new Float32Array(n);
+    for (let i = 0; i < n; i++) {
+      const p = i * speed;
+      const k = Math.floor(p);
+      const f = p - k;
+      out[i] = (x[k] ?? 0) * (1 - f) + (x[k + 1] ?? x[k] ?? 0) * f;
+    }
+    return out;
+  });
+}

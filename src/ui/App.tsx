@@ -3,7 +3,7 @@ import { pickVideos } from '../files.ts';
 import { engine } from '../engine.ts';
 import { restore, set, setName, useStore } from '../store.ts';
 import { ExportSheet } from './ExportSheet.tsx';
-import { Gear, Plus } from './icons.tsx';
+import { Info, Plus } from './icons.tsx';
 import { Preview, Transport } from './Preview.tsx';
 import { SettingsSheet } from './SettingsSheet.tsx';
 import { Strip } from './Strip.tsx';
@@ -37,7 +37,7 @@ export function App() {
           <span class="title plain">Pocket Cut</span>
         )}
         <button class="icon" onClick={() => set({ sheet: 'settings' })} aria-label="About and storage">
-          <Gear />
+          <Info />
         </button>
         <button class="export" disabled={!hasClips} onClick={() => set({ sheet: 'export' })}>
           Export
@@ -94,7 +94,6 @@ function Empty() {
       <button class="cta" onClick={pickVideos}>
         <Plus /> Choose videos
       </button>
-      <p class="wip">Work in progress. Not ready to use yet: things may break, so keep your original videos.</p>
     </main>
   );
 }

@@ -27,7 +27,7 @@ export interface State {
 }
 
 let state: State = {
-  project: emptyProject(),
+  project: freshProject(),
   selected: 0,
   tool: 'trim',
   playhead: 0,
@@ -64,6 +64,31 @@ export function toast(text: string, action?: Toast['action'], ms = 5000): void {
   set({ toast: { text, action } });
   clearTimeout(toastTimer);
   toastTimer = window.setTimeout(() => set({ toast: null }), ms);
+}
+
+// ---------- remembered export settings ----------
+
+/** The export settings the person used last, or the defaults. Never throws (storage can be blocked). */
+export function loadPrefs(): ExportSettings {
+  try {
+    const raw = localStorage.getItem('pocket-cut:export-settings');
+    if (raw) return { ...DEFAULT_SETTINGS, ...(JSON.parse(raw) as Partial<ExportSettings>) };
+  } catch {
+    /* storage unavailable or corrupt: use defaults */
+  }
+  return { ...DEFAULT_SETTINGS };
+}
+
+function savePrefs(s: ExportSettings): void {
+  try {
+    localStorage.setItem('pocket-cut:export-settings', JSON.stringify(s));
+  } catch {
+    /* ignore */
+  }
+}
+
+function freshProject(): Project {
+  return { ...emptyProject(), settings: loadPrefs() };
 }
 
 // ---------- project edits ----------
@@ -160,6 +185,7 @@ export function splitAtPlayhead(): boolean {
 
 export function setSettings(patch: Partial<ExportSettings>): void {
   edit((p) => ({ ...p, settings: { ...p.settings, ...patch } }));
+  savePrefs(state.project.settings);
 }
 
 export function setName(name: string): void {
@@ -182,7 +208,7 @@ export async function importFiles(files: File[]): Promise<void> {
       const { info, thumb } = await probeVideo(file, id);
       registerMedia(id, file, thumb);
       media[id] = info;
-      added.push({ id: newId(), mediaId: id, start: 0, end: info.duration, speed: 1, rotation: 0, crop: null, cropAspect: null, muted: false });
+      added.push({ id: newId(), mediaId: id, start: 0, end: info.duration, speed: 1, rotation: 0, crop: null, cropAspect: null, muted: false, fit: 'contain', keepPitch: true });
       void saveMedia(id, { blob: file, name: file.name, thumb });
     } catch (e) {
       failed++;
@@ -209,8 +235,12 @@ export async function restore(): Promise<void> {
       registerMedia(id, m.blob, m.thumb);
       usable.add(id);
     }
-    const clips = saved.project.clips.filter((c) => usable.has(c.mediaId));
-    set({ project: { ...saved.project, clips, settings: { ...DEFAULT_SETTINGS, ...saved.project.settings } }, selected: 0, ready: true });
+    // older saves kept "fit" in the export settings and had no pitch option: carry it over per clip
+    const oldFit = (saved.project.settings as { fit?: Clip['fit'] } | undefined)?.fit === 'cover' ? 'cover' : 'contain';
+    const clips = saved.project.clips
+      .filter((c) => usable.has(c.mediaId))
+      .map((c) => ({ ...c, fit: c.fit ?? oldFit, keepPitch: c.keepPitch ?? true }));
+    set({ project: { ...saved.project, clips, settings: loadPrefs() }, selected: 0, ready: true });
   } else {
     set({ ready: true });
   }
@@ -219,7 +249,7 @@ export async function restore(): Promise<void> {
 export async function discardProject(): Promise<void> {
   dropAllMedia();
   await clearSaved();
-  set({ project: emptyProject(), selected: 0, playhead: 0, playing: false, sheet: 'none', tool: 'trim' });
+  set({ project: freshProject(), selected: 0, playhead: 0, playing: false, sheet: 'none', tool: 'trim' });
 }
 
 let saveTimer = 0;

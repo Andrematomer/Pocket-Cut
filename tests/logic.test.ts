@@ -2,8 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { cropForAspect, resizeCrop, frameTransform, outputSize, rotateCrop, rotatedSize } from '../src/geometry.ts';
 import { layout, locate, planParts } from '../src/timeline.ts';
-import { timeStretch } from '../src/stretch.ts';
-import { MAX_MBPS, MIN_MBPS, autoBitrate, estimateBytes, fmtMbps, videoBitrate } from '../src/bitrate.ts';
+import { resample, timeStretch } from '../src/stretch.ts';
+import { MAX_MBPS, MIN_MBPS, RATE_STOPS, autoBitrate, estimateBytes, fmtMbps, videoBitrate } from '../src/bitrate.ts';
 import { emptyProject, type Clip } from '../src/types.ts';
 
 const close = (a: number, b: number, eps = 1e-6) => assert.ok(Math.abs(a - b) <= eps, `${a} !~ ${b}`);
@@ -87,7 +87,7 @@ test('rotatedSize swaps for 90/270', () => {
 test('outputSize: auto follows the first clip, presets are even-sized', () => {
   const p = emptyProject();
   p.media.a = { id: 'a', name: 'a', duration: 10, width: 1920, height: 1080, hasAudio: true };
-  const clip: Clip = { id: 'c', mediaId: 'a', start: 0, end: 10, speed: 1, rotation: 90, crop: null, cropAspect: null, muted: false };
+  const clip: Clip = { id: 'c', mediaId: 'a', start: 0, end: 10, speed: 1, rotation: 90, crop: null, cropAspect: null, muted: false, fit: 'contain', keepPitch: true };
   p.clips = [clip];
   assert.deepEqual(outputSize(p), { w: 1080, h: 1920 });
   p.settings.aspect = '4:5';
@@ -100,7 +100,7 @@ test('outputSize: auto follows the first clip, presets are even-sized', () => {
 });
 
 test('layout and locate honour speed', () => {
-  const mk = (id: string, start: number, end: number, speed: number): Clip => ({ id, mediaId: 'a', start, end, speed, rotation: 0, crop: null, cropAspect: null, muted: false });
+  const mk = (id: string, start: number, end: number, speed: number): Clip => ({ id, mediaId: 'a', start, end, speed, rotation: 0, crop: null, cropAspect: null, muted: false, fit: 'contain', keepPitch: true });
   const l = layout([mk('1', 0, 10, 2), mk('2', 5, 8, 1)]);
   assert.deepEqual(l.durations, [5, 3]);
   close(l.total, 8);
@@ -206,4 +206,25 @@ test('bitrate: size estimate and label', () => {
   assert.equal(fmtMbps(4_000_000), '4 Mbps');
   assert.equal(fmtMbps(2_500_000), '2.5 Mbps');
   assert.equal(fmtMbps(12_000_000), '12 Mbps');
+});
+
+test('resample: pitch follows speed, length scales, speed 1 is a no-op', () => {
+  const rate = 48000;
+  const input = [sine(440, rate, 2)];
+  const out = resample(input, 2);
+  close(out[0]!.length / rate, 1, 0.01);
+  const f = freq(out[0]!, rate);
+  assert.ok(Math.abs(f - 880) < 20, `${f} Hz`);
+  assert.equal(resample(input, 1), input);
+});
+
+test('bitrate slider stops start at 1 Mbps, rise, and are inside the limits', () => {
+  assert.equal(RATE_STOPS[0], 1);
+  assert.equal(MIN_MBPS, 1);
+  for (let i = 1; i < RATE_STOPS.length; i++) assert.ok(RATE_STOPS[i]! > RATE_STOPS[i - 1]!);
+  assert.ok(RATE_STOPS[RATE_STOPS.length - 1]! <= MAX_MBPS);
+});
+
+test('split is off by default', () => {
+  assert.equal(emptyProject().settings.splitSeconds, null);
 });

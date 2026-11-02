@@ -1,12 +1,15 @@
 import type { ExportSettings } from './types.ts';
 
 /** Target video bitrate limits (megabits per second) that the editor accepts. */
-export const MIN_MBPS = 0.3;
+export const MIN_MBPS = 1;
 export const MAX_MBPS = 50;
 export const AUDIO_BPS = 128_000;
 
 /** Bits per pixel per frame for the three quality presets (used when no target bitrate is set). */
 const BITS_PER_PIXEL = { small: 0.05, medium: 0.08, high: 0.12 } as const;
+
+/** Stops of the bitrate slider (Mbps). The slider snaps to these. */
+export const RATE_STOPS = [1, 1.5, 2, 3, 4, 5, 6, 8, 10, 12, 16, 20] as const;
 
 export const clampMbps = (m: number): number => Math.min(MAX_MBPS, Math.max(MIN_MBPS, m));
 

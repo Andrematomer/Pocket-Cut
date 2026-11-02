@@ -33,14 +33,16 @@ export interface Clip {
   /** aspect (w/h) the crop is locked to, null = free */
   cropAspect: number | null;
   muted: boolean;
+  /** how the clip sits in the output when its shape differs: bars around it, or fill and trim the edges */
+  fit: 'contain' | 'cover';
+  /** true: sound keeps its pitch at any speed; false: pitch follows the speed like a tape */
+  keepPitch: boolean;
 }
 
 export type AspectChoice = 'auto' | '9:16' | '4:5' | '1:1' | '16:9';
 
 export interface ExportSettings {
   aspect: AspectChoice;
-  /** how a clip is placed when its shape differs from the output shape */
-  fit: 'contain' | 'cover';
   /** length of the shorter output side in pixels */
   resolution: 480 | 720 | 1080;
   fps: 24 | 30 | 60;
@@ -64,12 +66,11 @@ export interface Project {
 
 export const DEFAULT_SETTINGS: ExportSettings = {
   aspect: 'auto',
-  fit: 'contain',
   resolution: 1080,
   fps: 30,
   quality: 'medium',
   bitrateMbps: null,
-  splitSeconds: 60,
+  splitSeconds: null,
   equalParts: false,
 };
 

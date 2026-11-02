@@ -18,7 +18,8 @@ import {
 } from 'mediabunny';
 import { videoBitrate } from './bitrate.ts';
 import { drawFrame, outputSize } from './geometry.ts';
-import { timeStretch } from './stretch.ts';
+import { resample, timeStretch } from './stretch.ts';
+import { keepAwake } from './wake.ts';
 import { layout, locate, planParts, sourceTimeAt, type Layout, type Part } from './timeline.ts';
 import type { Clip, Project } from './types.ts';
 
@@ -150,7 +151,7 @@ async function renderPartAudio(
         if (n > 0) chans[c]!.set(data.subarray(from, from + n), to);
       }
     }
-    const stretched = timeStretch(chans, rate, clip.speed);
+    const stretched = clip.keepPitch ? timeStretch(chans, rate, clip.speed) : resample(chans, clip.speed);
     const ab = new AudioBuffer({ length: stretched[0]!.length, numberOfChannels: chCount, sampleRate: rate });
     stretched.forEach((data, c) => ab.copyToChannel(data as Float32Array<ArrayBuffer>, c));
     const node = ctx.createBufferSource();
@@ -205,12 +206,7 @@ export async function exportProject(
   }
 
   const srcs = new Map<string, Src>();
-  let wake: WakeLockSentinel | null = null;
-  try {
-    wake = (await navigator.wakeLock?.request('screen').catch(() => null)) ?? null;
-  } catch {
-    wake = null;
-  }
+  const wake = await keepAwake().catch(() => null);
 
   const canvas = document.createElement('canvas');
   canvas.width = outW;
@@ -266,7 +262,7 @@ export async function exportProject(
           }
           const f = await reader.r.at(srcT);
           if (f) {
-            drawFrame(ctx, f.canvas, f.canvas.width, f.canvas.height, { rotation: clip.rotation, crop: clip.crop, outW, outH, fit: settings.fit });
+            drawFrame(ctx, f.canvas, f.canvas.width, f.canvas.height, { rotation: clip.rotation, crop: clip.crop, outW, outH, fit: clip.fit });
           } else {
             ctx.fillStyle = '#000';
             ctx.fillRect(0, 0, outW, outH);

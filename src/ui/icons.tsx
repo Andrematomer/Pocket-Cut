@@ -88,10 +88,11 @@ export const Right = () => (
     <path d="M10 6l6 6-6 6" />
   </I>
 );
-export const Gear = () => (
+export const Info = () => (
   <I>
-    <circle cx="12" cy="12" r="3" />
-    <path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1" />
+    <circle cx="12" cy="12" r="9" />
+    <path d="M12 11v6" stroke-width="2.2" />
+    <circle cx="12" cy="7.6" r="0.6" fill="currentColor" stroke-width="1.4" />
   </I>
 );
 export const Share = () => (
@@ -107,5 +108,10 @@ export const Download = () => (
 export const Close = () => (
   <I>
     <path d="M6 6l12 12M18 6L6 18" />
+  </I>
+);
+export const Check = () => (
+  <I size={20}>
+    <path d="M5 12.5l4.5 4.5L19 7.5" stroke-width="2.4" />
   </I>
 );

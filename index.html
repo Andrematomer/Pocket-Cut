@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>Pocket Cut</title>
-    <meta name="description" content="Work in progress: trim, rotate, crop, speed up and join videos on your phone, then export in fixed-length parts. Works offline, nothing is uploaded." />
+    <meta name="description" content="Trim, rotate, crop, speed up and join videos on your phone, then export in fixed-length parts. Works offline, nothing is uploaded." />
     <meta name="theme-color" content="#12161a" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -68,7 +68,7 @@
         function show() {
           var b = document.getElementById('boot');
           if (!b) return;
-          b.innerHTML = '<h2>Pocket Cut could not start</h2><p>This app is a work in progress. If you are testing it, send this text to the developer:</p><pre></pre>';
+          b.innerHTML = '<h2>Pocket Cut could not start</h2><p>If this keeps happening, send this text to the developer:</p><pre></pre>';
           b.querySelector('pre').textContent = navigator.userAgent + '\n\n' + (problems.join('\n') || 'No error was reported. The app script did not finish starting.');
         }
         window.__pocketCutBootFailed = show;

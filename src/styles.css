@@ -193,8 +193,14 @@ button:disabled {
 .crop-rect {
   position: absolute;
   border: 2px solid var(--accent);
-  box-shadow: 0 0 0 9999px rgba(10, 13, 16, 0.62);
   touch-action: none;
+  will-change: transform, width, height;
+  box-sizing: border-box;
+}
+.dim {
+  position: absolute;
+  background: rgba(10, 13, 16, 0.62);
+  pointer-events: none;
 }
 .crop-rect .grid {
   position: absolute;
@@ -507,6 +513,20 @@ input[type='range']::-moz-range-thumb {
   position: relative;
   height: 56px;
   touch-action: none;
+  /* room on both sides so grabbing an end handle never starts next to the screen edge (iOS back-swipe) */
+  padding: 0 28px;
+}
+.trim-track {
+  position: relative;
+  height: 100%;
+}
+.trim.fine .trim-grip {
+  background: #fff;
+  box-shadow: 0 0 0 3px var(--accent);
+}
+.trim-hint {
+  margin: 4px 0 0;
+  text-align: center;
 }
 .trim-bar {
   position: absolute;
@@ -665,7 +685,7 @@ input[type='range']::-moz-range-thumb {
   border-radius: 4px;
   position: relative;
 }
-.plan-bar i:last-child:not(:only-child) {
+.plan-bar i.rem {
   background: repeating-linear-gradient(135deg, var(--accent) 0 6px, #c9a53b 6px 12px);
 }
 
@@ -813,9 +833,40 @@ input[type='range']::-moz-range-thumb {
   user-select: text;
 }
 
-.empty .wip {
-  font-size: 13.5px;
+
+/* export: bitrate slider and feedback */
+.rate-now {
+  float: right;
   color: var(--accent);
-  border-left: 3px solid var(--accent);
-  padding-left: 10px;
+  font-weight: 700;
+}
+.ticks {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--muted, #8b96a1);
+  margin-top: -6px;
+}
+.results li.saved {
+  opacity: 0.85;
+}
+.btn.done {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.ok {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(240, 198, 74, 0.14);
+  border: 1px solid var(--accent);
+  font-size: 14px;
+}
+.cta.again {
+  background: var(--raised);
+  color: var(--text);
+  border: 1px solid var(--line);
 }

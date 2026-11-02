@@ -31,13 +31,13 @@ After the first visit it works with no connection.
 | | |
 |---|---|
 | Trim | Drag the ends of the bar, or set start/end at the playhead. Cut a clip in two. |
-| Speed | 0.25× to 4×. The sound keeps its pitch. |
+| Speed | 0.25× to 4×. The sound keeps its pitch, or follows the speed if you prefer. |
 | Rotate | 90° steps. |
 | Crop | Free, or locked to 9:16, 4:5, 1:1, 16:9. |
 | Join | Add several videos, reorder, duplicate, remove. |
-| Export | MP4, 480p / 720p / 1080p, 24 / 30 / 60 fps. Choose the shape (9:16, 4:5, 1:1, 16:9 or follow the first clip) and whether pictures fit with bars or fill the frame. |
-| Bitrate | A quality preset, or a **target video bitrate** (2 / 4 / 8 / 12 Mbps or your own number), with a size estimate. The target is an average the encoder aims for: simple pictures usually come out smaller. |
-| **Split** | Off, 15 s, 30 s, 60 s or a custom length. Optionally make all parts the same length. Parts are cut on exact frame boundaries, so nothing is lost or repeated at the seams. |
+| Export | MP4, 480p / 720p / 1080p, 24 / 30 / 60 fps. Choose the shape (9:16, 4:5, 1:1, 16:9 or follow the first clip) . Per clip: fit with bars or fill the frame, and keep or follow pitch when changing speed. Your last export settings are remembered. |
+| Bitrate | A quality preset, or a **target video bitrate** slider (1 to 20 Mbps), with a size estimate. The target is an average the encoder aims for: simple pictures usually come out smaller. |
+| **Split** | Off (default), 15 s, 30 s, 60 s or a custom length. Optionally make all parts the same length. Parts are cut on exact frame boundaries, so nothing is lost or repeated at the seams. |
 
 Your last project (with the original videos) is kept on the device until you delete it in the settings.
 

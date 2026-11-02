@@ -111,37 +111,68 @@ export function Preview() {
 
 type Corner = 'tl' | 'tr' | 'bl' | 'br';
 
+/**
+ * Crop box. While a finger is down the box is moved straight in the DOM (no store update, no
+ * re-render, no canvas redraw), so it follows the finger smoothly. The result is saved on release.
+ */
 function CropBox({ boxW, boxH }: { boxW: number; boxH: number }) {
   const project = useStore((s) => s.project);
   const selected = useStore((s) => s.selected);
   const clip = project.clips[selected]!;
   const media = project.media[clip.mediaId]!;
   const crop: Crop = clip.crop ?? FULL_CROP;
-  const drag = useRef<{ mode: Corner | 'move'; x: number; y: number; crop: Crop } | null>(null);
+  const drag = useRef<{ mode: Corner | 'move'; id: number; x: number; y: number; crop: Crop; live: Crop } | null>(null);
+  const els = useRef<Record<'rect' | 't' | 'b' | 'l' | 'r', HTMLDivElement | null>>({ rect: null, t: null, b: null, l: null, r: null });
   const r = rotatedSize(media.width, media.height, clip.rotation);
+
+  const paint = (c: Crop) => {
+    const e = els.current;
+    const x = c.x * boxW;
+    const y = c.y * boxH;
+    const w = c.w * boxW;
+    const h = c.h * boxH;
+    if (e.rect) e.rect.style.transform = `translate(${x}px, ${y}px)`, (e.rect.style.width = `${w}px`), (e.rect.style.height = `${h}px`);
+    if (e.t) e.t.style.height = `${y}px`;
+    if (e.b) e.b.style.height = `${Math.max(0, boxH - y - h)}px`;
+    if (e.l) (e.l.style.top = `${y}px`), (e.l.style.height = `${h}px`), (e.l.style.width = `${x}px`);
+    if (e.r) (e.r.style.top = `${y}px`), (e.r.style.height = `${h}px`), (e.r.style.width = `${Math.max(0, boxW - x - w)}px`);
+  };
 
   const down = (mode: Corner | 'move') => (e: PointerEvent) => {
     e.preventDefault();
     e.stopPropagation();
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-    drag.current = { mode, x: e.clientX, y: e.clientY, crop };
+    drag.current = { mode, id: e.pointerId, x: e.clientX, y: e.clientY, crop, live: crop };
   };
   const move = (e: PointerEvent) => {
     const d = drag.current;
-    if (!d) return;
+    if (!d || e.pointerId !== d.id) return;
     const dx = (e.clientX - d.x) / boxW;
     const dy = (e.clientY - d.y) / boxH;
-    const next = d.mode === 'move' ? clampCrop({ ...d.crop, x: d.crop.x + dx, y: d.crop.y + dy }) : resizeCrop(d.crop, d.mode, dx, dy, clip.cropAspect, r.w, r.h);
-    updateClip(selected, { crop: next });
+    d.live = d.mode === 'move' ? clampCrop({ ...d.crop, x: d.crop.x + dx, y: d.crop.y + dy }) : resizeCrop(d.crop, d.mode, dx, dy, clip.cropAspect, r.w, r.h);
+    paint(d.live);
   };
-  const up = () => {
+  const up = (e: PointerEvent) => {
+    const d = drag.current;
+    if (!d || e.pointerId !== d.id) return;
     drag.current = null;
+    updateClip(selected, { crop: d.live });
   };
 
-  const pct = (v: number) => `${v * 100}%`;
+  const px = (c: Crop) => ({ x: c.x * boxW, y: c.y * boxH, w: c.w * boxW, h: c.h * boxH });
+  const o = px(crop);
   return (
     <div class="cropper" onPointerMove={move} onPointerUp={up} onPointerCancel={up}>
-      <div class="crop-rect" style={{ left: pct(crop.x), top: pct(crop.y), width: pct(crop.w), height: pct(crop.h) }} onPointerDown={down('move')}>
+      <div class="dim" ref={(n) => void (els.current.t = n)} style={{ left: '0px', top: '0px', width: `${boxW}px`, height: `${o.y}px` }} />
+      <div class="dim" ref={(n) => void (els.current.b = n)} style={{ left: '0px', bottom: '0px', width: `${boxW}px`, height: `${Math.max(0, boxH - o.y - o.h)}px` }} />
+      <div class="dim" ref={(n) => void (els.current.l = n)} style={{ left: '0px', top: `${o.y}px`, width: `${o.x}px`, height: `${o.h}px` }} />
+      <div class="dim" ref={(n) => void (els.current.r = n)} style={{ right: '0px', top: `${o.y}px`, width: `${Math.max(0, boxW - o.x - o.w)}px`, height: `${o.h}px` }} />
+      <div
+        class="crop-rect"
+        ref={(n) => void (els.current.rect = n)}
+        style={{ left: '0px', top: '0px', transform: `translate(${o.x}px, ${o.y}px)`, width: `${o.w}px`, height: `${o.h}px` }}
+        onPointerDown={down('move')}
+      >
         <i class="grid" />
         {(['tl', 'tr', 'bl', 'br'] as Corner[]).map((c) => (
           <b key={c} class={`handle ${c}`} onPointerDown={down(c)} />

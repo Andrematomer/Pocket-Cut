@@ -78,7 +78,7 @@ export class PreviewEngine {
       crop: this.editCrop ? null : cur.clip.crop,
       outW: canvas.width,
       outH: canvas.height,
-      fit: this.editCrop ? 'contain' : p.settings.fit,
+      fit: this.editCrop ? 'contain' : cur.clip.fit,
     });
   }
 
@@ -117,9 +117,12 @@ export class PreviewEngine {
   }
 
   private applyClip(clip: Clip): void {
-    this.video.playbackRate = clip.speed;
-    this.video.defaultPlaybackRate = clip.speed;
-    this.video.muted = clip.muted;
+    const v = this.video;
+    v.preservesPitch = clip.keepPitch;
+    (v as HTMLVideoElement & { webkitPreservesPitch?: boolean }).webkitPreservesPitch = clip.keepPitch;
+    v.playbackRate = clip.speed;
+    v.defaultPlaybackRate = clip.speed;
+    v.muted = clip.muted;
   }
 
   /** Pause and show the frame at timeline time t. */
@@ -150,6 +153,16 @@ export class PreviewEngine {
     this.deps.onTime(this.tl);
   }
 
+  /** timeline clock: playback time is measured here, not read back from the video element */
+  private clockT0 = 0;
+  private clockTl0 = 0;
+  private seeking = false;
+
+  private startClock(tl: number): void {
+    this.clockT0 = performance.now();
+    this.clockTl0 = tl;
+  }
+
   async play(): Promise<void> {
     const clips = this.deps.getProject().clips;
     if (clips.length === 0) return;
@@ -162,14 +175,18 @@ export class PreviewEngine {
     this.applyClip(cur.clip);
     this.playing = true;
     this.deps.onPlaying(true);
-    try {
-      await this.video.play();
-    } catch {
-      this.playing = false;
-      this.deps.onPlaying(false);
-      return;
+    this.startClock(this.tl);
+    if (this.nativeRate(cur.clip)) {
+      try {
+        await this.video.play();
+      } catch {
+        this.playing = false;
+        this.deps.onPlaying(false);
+        return;
+      }
     }
     if (tok !== this.token) return;
+    this.startClock(this.tl);
     this.loop(tok);
   }
 
@@ -182,48 +199,80 @@ export class PreviewEngine {
     this.deps.onPlaying(false);
   }
 
+  /** false when the browser did not accept this speed for the video element (then frames are stepped by seeking) */
+  private nativeRate(clip: Clip): boolean {
+    return Math.abs(this.video.playbackRate - clip.speed) < 1e-3;
+  }
+
   private loop(tok: number): void {
     this.raf = requestAnimationFrame(() => void this.step(tok));
   }
 
+  /**
+   * One animation frame of playback. The timeline position comes from a clock, so a clip at 4x
+   * really takes a quarter of the time. The video element follows: it runs at the clip's speed
+   * when the browser allows that, and is re-synced by seeking whenever it drifts.
+   */
   private async step(tok: number): Promise<void> {
     if (tok !== this.token || !this.playing) return;
     const p = this.deps.getProject();
-    const cur = this.current();
-    if (!cur) return this.pause();
+    if (p.clips.length === 0) return this.pause();
     const L = layout(p.clips);
-    const { clip, index } = cur;
-    const ct = this.video.currentTime;
-    if (ct >= clip.end - 0.03 || this.video.ended) {
-      if (index + 1 < p.clips.length) {
-        const next = p.clips[index + 1]!;
-        this.idx = index + 1;
-        this.tl = L.starts[index + 1]!;
-        if (next.mediaId !== this.media) {
-          this.video.pause();
-          if (!(await this.load(next.mediaId)) || tok !== this.token) return;
-        }
-        await this.seekVideo(next.start);
-        if (tok !== this.token) return;
-        this.applyClip(next);
-        try {
-          await this.video.play();
-        } catch {
-          return this.pause();
-        }
-        this.draw();
-        this.loop(tok);
-        return;
-      }
+    const v = this.video;
+    const tl = this.clockTl0 + (performance.now() - this.clockT0) / 1000;
+
+    if (tl >= L.total - 1e-3) {
       this.playing = false;
-      this.video.pause();
+      v.pause();
       this.tl = L.total;
       this.draw();
       this.deps.onTime(this.tl);
       this.deps.onPlaying(false);
       return;
     }
-    this.tl = L.starts[index]! + Math.max(0, (ct - clip.start) / clip.speed);
+
+    const at = locate(L, tl)!;
+    const clip = p.clips[at.index]!;
+
+    if (at.index !== this.idx) {
+      // crossing into the next clip
+      this.idx = at.index;
+      v.pause();
+      if (clip.mediaId !== this.media && (!(await this.load(clip.mediaId)) || tok !== this.token)) return;
+      this.applyClip(clip);
+      await this.seekVideo(sourceTimeAt(clip, at.local));
+      if (tok !== this.token) return;
+      if (this.nativeRate(clip)) {
+        try {
+          await v.play();
+        } catch {
+          return this.pause();
+        }
+      }
+      if (tok !== this.token) return;
+      this.startClock(L.starts[at.index]! + at.local);
+      this.draw();
+      this.loop(tok);
+      return;
+    }
+
+    // keep the picture in step with the clock
+    const want = Math.min(sourceTimeAt(clip, at.local), Math.max(clip.start, clip.end - 0.001));
+    this.applyClip(clip);
+    if (this.nativeRate(clip)) {
+      if (v.paused && !this.seeking) void v.play().catch(() => {});
+      if (!this.seeking && Math.abs(v.currentTime - want) > 0.3) {
+        this.seeking = true;
+        void this.seekVideo(want).then(() => (this.seeking = false));
+      }
+    } else if (!this.seeking) {
+      // the browser keeps its own speed: step through the clip by seeking to where the clock says we are
+      if (!v.paused) v.pause();
+      this.seeking = true;
+      void this.seekVideo(want).then(() => (this.seeking = false));
+    }
+
+    this.tl = tl;
     this.draw();
     this.deps.onTime(this.tl);
     this.loop(tok);

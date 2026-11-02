@@ -14,7 +14,7 @@ class Boundary extends Component<{ children: ComponentChildren }, { error: Error
     return (
       <main class="fatal">
         <h1>Something broke</h1>
-        <p>Pocket Cut is a work in progress. If you are testing it, send this text to the developer:</p>
+        <p>If this keeps happening, send this text to the developer:</p>
         <pre>
           {navigator.userAgent}
           {'\n\n'}

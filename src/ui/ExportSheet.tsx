@@ -1,22 +1,14 @@
 import { useRef, useState } from 'preact/hooks';
 import { FriendlyError, exportProject, type ExportProgress, type ExportResult } from '../exporter.ts';
 import { engine } from '../engine.ts';
-import { MAX_MBPS, MIN_MBPS, estimateBytes, fmtMbps, videoBitrate } from '../bitrate.ts';
+import { RATE_STOPS, estimateBytes, fmtMbps, videoBitrate } from '../bitrate.ts';
 import { fmtBytes, saveBlob, shareFiles } from '../files.ts';
 import { outputSize } from '../geometry.ts';
 import { blobFor, setSettings, useStore } from '../store.ts';
 import { fmtTime, layout, planParts } from '../timeline.ts';
 import type { AspectChoice, ExportSettings } from '../types.ts';
-import { Download, Share } from './icons.tsx';
+import { Check, Download, Share } from './icons.tsx';
 import { Sheet } from './Sheet.tsx';
-
-const RATES: { label: string; value: number | null }[] = [
-  { label: 'Auto', value: null },
-  { label: '2 Mbps', value: 2 },
-  { label: '4 Mbps', value: 4 },
-  { label: '8 Mbps', value: 8 },
-  { label: '12 Mbps', value: 12 },
-];
 
 const SPLITS: { label: string; value: number | null }[] = [
   { label: 'Off', value: null },
@@ -43,7 +35,6 @@ export function ExportSheet({ onClose }: { onClose: () => void }) {
   const project = useStore((s) => s.project);
   const [phase, setPhase] = useState<Phase>({ name: 'setup' });
   const [custom, setCustom] = useState(false);
-  const [customRate, setCustomRate] = useState(false);
   const abort = useRef<AbortController | null>(null);
   const [note, setNote] = useState('');
 
@@ -52,7 +43,7 @@ export function ExportSheet({ onClose }: { onClose: () => void }) {
   const parts = planParts(total, s.splitSeconds, s.equalParts, s.fps);
   const size = outputSize(project);
   const isCustomValue = s.splitSeconds !== null && !SPLITS.some((x) => x.value === s.splitSeconds);
-  const rateIsCustom = s.bitrateMbps != null && !RATES.some((x) => x.value === s.bitrateMbps);
+  const rateIndex = s.bitrateMbps === null ? 0 : Math.max(0, RATE_STOPS.findIndex((x) => x >= s.bitrateMbps!)) + 1;
   const vbps = videoBitrate(s, size.w, size.h);
   const withSound = project.clips.some((c) => !c.muted && project.media[c.mediaId]?.hasAudio);
   const longest = parts.reduce((m, p) => Math.max(m, p.end - p.start), 0);
@@ -135,15 +126,6 @@ export function ExportSheet({ onClose }: { onClose: () => void }) {
                 { label: '16:9', value: '16:9' },
               ]}
             />
-            <Chips<ExportSettings['fit']>
-              label="Fit"
-              value={s.fit}
-              onPick={(v) => setN({ fit: v })}
-              options={[
-                { label: 'Fit (bars)', value: 'contain' },
-                { label: 'Fill (trim edges)', value: 'cover' },
-              ]}
-            />
             <Chips<ExportSettings['resolution']>
               label="Resolution"
               value={s.resolution}
@@ -161,35 +143,29 @@ export function ExportSheet({ onClose }: { onClose: () => void }) {
           </section>
 
           <section>
-            <h3>Video bitrate</h3>
-            <div class="chips" role="group" aria-label="Target video bitrate">
-              {RATES.map((o) => (
-                <button key={o.label} class={`chip num ${!customRate && !rateIsCustom && s.bitrateMbps === o.value ? 'on' : ''}`} onClick={() => (setCustomRate(false), setN({ bitrateMbps: o.value }))}>
-                  {o.label}
-                </button>
-              ))}
-              <button class={`chip ${customRate || rateIsCustom ? 'on' : ''}`} onClick={() => (setCustomRate(true), setN({ bitrateMbps: s.bitrateMbps ?? Math.round((vbps / 1e6) * 2) / 2 }))}>
-                Custom
-              </button>
+            <h3>
+              Video bitrate <span class="num rate-now">{s.bitrateMbps === null ? 'Auto' : fmtMbps(s.bitrateMbps * 1e6)}</span>
+            </h3>
+            <input
+              class="slider"
+              type="range"
+              min={0}
+              max={RATE_STOPS.length}
+              step={1}
+              value={rateIndex}
+              aria-label="Target video bitrate"
+              aria-valuetext={s.bitrateMbps === null ? 'Auto' : `${s.bitrateMbps} megabits per second`}
+              onInput={(e) => {
+                const i = Number((e.currentTarget as HTMLInputElement).value);
+                setN({ bitrateMbps: i === 0 ? null : RATE_STOPS[i - 1]! });
+              }}
+            />
+            <div class="ticks num" aria-hidden="true">
+              <span>Auto</span>
+              <span>{RATE_STOPS[0]}</span>
+              <span>{RATE_STOPS[Math.floor(RATE_STOPS.length / 2)]}</span>
+              <span>{RATE_STOPS[RATE_STOPS.length - 1]} Mbps</span>
             </div>
-            {(customRate || rateIsCustom) && (
-              <label class="field">
-                Target in Mbps
-                <input
-                  class="num"
-                  type="number"
-                  inputMode="decimal"
-                  min={MIN_MBPS}
-                  max={MAX_MBPS}
-                  step={0.5}
-                  value={s.bitrateMbps ?? ''}
-                  onInput={(e) => {
-                    const v = Number((e.currentTarget as HTMLInputElement).value);
-                    if (v > 0) setN({ bitrateMbps: Math.min(MAX_MBPS, Math.max(MIN_MBPS, v)) });
-                  }}
-                />
-              </label>
-            )}
             <p class="hint num">
               {size.w}×{size.h}, MP4 · {fmtMbps(vbps)}
               {s.bitrateMbps === null ? ' (from quality)' : ' target'}
@@ -212,7 +188,7 @@ export function ExportSheet({ onClose }: { onClose: () => void }) {
           <div class="bar">
             <i style={{ width: `${(phase.progress.frame / phase.progress.frames) * 100}%` }} />
           </div>
-          <p class="hint">Keep this screen open until it finishes. Everything stays on your device.</p>
+          <p class="hint">The screen stays on while this runs. Please stay in this app: if you switch apps or lock the phone, the export waits until you come back. Everything stays on your device.</p>
           <button class="btn" onClick={() => abort.current?.abort()}>
             Cancel
           </button>
@@ -236,11 +212,15 @@ export function ExportSheet({ onClose }: { onClose: () => void }) {
 
 function PartsBar({ parts, total }: { parts: ReturnType<typeof planParts>; total: number }) {
   if (parts.length === 0) return null;
+  const first = parts[0]!.end - parts[0]!.start;
+  const last = parts[parts.length - 1]!.end - parts[parts.length - 1]!.start;
+  // only a real leftover piece is striped: when all parts are the same length there is nothing to point out
+  const shorterLast = parts.length > 1 && last < first - 0.05;
   return (
     <div class="plan">
       <div class="plan-bar" aria-hidden="true">
         {parts.map((p, i) => (
-          <i key={i} style={{ flexGrow: p.end - p.start }} />
+          <i key={i} class={i === parts.length - 1 && shorterLast ? 'rem' : ''} style={{ flexGrow: p.end - p.start }} />
         ))}
       </div>
       <p class="num">
@@ -252,26 +232,52 @@ function PartsBar({ parts, total }: { parts: ReturnType<typeof planParts>; total
 
 function Done({ result, note, setNote, onBack }: { result: ExportResult; note: string; setNote: (s: string) => void; onBack: () => void }) {
   const { parts, warnings } = result;
+  const [saved, setSaved] = useState<Set<string>>(new Set());
+  const [shared, setShared] = useState(0);
+  const sharing = useRef(false);
+  const mark = (name: string) => setSaved((o) => new Set(o).add(name));
+
   const shareAll = async () => {
-    const r = await shareFiles(parts);
-    if (r === 'unsupported') {
-      setNote('Sharing is not available here, so the files are being downloaded.');
-      parts.forEach((p, i) => setTimeout(() => saveBlob(p.name, p.blob), i * 500));
+    if (sharing.current) return; // a second tap while the share sheet is opening would send everything twice
+    sharing.current = true;
+    try {
+      const r = await shareFiles(parts);
+      if (r === 'shared') {
+        setShared((n) => n + 1);
+        setNote('');
+      } else if (r === 'unsupported') {
+        setNote('Sharing is not available here, so the files are being downloaded.');
+        parts.forEach((p, i) =>
+          setTimeout(() => {
+            saveBlob(p.name, p.blob);
+            mark(p.name);
+          }, i * 500),
+        );
+      }
+    } finally {
+      setTimeout(() => (sharing.current = false), 800);
     }
   };
   return (
     <>
       <ul class="results">
         {parts.map((p) => (
-          <li key={p.name}>
+          <li key={p.name} class={saved.has(p.name) ? 'saved' : ''}>
             <div>
               <b>{p.name}</b>
               <span class="num">
                 {fmtTime(p.seconds, 1)} · {fmtBytes(p.blob.size)}
               </span>
             </div>
-            <button class="btn small" onClick={() => saveBlob(p.name, p.blob)} aria-label={`Download ${p.name}`}>
-              <Download /> Save
+            <button
+              class={`btn small ${saved.has(p.name) ? 'done' : ''}`}
+              onClick={() => {
+                saveBlob(p.name, p.blob);
+                mark(p.name);
+              }}
+              aria-label={`Download ${p.name}`}
+            >
+              {saved.has(p.name) ? <Check /> : <Download />} {saved.has(p.name) ? 'Saved' : 'Save'}
             </button>
           </li>
         ))}
@@ -281,9 +287,15 @@ function Done({ result, note, setNote, onBack }: { result: ExportResult; note: s
           {w}
         </p>
       ))}
+      {saved.size > 0 && <p class="hint">Saved files go to your Files or Downloads. To put them in your photo gallery, use the share button below and choose Save Video.</p>}
       {note && <p class="hint">{note}</p>}
-      <button class="cta" onClick={shareAll}>
-        <Share /> {parts.length > 1 ? `Share or save all ${parts.length}` : 'Share or save'}
+      {shared > 0 && (
+        <p class="ok" role="status">
+          <Check /> Sent to the share sheet{shared > 1 ? ` (${shared} times)` : ''}. If you chose Save Video, {parts.length > 1 ? `all ${parts.length} are` : 'it is'} in your gallery now. Sharing again adds copies.
+        </p>
+      )}
+      <button class={`cta ${shared > 0 ? 'again' : ''}`} onClick={shareAll}>
+        {shared > 0 ? <Check /> : <Share />} {shared > 0 ? 'Shared. Share again' : parts.length > 1 ? `Share or save all ${parts.length}` : 'Share or save'}
       </button>
       <button class="btn" onClick={onBack}>
         Back to settings
