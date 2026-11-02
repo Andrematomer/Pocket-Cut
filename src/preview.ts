@@ -5,6 +5,8 @@ import type { Clip, Project } from './types.ts';
 export interface PreviewDeps {
   getProject(): Project;
   getUrl(mediaId: string): string | undefined;
+  /** the decoded picture when the clip is a still image */
+  getImage(mediaId: string): ImageBitmap | undefined;
   onTime(t: number): void;
   onPlaying(playing: boolean): void;
 }
@@ -13,13 +15,19 @@ export interface PreviewDeps {
  * Preview player. One hidden <video> element decodes the clip being shown; every frame is painted
  * onto the canvas with the same drawFrame() the exporter uses, so the preview matches the result.
  * Stitched clips are played one after another (a short pause at a cut between two different
- * files is normal here; the exported video has no gap).
+ * files is normal here; the exported video has no gap). Still pictures are drawn from memory and
+ * timed by a clock.
+ *
+ * Timing: while the video element plays at the clip's speed by itself, the timeline follows the
+ * video (never fighting it with seeks, which would cut the sound). If the browser ignores the speed
+ * (some iPhones do), the timeline follows a clock and the picture is stepped by seeking.
  */
 export class PreviewEngine {
   readonly video = document.createElement('video');
   private canvas: HTMLCanvasElement | null = null;
   private ctx: CanvasRenderingContext2D | null = null;
   private media: string | null = null;
+  private loadedUrl = '';
   private token = 0;
   private raf = 0;
   private idx = 0;
@@ -27,6 +35,14 @@ export class PreviewEngine {
   playing = false;
   /** show the whole rotated frame (no crop) so the crop box can be edited on top */
   editCrop = false;
+
+  /** timeline clock, used for pictures and when the video can't run at the clip's speed */
+  private clockMode = false;
+  private clockT0 = 0;
+  private clockTl0 = 0;
+  private seeking = false;
+  /** measures whether the video really advances at the clip's speed */
+  private rate = { wall: 0, vt: 0, checked: false };
 
   constructor(private deps: PreviewDeps) {
     const v = this.video;
@@ -64,30 +80,38 @@ export class PreviewEngine {
     const ctx = this.ctx;
     const canvas = this.canvas;
     if (!ctx || !canvas) return;
-    const p = this.deps.getProject();
     const cur = this.current();
     const v = this.video;
-    if (!cur || v.readyState < 2 || !v.videoWidth || this.media !== cur.clip.mediaId) {
+    const black = () => {
       ctx.setTransform(1, 0, 0, 1, 0, 0);
       ctx.fillStyle = '#000';
       ctx.fillRect(0, 0, canvas.width, canvas.height);
-      return;
-    }
-    drawFrame(ctx, v, v.videoWidth, v.videoHeight, {
+    };
+    if (!cur) return black();
+    const o = {
       rotation: cur.clip.rotation,
       crop: this.editCrop ? null : cur.clip.crop,
       outW: canvas.width,
       outH: canvas.height,
-      fit: this.editCrop ? 'contain' : cur.clip.fit,
-    });
+      fit: this.editCrop ? ('contain' as const) : cur.clip.fit,
+    };
+    const img = this.deps.getImage(cur.clip.mediaId);
+    if (img) return drawFrame(ctx, img, img.width, img.height, o);
+    if (v.readyState < 2 || !v.videoWidth || this.media !== cur.clip.mediaId) return black();
+    drawFrame(ctx, v, v.videoWidth, v.videoHeight, o);
+  }
+
+  private isImage(clip: Clip): boolean {
+    return !!this.deps.getImage(clip.mediaId);
   }
 
   private async load(mediaId: string): Promise<boolean> {
     const v = this.video;
-    if (this.media === mediaId && v.readyState >= 1) return true;
     const url = this.deps.getUrl(mediaId);
     if (!url) return false;
+    if (this.media === mediaId && this.loadedUrl === url && v.readyState >= 1) return true;
     this.media = mediaId;
+    this.loadedUrl = url;
     return new Promise<boolean>((resolve) => {
       const done = (ok: boolean) => {
         v.removeEventListener('loadeddata', onOk);
@@ -125,15 +149,21 @@ export class PreviewEngine {
     v.muted = clip.muted;
   }
 
+  /** false when the browser did not accept this speed for the video element */
+  private nativeRate(clip: Clip): boolean {
+    return Math.abs(this.video.playbackRate - clip.speed) < 1e-3;
+  }
+
+  private startClock(tl: number): void {
+    this.clockT0 = performance.now();
+    this.clockTl0 = tl;
+  }
+
   /** Pause and show the frame at timeline time t. */
   async showAt(t: number): Promise<void> {
     const tok = ++this.token;
     cancelAnimationFrame(this.raf);
-    if (this.playing) {
-      this.playing = false;
-      this.video.pause();
-      this.deps.onPlaying(false);
-    }
+    this.stopPlaying();
     const L = layout(this.deps.getProject().clips);
     const at = locate(L, t);
     if (!at) {
@@ -145,6 +175,11 @@ export class PreviewEngine {
     this.idx = at.index;
     this.tl = Math.min(t, L.total);
     const clip = this.deps.getProject().clips[at.index]!;
+    if (this.isImage(clip)) {
+      this.draw();
+      this.deps.onTime(this.tl);
+      return;
+    }
     if (!(await this.load(clip.mediaId)) || tok !== this.token) return;
     await this.seekVideo(Math.min(sourceTimeAt(clip, at.local), Math.max(clip.start, clip.end - 0.001)));
     if (tok !== this.token) return;
@@ -153,15 +188,59 @@ export class PreviewEngine {
     this.deps.onTime(this.tl);
   }
 
-  /** timeline clock: playback time is measured here, not read back from the video element */
-  private clockT0 = 0;
-  private clockTl0 = 0;
-  private seeking = false;
-
-  private startClock(tl: number): void {
-    this.clockT0 = performance.now();
-    this.clockTl0 = tl;
+  private stopPlaying(): void {
+    if (this.playing) {
+      this.playing = false;
+      this.video.pause();
+      this.deps.onPlaying(false);
+    }
   }
+
+  // ---- scrubbing by source time (trim handles and the trim bar) ----
+
+  private scrubTarget: { index: number; t: number; report: boolean } | null = null;
+  private scrubbing = false;
+
+  /**
+   * Shows the frame at `srcT` (seconds in the source file) of clip `index`, without touching the
+   * project. Rapid calls are merged: only the newest target is ever seeked to, so dragging a finger
+   * never builds up a queue of seeks.
+   */
+  scrubSource(index: number, srcT: number, report: boolean): void {
+    this.token++;
+    cancelAnimationFrame(this.raf);
+    this.stopPlaying();
+    this.scrubTarget = { index, t: srcT, report };
+    if (!this.scrubbing) void this.pumpScrub();
+  }
+
+  private async pumpScrub(): Promise<void> {
+    this.scrubbing = true;
+    try {
+      while (this.scrubTarget) {
+        const tg = this.scrubTarget;
+        this.scrubTarget = null;
+        const p = this.deps.getProject();
+        const clip = p.clips[tg.index];
+        if (!clip) continue;
+        this.idx = tg.index;
+        if (!this.isImage(clip)) {
+          if (!(await this.load(clip.mediaId))) continue;
+          await this.seekVideo(Math.max(0, tg.t));
+        }
+        this.draw();
+        if (tg.report) {
+          const L = layout(p.clips);
+          this.tl = L.starts[tg.index]! + Math.max(0, Math.min(L.durations[tg.index]!, (tg.t - clip.start) / clip.speed));
+          this.deps.onTime(this.tl);
+        }
+      }
+    } finally {
+      this.scrubbing = false;
+    }
+  }
+
+  // ---- playback ----
 
   async play(): Promise<void> {
     const clips = this.deps.getProject().clips;
@@ -172,22 +251,39 @@ export class PreviewEngine {
     const tok = ++this.token;
     const cur = this.current();
     if (!cur) return;
-    this.applyClip(cur.clip);
     this.playing = true;
     this.deps.onPlaying(true);
-    this.startClock(this.tl);
-    if (this.nativeRate(cur.clip)) {
+    if (!(await this.beginClip(cur.clip, this.tl, tok))) return;
+    this.loop(tok);
+  }
+
+  /** starts the clip's own playback; false if playback was refused or superseded */
+  private async beginClip(clip: Clip, tl: number, tok: number): Promise<boolean> {
+    const v = this.video;
+    this.startClock(tl);
+    this.rate = { wall: performance.now(), vt: v.currentTime, checked: false };
+    if (this.isImage(clip)) {
+      v.pause();
+      this.clockMode = true;
+      return true;
+    }
+    this.applyClip(clip);
+    this.clockMode = !this.nativeRate(clip);
+    if (!this.clockMode) {
       try {
-        await this.video.play();
+        await v.play();
       } catch {
         this.playing = false;
         this.deps.onPlaying(false);
-        return;
+        return false;
       }
+      if (tok !== this.token) return false;
+      this.startClock(tl);
+      this.rate = { wall: performance.now(), vt: v.currentTime, checked: false };
+    } else {
+      v.pause();
     }
-    if (tok !== this.token) return;
-    this.startClock(this.tl);
-    this.loop(tok);
+    return true;
   }
 
   pause(): void {
@@ -199,29 +295,48 @@ export class PreviewEngine {
     this.deps.onPlaying(false);
   }
 
-  /** false when the browser did not accept this speed for the video element (then frames are stepped by seeking) */
-  private nativeRate(clip: Clip): boolean {
-    return Math.abs(this.video.playbackRate - clip.speed) < 1e-3;
-  }
-
   private loop(tok: number): void {
     this.raf = requestAnimationFrame(() => void this.step(tok));
   }
 
-  /**
-   * One animation frame of playback. The timeline position comes from a clock, so a clip at 4x
-   * really takes a quarter of the time. The video element follows: it runs at the clip's speed
-   * when the browser allows that, and is re-synced by seeking whenever it drifts.
-   */
   private async step(tok: number): Promise<void> {
     if (tok !== this.token || !this.playing) return;
     const p = this.deps.getProject();
-    if (p.clips.length === 0) return this.pause();
+    const cur = this.current();
+    if (!cur) return this.pause();
     const L = layout(p.clips);
+    const { clip, index } = cur;
     const v = this.video;
-    const tl = this.clockTl0 + (performance.now() - this.clockT0) / 1000;
+    const now = performance.now();
+    const img = this.isImage(clip);
+    const byClock = img || this.clockMode;
 
-    if (tl >= L.total - 1e-3) {
+    let tl: number;
+    let finished: boolean;
+    if (byClock) {
+      tl = this.clockTl0 + (now - this.clockT0) / 1000;
+      finished = tl >= L.starts[index]! + L.durations[index]! - 1e-3;
+    } else {
+      tl = L.starts[index]! + Math.max(0, (v.currentTime - clip.start) / clip.speed);
+      finished = v.currentTime >= clip.end - 0.03 || v.ended;
+    }
+
+    if (finished) {
+      if (index + 1 < p.clips.length) {
+        const next = p.clips[index + 1]!;
+        this.idx = index + 1;
+        this.tl = L.starts[index + 1]!;
+        v.pause();
+        if (!this.isImage(next)) {
+          if (!(await this.load(next.mediaId)) || tok !== this.token) return;
+          await this.seekVideo(next.start);
+          if (tok !== this.token) return;
+        }
+        if (!(await this.beginClip(next, this.tl, tok))) return;
+        this.draw();
+        this.loop(tok);
+        return;
+      }
       this.playing = false;
       v.pause();
       this.tl = L.total;
@@ -231,45 +346,24 @@ export class PreviewEngine {
       return;
     }
 
-    const at = locate(L, tl)!;
-    const clip = p.clips[at.index]!;
-
-    if (at.index !== this.idx) {
-      // crossing into the next clip
-      this.idx = at.index;
-      v.pause();
-      if (clip.mediaId !== this.media && (!(await this.load(clip.mediaId)) || tok !== this.token)) return;
-      this.applyClip(clip);
-      await this.seekVideo(sourceTimeAt(clip, at.local));
-      if (tok !== this.token) return;
-      if (this.nativeRate(clip)) {
-        try {
-          await v.play();
-        } catch {
-          return this.pause();
+    if (!img) {
+      if (this.clockMode) {
+        // the browser keeps its own speed: show the frame where the clock says we are
+        if (!this.seeking) {
+          const want = Math.min(sourceTimeAt(clip, Math.max(0, tl - L.starts[index]!)), Math.max(clip.start, clip.end - 0.001));
+          this.seeking = true;
+          void this.seekVideo(want).then(() => (this.seeking = false));
+        }
+      } else if (!this.rate.checked && now - this.rate.wall > 800) {
+        // does the video really run at the clip's speed? If it runs at normal speed instead, switch to the clock
+        this.rate.checked = true;
+        const measured = (v.currentTime - this.rate.vt) / ((now - this.rate.wall) / 1000);
+        if (Math.abs(clip.speed - 1) > 0.2 && Math.abs(measured - 1) < 0.2) {
+          this.clockMode = true;
+          this.startClock(tl);
+          v.pause();
         }
       }
-      if (tok !== this.token) return;
-      this.startClock(L.starts[at.index]! + at.local);
-      this.draw();
-      this.loop(tok);
-      return;
-    }
-
-    // keep the picture in step with the clock
-    const want = Math.min(sourceTimeAt(clip, at.local), Math.max(clip.start, clip.end - 0.001));
-    this.applyClip(clip);
-    if (this.nativeRate(clip)) {
-      if (v.paused && !this.seeking) void v.play().catch(() => {});
-      if (!this.seeking && Math.abs(v.currentTime - want) > 0.3) {
-        this.seeking = true;
-        void this.seekVideo(want).then(() => (this.seeking = false));
-      }
-    } else if (!this.seeking) {
-      // the browser keeps its own speed: step through the clip by seeking to where the clock says we are
-      if (!v.paused) v.pause();
-      this.seeking = true;
-      void this.seekVideo(want).then(() => (this.seeking = false));
     }
 
     this.tl = tl;

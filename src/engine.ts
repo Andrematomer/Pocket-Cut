@@ -1,4 +1,4 @@
-import { mediaUrl } from './media.ts';
+import { mediaBitmap, mediaUrl } from './media.ts';
 import { PreviewEngine } from './preview.ts';
 import { getState, set } from './store.ts';
 
@@ -6,6 +6,7 @@ import { getState, set } from './store.ts';
 export const engine = new PreviewEngine({
   getProject: () => getState().project,
   getUrl: mediaUrl,
+  getImage: mediaBitmap,
   onTime: (t) => set({ playhead: t }),
   onPlaying: (playing) => set({ playing }),
 });

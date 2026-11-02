@@ -6,7 +6,7 @@ import { fmtBytes, saveBlob, shareFiles } from '../files.ts';
 import { outputSize } from '../geometry.ts';
 import { blobFor, setSettings, useStore } from '../store.ts';
 import { fmtTime, layout, planParts } from '../timeline.ts';
-import type { AspectChoice, ExportSettings } from '../types.ts';
+import type { ExportSettings } from '../types.ts';
 import { Check, Download, Share } from './icons.tsx';
 import { Sheet } from './Sheet.tsx';
 
@@ -16,6 +16,9 @@ const SPLITS: { label: string; value: number | null }[] = [
   { label: '30 s', value: 30 },
   { label: '60 s', value: 60 },
 ];
+
+const PRESETS = [2, 5];
+const nearestStop = (m: number): number => RATE_STOPS.reduce((a, b) => (Math.abs(b - m) < Math.abs(a - m) ? b : a));
 
 function Chips<T>({ options, value, onPick, label }: { options: { label: string; value: T }[]; value: T; onPick: (v: T) => void; label: string }) {
   return (
@@ -35,6 +38,7 @@ export function ExportSheet({ onClose }: { onClose: () => void }) {
   const project = useStore((s) => s.project);
   const [phase, setPhase] = useState<Phase>({ name: 'setup' });
   const [custom, setCustom] = useState(false);
+  const [customRate, setCustomRate] = useState(() => project.settings.bitrateMbps !== null && !PRESETS.includes(project.settings.bitrateMbps));
   const abort = useRef<AbortController | null>(null);
   const [note, setNote] = useState('');
 
@@ -43,7 +47,8 @@ export function ExportSheet({ onClose }: { onClose: () => void }) {
   const parts = planParts(total, s.splitSeconds, s.equalParts, s.fps);
   const size = outputSize(project);
   const isCustomValue = s.splitSeconds !== null && !SPLITS.some((x) => x.value === s.splitSeconds);
-  const rateIndex = s.bitrateMbps === null ? 0 : Math.max(0, RATE_STOPS.findIndex((x) => x >= s.bitrateMbps!)) + 1;
+  const showSlider = customRate;
+  const rateIndex = s.bitrateMbps === null ? 0 : Math.max(0, RATE_STOPS.findIndex((x) => x >= s.bitrateMbps!));
   const vbps = videoBitrate(s, size.w, size.h);
   const withSound = project.clips.some((c) => !c.muted && project.media[c.mediaId]?.hasAudio);
   const longest = parts.reduce((m, p) => Math.max(m, p.end - p.start), 0);
@@ -114,18 +119,6 @@ export function ExportSheet({ onClose }: { onClose: () => void }) {
 
           <section>
             <h3>Picture</h3>
-            <Chips<AspectChoice>
-              label="Shape"
-              value={s.aspect}
-              onPick={(v) => setN({ aspect: v })}
-              options={[
-                { label: 'Auto', value: 'auto' },
-                { label: '9:16', value: '9:16' },
-                { label: '4:5', value: '4:5' },
-                { label: '1:1', value: '1:1' },
-                { label: '16:9', value: '16:9' },
-              ]}
-            />
             <Chips<ExportSettings['resolution']>
               label="Resolution"
               value={s.resolution}
@@ -143,29 +136,46 @@ export function ExportSheet({ onClose }: { onClose: () => void }) {
           </section>
 
           <section>
-            <h3>
-              Video bitrate <span class="num rate-now">{s.bitrateMbps === null ? 'Auto' : fmtMbps(s.bitrateMbps * 1e6)}</span>
-            </h3>
-            <input
-              class="slider"
-              type="range"
-              min={0}
-              max={RATE_STOPS.length}
-              step={1}
-              value={rateIndex}
-              aria-label="Target video bitrate"
-              aria-valuetext={s.bitrateMbps === null ? 'Auto' : `${s.bitrateMbps} megabits per second`}
-              onInput={(e) => {
-                const i = Number((e.currentTarget as HTMLInputElement).value);
-                setN({ bitrateMbps: i === 0 ? null : RATE_STOPS[i - 1]! });
-              }}
-            />
-            <div class="ticks num" aria-hidden="true">
-              <span>Auto</span>
-              <span>{RATE_STOPS[0]}</span>
-              <span>{RATE_STOPS[Math.floor(RATE_STOPS.length / 2)]}</span>
-              <span>{RATE_STOPS[RATE_STOPS.length - 1]} Mbps</span>
+            <h3>Video bitrate</h3>
+            <div class="chips" role="group" aria-label="Target video bitrate">
+              <button class={`chip num ${!showSlider && s.bitrateMbps === null ? 'on' : ''}`} onClick={() => (setCustomRate(false), setN({ bitrateMbps: null }))}>
+                Auto
+              </button>
+              {PRESETS.map((m) => (
+                <button key={m} class={`chip num ${!showSlider && s.bitrateMbps === m ? 'on' : ''}`} onClick={() => (setCustomRate(false), setN({ bitrateMbps: m }))}>
+                  {m} Mbps
+                </button>
+              ))}
+              <button
+                class={`chip ${showSlider ? 'on' : ''}`}
+                onClick={() => {
+                  setCustomRate(true);
+                  if (s.bitrateMbps === null) setN({ bitrateMbps: nearestStop(vbps / 1e6) });
+                }}
+              >
+                Custom
+              </button>
             </div>
+            {showSlider && s.bitrateMbps !== null && (
+              <div class="rate-slider">
+                <div class="rate-now num">{fmtMbps(s.bitrateMbps * 1e6)}</div>
+                <input
+                  class="slider"
+                  type="range"
+                  min={0}
+                  max={RATE_STOPS.length - 1}
+                  step={1}
+                  value={rateIndex}
+                  aria-label="Target video bitrate"
+                  aria-valuetext={`${s.bitrateMbps} megabits per second`}
+                  onInput={(e) => setN({ bitrateMbps: RATE_STOPS[Number((e.currentTarget as HTMLInputElement).value)]! })}
+                />
+                <div class="ticks num" aria-hidden="true">
+                  <span>{RATE_STOPS[0]} Mbps</span>
+                  <span>{RATE_STOPS[RATE_STOPS.length - 1]} Mbps</span>
+                </div>
+              </div>
+            )}
             <p class="hint num">
               {size.w}×{size.h}, MP4 · {fmtMbps(vbps)}
               {s.bitrateMbps === null ? ' (from quality)' : ' target'}

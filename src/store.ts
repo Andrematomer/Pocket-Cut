@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { cropForAspect, rotateCrop, rotatedSize } from './geometry.ts';
-import { dropAllMedia, dropMedia, mediaBlob, newId, probeVideo, registerMedia, UnsupportedMediaError } from './media.ts';
+import { IMAGE_DEFAULT_SECONDS, decodeImage, dropAllMedia, dropMedia, isImageFile, mediaBlob, newId, probeImage, probeVideo, registerMedia, UnsupportedMediaError } from './media.ts';
+import { onProxyWork, queueProxy } from './proxy.ts';
 import { clearSaved, loadSaved, requestPersistence, saveMedia, saveProject } from './persist.ts';
 import { layout, MAX_SPEED, MIN_CLIP, MIN_SPEED, locate } from './timeline.ts';
-import { DEFAULT_SETTINGS, emptyProject, type Clip, type ExportSettings, type Project } from './types.ts';
+import { DEFAULT_SETTINGS, emptyProject, type Clip, type ExportSettings, type MediaInfo, type Project } from './types.ts';
 
 export type Tool = 'trim' | 'speed' | 'rotate' | 'crop' | 'sound' | 'clip';
-export type Sheet = 'none' | 'export' | 'settings';
+export type Sheet = 'none' | 'export' | 'settings' | 'canvas';
 
 export interface Toast {
   text: string;
@@ -24,6 +25,8 @@ export interface State {
   toast: Toast | null;
   sheet: Sheet;
   ready: boolean;
+  /** a small preview copy is being made in the background */
+  preparing: boolean;
 }
 
 let state: State = {
@@ -36,6 +39,7 @@ let state: State = {
   toast: null,
   sheet: 'none',
   ready: false,
+  preparing: false,
 };
 
 const subs = new Set<() => void>();
@@ -202,14 +206,27 @@ export async function importFiles(files: File[]): Promise<void> {
   let lastError = '';
   for (let i = 0; i < files.length; i++) {
     const file = files[i]!;
-    set({ busy: files.length > 1 ? `Reading video ${i + 1} of ${files.length}…` : 'Reading video…' });
+    const image = isImageFile(file);
+    set({ busy: files.length > 1 ? `Reading ${i + 1} of ${files.length}…` : image ? 'Reading picture…' : 'Reading video…' });
     const id = newId();
     try {
-      const { info, thumb } = await probeVideo(file, id);
-      registerMedia(id, file, thumb);
+      let info: MediaInfo;
+      let thumb: Blob | null;
+      if (image) {
+        const r = await probeImage(file, id);
+        info = r.info;
+        thumb = r.thumb;
+        registerMedia(id, file, thumb, { name: file.name, bitmap: r.bitmap });
+      } else {
+        const r = await probeVideo(file, id);
+        info = r.info;
+        thumb = r.thumb;
+        registerMedia(id, file, thumb, { name: file.name });
+      }
       media[id] = info;
-      added.push({ id: newId(), mediaId: id, start: 0, end: info.duration, speed: 1, rotation: 0, crop: null, cropAspect: null, muted: false, fit: 'contain', keepPitch: true });
+      added.push({ id: newId(), mediaId: id, start: 0, end: image ? IMAGE_DEFAULT_SECONDS : info.duration, speed: 1, rotation: 0, crop: null, cropAspect: null, muted: false, fit: 'contain', keepPitch: true });
       void saveMedia(id, { blob: file, name: file.name, thumb });
+      queueProxy(id, info);
     } catch (e) {
       failed++;
       lastError = e instanceof UnsupportedMediaError ? e.message : `Could not open "${file.name}".`;
@@ -232,8 +249,15 @@ export async function restore(): Promise<void> {
   if (saved && saved.project.clips.length > 0) {
     const usable = new Set<string>();
     for (const [id, m] of saved.media) {
-      registerMedia(id, m.blob, m.thumb);
-      usable.add(id);
+      const info = saved.project.media[id];
+      try {
+        const bitmap = info?.kind === 'image' ? await decodeImage(m.blob) : null;
+        registerMedia(id, m.blob, m.thumb, { name: m.name, proxy: m.proxy ?? null, bitmap });
+        usable.add(id);
+        if (info && !m.proxy) queueProxy(id, info);
+      } catch {
+        /* a picture that no longer decodes is dropped below */
+      }
     }
     // older saves kept "fit" in the export settings and had no pitch option: carry it over per clip
     const oldFit = (saved.project.settings as { fit?: Clip['fit'] } | undefined)?.fit === 'cover' ? 'cover' : 'contain';
@@ -266,3 +290,5 @@ subs.add(() => {
 });
 
 export const blobFor = mediaBlob;
+
+onProxyWork((working) => set({ preparing: working }));

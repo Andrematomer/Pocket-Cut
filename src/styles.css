@@ -520,9 +520,36 @@ input[type='range']::-moz-range-thumb {
   position: relative;
   height: 100%;
 }
+.trim {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+.trim.fine .trim-bar {
+  background: rgba(240, 198, 74, 0.28);
+  outline: 2px solid var(--accent);
+}
 .trim.fine .trim-grip {
   background: #fff;
-  box-shadow: 0 0 0 3px var(--accent);
+  box-shadow: 0 0 0 3px var(--accent), 0 0 18px 4px rgba(240, 198, 74, 0.8);
+  top: -4px;
+  bottom: -4px;
+}
+.trim-fine-label {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -22px;
+  text-align: center;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  color: var(--accent);
+  pointer-events: none;
+}
+.trim-hint.on {
+  color: var(--accent);
+  font-weight: 700;
 }
 .trim-hint {
   margin: 4px 0 0;
@@ -835,10 +862,16 @@ input[type='range']::-moz-range-thumb {
 
 
 /* export: bitrate slider and feedback */
+.rate-slider {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
 .rate-now {
-  float: right;
+  text-align: center;
   color: var(--accent);
-  font-weight: 700;
+  font-weight: 800;
+  font-size: 22px;
 }
 .ticks {
   display: flex;
@@ -869,4 +902,50 @@ input[type='range']::-moz-range-thumb {
   background: var(--raised);
   color: var(--text);
   border: 1px solid var(--line);
+}
+
+/* file picker: kept in the page, invisible */
+.pick-input {
+  position: fixed;
+  left: 0;
+  top: 0;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+.pick-label {
+  cursor: pointer;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+label.cta {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+/* canvas button in the header */
+.canvas-btn {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 36px;
+  padding: 0 12px;
+  border-radius: 18px;
+  background: var(--raised);
+  font-size: 14px;
+  font-weight: 700;
+}
+.canvas-ico {
+  width: 12px;
+  height: 16px;
+  border: 2px solid currentColor;
+  border-radius: 3px;
+  box-sizing: border-box;
+}
+.busy.soft {
+  color: var(--muted);
+  font-size: 13px;
 }

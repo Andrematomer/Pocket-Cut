@@ -1,13 +1,25 @@
 import { importFiles } from './store.ts';
 
-/** Opens the system file / photo picker. Must be called from a tap. */
+export const ACCEPT = 'video/*,image/*,.mp4,.mov,.m4v,.webm,.mkv,.3gp,.jpg,.jpeg,.png,.webp,.gif,.heic,.heif,.avif';
+export const PICKER_ID = 'pc-file-input';
+
+/**
+ * Reads what the person chose. The files are copied to a plain array first and the input is emptied
+ * afterwards, so picking the same file twice still works.
+ */
+export function onPicked(input: HTMLInputElement): void {
+  const files = [...(input.files ?? [])];
+  input.value = '';
+  void importFiles(files);
+}
+
+/**
+ * One file input lives in the page for good (see FilePicker). Buttons that add videos are <label>s for
+ * it: a tap on a label opens the system picker directly, which iPhone home-screen apps accept, while an
+ * input made on the fly in code and clicked from a script is not reliable there.
+ */
 export function pickVideos(): void {
-  const input = document.createElement('input');
-  input.type = 'file';
-  input.accept = 'video/*,.mp4,.mov,.m4v,.webm,.mkv,.3gp';
-  input.multiple = true;
-  input.onchange = () => void importFiles([...(input.files ?? [])]);
-  input.click();
+  (document.getElementById(PICKER_ID) as HTMLInputElement | null)?.click();
 }
 
 export function saveBlob(name: string, blob: Blob): void {

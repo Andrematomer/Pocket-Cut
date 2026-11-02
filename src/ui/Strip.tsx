@@ -1,4 +1,4 @@
-import { pickVideos } from '../files.ts';
+import { PickLabel } from './Picker.tsx';
 import { thumbUrl } from '../media.ts';
 import { set, useStore } from '../store.ts';
 import { clipDuration, fmtTime } from '../timeline.ts';
@@ -31,9 +31,9 @@ export function Strip() {
           </button>
         );
       })}
-      <button class="tile add" onClick={pickVideos} aria-label="Add videos">
+      <PickLabel class="tile add" label="Add videos or pictures">
         <Plus />
-      </button>
+      </PickLabel>
     </div>
   );
 }

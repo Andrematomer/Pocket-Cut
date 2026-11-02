@@ -17,6 +17,8 @@ export interface MediaInfo {
   width: number;
   height: number;
   hasAudio: boolean;
+  /** missing = video */
+  kind?: 'video' | 'image';
 }
 
 export interface Clip {

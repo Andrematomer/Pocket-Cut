@@ -13,10 +13,10 @@ import {
   canEncodeAudio,
   getFirstEncodableVideoCodec,
   type InputAudioTrack,
-  type InputVideoTrack,
   type WrappedCanvas,
 } from 'mediabunny';
 import { videoBitrate } from './bitrate.ts';
+import { mediaBitmap } from './media.ts';
 import { drawFrame, outputSize } from './geometry.ts';
 import { resample, timeStretch } from './stretch.ts';
 import { keepAwake } from './wake.ts';
@@ -46,9 +46,10 @@ export interface ExportResult {
 }
 
 interface Src {
-  input: Input;
-  vt: InputVideoTrack;
-  sink: CanvasSink;
+  input: Input | null;
+  sink: CanvasSink | null;
+  /** set for a still picture: the same picture is drawn on every frame */
+  image: ImageBitmap | null;
   at: InputAudioTrack | null;
 }
 
@@ -224,6 +225,12 @@ export async function exportProject(
     for (const id of new Set(clips.map((c) => c.mediaId))) {
       const blob = getBlob(id);
       if (!blob) throw new FriendlyError('A video file is missing. Remove that clip and add it again.');
+      if (project.media[id]?.kind === 'image') {
+        const image = mediaBitmap(id);
+        if (!image) throw new FriendlyError('A picture is missing. Remove that clip and add it again.');
+        srcs.set(id, { input: null, sink: null, image, at: null });
+        continue;
+      }
       const input = new Input({ source: new BlobSource(blob), formats: ALL_FORMATS });
       const vt = await input.getPrimaryVideoTrack();
       if (!vt) throw new FriendlyError('A video file has no picture in it.');
@@ -232,7 +239,7 @@ export async function exportProject(
       const scale = Math.min(1, 3840 / Math.max(w, h)); // decode at most 4K
       const sink = new CanvasSink(vt, scale < 1 ? { width: Math.round(w * scale), height: Math.round(h * scale), fit: 'fill' } : {});
       const at = plan ? await input.getPrimaryAudioTrack() : null;
-      srcs.set(id, { input, vt, sink, at: at && (await at.canDecode()) ? at : null });
+      srcs.set(id, { input, sink, image: null, at: at && (await at.canDecode()) ? at : null });
     }
 
     for (let pi = 0; pi < parts.length; pi++) {
@@ -256,16 +263,22 @@ export async function exportProject(
           const at = locate(L, t)!;
           const clip = clips[at.index]!;
           const srcT = Math.min(sourceTimeAt(clip, at.local), Math.max(clip.start, clip.end - 1e-3));
-          if (!reader || reader.index !== at.index) {
-            await reader?.r.close();
-            reader = { index: at.index, r: new FrameReader(srcs.get(clip.mediaId)!.sink, srcT, clip.end + 0.05) };
-          }
-          const f = await reader.r.at(srcT);
-          if (f) {
-            drawFrame(ctx, f.canvas, f.canvas.width, f.canvas.height, { rotation: clip.rotation, crop: clip.crop, outW, outH, fit: clip.fit });
+          const src = srcs.get(clip.mediaId)!;
+          const o = { rotation: clip.rotation, crop: clip.crop, outW, outH, fit: clip.fit };
+          if (src.image) {
+            drawFrame(ctx, src.image, src.image.width, src.image.height, o);
           } else {
-            ctx.fillStyle = '#000';
-            ctx.fillRect(0, 0, outW, outH);
+            if (!reader || reader.index !== at.index) {
+              await reader?.r.close();
+              reader = { index: at.index, r: new FrameReader(src.sink!, srcT, clip.end + 0.05) };
+            }
+            const f = await reader.r.at(srcT);
+            if (f) {
+              drawFrame(ctx, f.canvas, f.canvas.width, f.canvas.height, o);
+            } else {
+              ctx.fillStyle = '#000';
+              ctx.fillRect(0, 0, outW, outH);
+            }
           }
           await vs.add(j / fps, 1 / fps);
           framesDone++;
@@ -300,7 +313,7 @@ export async function exportProject(
       onProgress({ part: pi + 1, parts: parts.length, frame: framesDone, frames: totalFrames });
     }
   } finally {
-    for (const s of srcs.values()) s.input.dispose();
+    for (const s of srcs.values()) s.input?.dispose();
     await wake?.release().catch(() => {});
   }
   return { parts: results, warnings };

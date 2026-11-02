@@ -34,8 +34,8 @@ After the first visit it works with no connection.
 | Speed | 0.25× to 4×. The sound keeps its pitch, or follows the speed if you prefer. |
 | Rotate | 90° steps. |
 | Crop | Free, or locked to 9:16, 4:5, 1:1, 16:9. |
-| Join | Add several videos, reorder, duplicate, remove. |
-| Export | MP4, 480p / 720p / 1080p, 24 / 30 / 60 fps. Choose the shape (9:16, 4:5, 1:1, 16:9 or follow the first clip) . Per clip: fit with bars or fill the frame, and keep or follow pitch when changing speed. Your last export settings are remembered. |
+| Join | Add several videos and pictures, reorder, duplicate, remove. A picture shows for 5 s by default; trim it to 0.1–30 s. |
+| Export | MP4, 480p / 720p / 1080p, 24 / 30 / 60 fps. Choose the canvas shape with the button at the top (9:16, 4:5, 1:1, 16:9 or follow the first clip) . Per clip: fit with bars or fill the frame, and keep or follow pitch when changing speed. Your last export settings are remembered. |
 | Bitrate | A quality preset, or a **target video bitrate** slider (1 to 20 Mbps), with a size estimate. The target is an average the encoder aims for: simple pictures usually come out smaller. |
 | **Split** | Off (default), 15 s, 30 s, 60 s or a custom length. Optionally make all parts the same length. Parts are cut on exact frame boundaries, so nothing is lost or repeated at the seams. |
 
@@ -51,6 +51,7 @@ Your last project (with the original videos) is kept on the device until you del
 - Exporting runs on the main thread: keep the screen on and the app open until it finishes. Long 1080p exports are slow on old phones.
 - Each output part is held in memory while it is written, so very long parts at 1080p / 60 fps can run out of memory on low-end phones. Shorter parts help.
 - A web app can't run while it is closed, so the saved project is never cleaned up automatically. Use the delete button.
+- Big videos also get a small, light copy (about 360 px) made in the background, only for the on-screen preview. Export always reads your original file.
 - The preview pauses briefly between two different source files. The exported video has no gap.
 
 ## Develop

@@ -1,7 +1,7 @@
 import type { JSX } from 'preact';
 import { useRef, useState } from 'preact/hooks';
 import { engine } from '../engine.ts';
-import { pickVideos } from '../files.ts';
+import { PickLabel } from './Picker.tsx';
 import {
   deleteClip,
   duplicateClip,
@@ -31,11 +31,18 @@ const TABS: { id: Tool; label: string; icon: () => JSX.Element }[] = [
 ];
 
 export function Tools() {
-  const tool = useStore((s) => s.tool);
+  const stored = useStore((s) => s.tool);
+  const picture = useStore((s) => {
+    const c = s.project.clips[s.selected];
+    return !!c && s.project.media[c.mediaId]?.kind === 'image';
+  });
+  // a picture has no speed or sound
+  const tabs = picture ? TABS.filter((t) => t.id !== 'speed' && t.id !== 'sound') : TABS;
+  const tool = tabs.some((t) => t.id === stored) ? stored : 'trim';
   return (
     <div class="tools">
       <div class="tabs" role="tablist">
-        {TABS.map((t) => (
+        {tabs.map((t) => (
           <button key={t.id} role="tab" aria-selected={tool === t.id} class={tool === t.id ? 'on' : ''} onClick={() => set({ tool: t.id })}>
             <t.icon />
             <span>{t.label}</span>
@@ -66,12 +73,14 @@ function useSel() {
 const HIT = 26; // px: how close a finger must be to a handle to grab it
 const HOLD_MS = 450; // hold a handle still this long for fine control (like the iPhone Photos trimmer)
 const FINE = 0.1; // in fine mode the handle moves a tenth as far as the finger
+const JITTER = 10; // px a finger may wobble while "holding still"
 
 function TrimPanel() {
   const { project, index, clip, media } = useSel();
   const playhead = useStore((s) => s.playhead);
   const track = useRef<HTMLDivElement>(null);
-  const [fine, setFine] = useState(false);
+  const els = useRef<Record<'keep' | 'gs' | 'ge' | 'rs' | 'rm' | 're', HTMLElement | null>>({ keep: null, gs: null, ge: null, rs: null, rm: null, re: null });
+  const [fine, setFine] = useState<'start' | 'end' | null>(null);
   const drag = useRef<{
     mode: 'start' | 'end' | 'seek';
     id: number;
@@ -79,11 +88,13 @@ function TrimPanel() {
     moved: boolean;
     /** handle time minus finger time at grab, so the handle does not jump under the finger */
     offset: number;
-    /** fine mode anchor */
     anchorX: number;
     anchorT: number;
     fine: boolean;
     timer: number;
+    /** the trim while dragging; only saved when the finger lifts */
+    s: number;
+    e: number;
   } | null>(null);
   if (!clip || !media) return null;
 
@@ -93,6 +104,36 @@ function TrimPanel() {
     const r = rect();
     return Math.min(media.duration, Math.max(0, ((clientX - r.left) / r.width) * media.duration));
   };
+
+  /** moves the bar, handles and numbers directly in the page: no re-render while a finger is down */
+  const paint = (s: number, e: number) => {
+    const x = els.current;
+    const pc = (t: number) => `${(t / media.duration) * 100}%`;
+    if (x.keep) (x.keep.style.left = pc(s)), (x.keep.style.width = pc(e - s));
+    if (x.gs) x.gs.style.left = pc(s);
+    if (x.ge) x.ge.style.left = pc(e);
+    if (x.rs) x.rs.textContent = fmtTime(s, 2);
+    if (x.re) x.re.textContent = fmtTime(e, 2);
+    if (x.rm) x.rm.textContent = `${fmtTime((e - s) / clip.speed, 2)} kept`;
+  };
+  const moveHandle = (d: NonNullable<typeof drag.current>, t: number) => {
+    if (d.mode === 'start') d.s = Math.max(0, Math.min(t, d.e - MIN_CLIP));
+    else d.e = Math.min(media.duration, Math.max(t, d.s + MIN_CLIP));
+    paint(d.s, d.e);
+    engine.scrubSource(index, d.mode === 'start' ? d.s : Math.max(d.s, d.e - 0.05), false);
+  };
+  const seekAt = (clientX: number) => {
+    const c = clipAt(index);
+    if (!c) return;
+    engine.scrubSource(index, Math.min(c.end - 0.001, Math.max(c.start, timeAt(clientX))), true);
+  };
+  /** after a handle is released: save the trim and show the clip's edge */
+  const commit = (d: NonNullable<typeof drag.current>) => {
+    setTrim(index, d.s, d.e);
+    const now = clipAt(index)!;
+    const start = layout(getState().project.clips).starts[index]!;
+    void engine.showAt(d.mode === 'start' ? start : start + Math.max(0, clipDuration(now) - 0.05)).then(() => set({ playhead: engine.tl }));
+  };
   const apply = (which: 'start' | 'end', t: number) => {
     const c = clipAt(index);
     if (!c) return;
@@ -101,16 +142,6 @@ function TrimPanel() {
     const now = clipAt(index)!;
     const start = layout(getState().project.clips).starts[index]!;
     void engine.showAt(which === 'start' ? start : start + Math.max(0, clipDuration(now) - 0.05)).then(() => set({ playhead: engine.tl }));
-  };
-  /** show the frame at a source time inside the kept part of this clip */
-  const seekSource = (srcT: number) => {
-    const c = clipAt(index);
-    if (!c) return;
-    const t = Math.min(c.end, Math.max(c.start, srcT));
-    const start = layout(getState().project.clips).starts[index]!;
-    const tl = start + Math.min(clipDuration(c), (t - c.start) / c.speed);
-    set({ playhead: tl });
-    void engine.showAt(tl);
   };
 
   const down = (e: PointerEvent) => {
@@ -123,7 +154,6 @@ function TrimPanel() {
     const dS = Math.abs(e.clientX - xStart);
     const dE = Math.abs(e.clientX - xEnd);
     let mode: 'start' | 'end' | 'seek' = 'seek';
-    // the start handle hangs off the left of its edge, the end handle off the right: grab zones follow that
     if (Math.min(dS, dE) <= HIT) mode = dS < dE || (dS === dE && e.clientX < (xStart + xEnd) / 2) ? 'start' : 'end';
     const d = {
       mode,
@@ -135,21 +165,23 @@ function TrimPanel() {
       anchorT: mode === 'start' ? clip.start : clip.end,
       fine: false,
       timer: 0,
+      s: clip.start,
+      e: clip.end,
     };
     drag.current = d;
     if (mode === 'seek') {
-      seekSource(timeAt(e.clientX));
+      seekAt(e.clientX);
     } else {
       d.timer = window.setTimeout(() => {
         if (drag.current !== d || d.moved) return;
         d.fine = true;
         d.anchorX = d.x0;
-        d.anchorT = mode === 'start' ? clipAt(index)!.start : clipAt(index)!.end;
-        setFine(true);
+        d.anchorT = mode === 'start' ? d.s : d.e;
+        setFine(mode);
         try {
           navigator.vibrate?.(8);
         } catch {
-          /* not supported */
+          /* not supported (iPhone) */
         }
       }, HOLD_MS);
     }
@@ -157,16 +189,16 @@ function TrimPanel() {
   const move = (e: PointerEvent) => {
     const d = drag.current;
     if (!d || e.pointerId !== d.id) return;
-    if (!d.fine && Math.abs(e.clientX - d.x0) > 6) {
+    if (!d.fine && Math.abs(e.clientX - d.x0) > JITTER) {
       d.moved = true;
       clearTimeout(d.timer);
     }
-    if (d.mode === 'seek') return seekSource(timeAt(e.clientX));
+    if (d.mode === 'seek') return seekAt(e.clientX);
     if (d.fine) {
       const r = rect();
-      apply(d.mode, Math.min(media.duration, Math.max(0, d.anchorT + ((e.clientX - d.anchorX) / r.width) * media.duration * FINE)));
+      moveHandle(d, Math.min(media.duration, Math.max(0, d.anchorT + ((e.clientX - d.anchorX) / r.width) * media.duration * FINE)));
     } else if (d.moved) {
-      apply(d.mode, timeAt(e.clientX) + d.offset);
+      moveHandle(d, timeAt(e.clientX) + d.offset);
     }
   };
   const up = (e: PointerEvent) => {
@@ -174,7 +206,8 @@ function TrimPanel() {
     if (!d || e.pointerId !== d.id) return;
     clearTimeout(d.timer);
     drag.current = null;
-    setFine(false);
+    setFine(null);
+    if (d.mode !== 'seek' && (d.s !== clip.start || d.e !== clip.end)) commit(d);
   };
 
   const pct = (t: number) => `${(t / media.duration) * 100}%`;
@@ -194,17 +227,20 @@ function TrimPanel() {
       <div class={`trim ${fine ? 'fine' : ''}`} onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up}>
         <div class="trim-track" ref={track}>
           <div class="trim-bar" />
-          <div class="trim-keep" style={{ left: pct(clip.start), width: pct(clip.end - clip.start) }} />
+          <div class="trim-keep" ref={(n) => void (els.current.keep = n)} style={{ left: pct(clip.start), width: pct(clip.end - clip.start) }} />
           {srcNow !== null && <div class="trim-now" style={{ left: pct(srcNow) }} />}
-          <div class="trim-grip" style={{ left: pct(clip.start) }} />
-          <div class="trim-grip end" style={{ left: pct(clip.end) }} />
+          <div class="trim-grip" ref={(n) => void (els.current.gs = n)} style={{ left: pct(clip.start) }} />
+          <div class="trim-grip end" ref={(n) => void (els.current.ge = n)} style={{ left: pct(clip.end) }} />
+          {fine && <div class="trim-fine-label">FINE · slide slowly</div>}
         </div>
       </div>
-      <p class="hint trim-hint">{fine ? 'Fine control: slide to adjust slowly.' : 'Drag the bar to look around. Hold a yellow end still, then slide, for fine control.'}</p>
+      <p class={`hint trim-hint ${fine ? 'on' : ''}`}>{fine ? 'Fine control is on. Slide to adjust slowly.' : 'Drag the bar to look around. Press and hold a yellow end, then slide, for fine control.'}</p>
       <div class="readout num">
-        <span>{fmtTime(clip.start, 2)}</span>
-        <span class="mid">{fmtTime(clip.end - clip.start, 2)} kept</span>
-        <span>{fmtTime(clip.end, 2)}</span>
+        <span ref={(n) => void (els.current.rs = n)}>{fmtTime(clip.start, 2)}</span>
+        <span class="mid" ref={(n) => void (els.current.rm = n)}>
+          {fmtTime(clipDuration(clip), 2)} kept
+        </span>
+        <span ref={(n) => void (els.current.re = n)}>{fmtTime(clip.end, 2)}</span>
       </div>
       <div class="row">
         <button class="btn" onClick={() => setHere('start')}>
@@ -354,9 +390,9 @@ function ClipPanel() {
       <button class="btn danger" onClick={() => deleteClip(index)}>
         <Trash /> Remove
       </button>
-      <button class="btn wide" onClick={pickVideos}>
-        <Plus /> Add videos
-      </button>
+      <PickLabel class="btn wide">
+        <Plus /> Add videos or pictures
+      </PickLabel>
     </div>
   );
 }

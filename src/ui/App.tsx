@@ -1,9 +1,10 @@
 import { useEffect } from 'preact/hooks';
-import { pickVideos } from '../files.ts';
 import { engine } from '../engine.ts';
 import { restore, set, setName, useStore } from '../store.ts';
+import { ASPECT_LABEL, CanvasSheet } from './CanvasSheet.tsx';
 import { ExportSheet } from './ExportSheet.tsx';
 import { Info, Plus } from './icons.tsx';
+import { FilePicker, PickLabel } from './Picker.tsx';
 import { Preview, Transport } from './Preview.tsx';
 import { SettingsSheet } from './SettingsSheet.tsx';
 import { Strip } from './Strip.tsx';
@@ -16,6 +17,8 @@ export function App() {
   const ready = useStore((s) => s.ready);
   const hasClips = useStore((s) => s.project.clips.length > 0);
   const name = useStore((s) => s.project.name);
+  const aspect = useStore((s) => s.project.settings.aspect);
+  const preparing = useStore((s) => s.preparing);
   const sheet = useStore((s) => s.sheet);
   const busy = useStore((s) => s.busy);
   const toast = useStore((s) => s.toast);
@@ -30,6 +33,7 @@ export function App() {
 
   return (
     <div class="app">
+      <FilePicker />
       <header class="top">
         {hasClips ? (
           <input class="title" value={name} onInput={(e) => setName((e.currentTarget as HTMLInputElement).value)} aria-label="Project name" maxLength={60} />
@@ -39,12 +43,19 @@ export function App() {
         <button class="icon" onClick={() => set({ sheet: 'settings' })} aria-label="About and storage">
           <Info />
         </button>
+        {hasClips && (
+          <button class="canvas-btn num" onClick={() => set({ sheet: 'canvas' })} aria-label={`Canvas shape: ${ASPECT_LABEL[aspect]}`}>
+            <i class="canvas-ico" aria-hidden="true" />
+            {ASPECT_LABEL[aspect]}
+          </button>
+        )}
         <button class="export" disabled={!hasClips} onClick={() => set({ sheet: 'export' })}>
           Export
         </button>
       </header>
 
       {busy && <div class="busy">{busy}</div>}
+      {!busy && preparing && hasClips && <div class="busy soft">Making a lighter copy for smooth preview. You can keep editing.</div>}
 
       {!support.ok ? (
         <Unsupported />
@@ -60,6 +71,7 @@ export function App() {
       )}
 
       {sheet === 'export' && <ExportSheet onClose={() => set({ sheet: 'none' })} />}
+      {sheet === 'canvas' && <CanvasSheet onClose={() => set({ sheet: 'none' })} />}
       {sheet === 'settings' && <SettingsSheet onClose={() => set({ sheet: 'none' })} />}
 
       {toast && (
@@ -91,9 +103,9 @@ function Empty() {
       </div>
       <h1>Trim, turn, crop and join videos</h1>
       <p>Cut a long video into 60-second parts for stories. It all happens on this device, with no upload and no watermark.</p>
-      <button class="cta" onClick={pickVideos}>
-        <Plus /> Choose videos
-      </button>
+      <PickLabel class="cta">
+        <Plus /> Choose videos or pictures
+      </PickLabel>
     </main>
   );
 }
