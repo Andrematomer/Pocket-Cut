@@ -122,3 +122,24 @@ export const Help = () => (
     <circle cx="12" cy="17" r="0.6" fill="currentColor" stroke-width="1.4" />
   </I>
 );
+export const Undo = () => (
+  <I>
+    <path d="M9 7L4 12l5 5M4 12h10a6 6 0 0 1 0 12" transform="translate(0 -4)" />
+  </I>
+);
+export const Redo = () => (
+  <I>
+    <path d="M15 7l5 5-5 5M20 12H10a6 6 0 0 0 0 12" transform="translate(0 -4)" />
+  </I>
+);
+export const Gear = () => (
+  <I>
+    <circle cx="12" cy="12" r="3" />
+    <path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M18.7 5.3l-2.1 2.1M7.4 16.6l-2.1 2.1" />
+  </I>
+);
+export const Order = () => (
+  <I>
+    <path d="M4 8h13M13 4l4 4-4 4M20 16H7M11 12l-4 4 4 4" />
+  </I>
+);

@@ -1,24 +1,16 @@
 import { useEffect, useState } from 'preact/hooks';
 import { fmtBytes } from '../files.ts';
 import { storageEstimate } from '../persist.ts';
-import { discardProject, useStore } from '../store.ts';
+import { canPromptInstall, isIOS, isStandalone, promptInstall } from '../install.ts';
+import { discardProject, setPrefs, useStore } from '../store.ts';
 import { browserInfo, checkSupport } from '../support.ts';
+import { requeueAllProxies } from '../proxy.ts';
 import { Sheet } from './Sheet.tsx';
-
-interface InstallEvent extends Event {
-  prompt(): Promise<void>;
-}
-let installEvent: InstallEvent | null = null;
-window.addEventListener('beforeinstallprompt', (e) => {
-  e.preventDefault();
-  installEvent = e as InstallEvent;
-});
-
-const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-const standalone = window.matchMedia('(display-mode: standalone)').matches || (navigator as unknown as { standalone?: boolean }).standalone === true;
 
 export function SettingsSheet({ onClose }: { onClose: () => void }) {
   const hasProject = useStore((s) => s.project.clips.length > 0);
+  const prefs = useStore((s) => s.prefs);
+  const media = useStore((s) => s.project.media);
   const [usage, setUsage] = useState<{ used: number; quota: number } | null>(null);
   const [confirm, setConfirm] = useState(false);
   const offline = !!navigator.serviceWorker?.controller;
@@ -28,7 +20,39 @@ export function SettingsSheet({ onClose }: { onClose: () => void }) {
   }, []);
 
   return (
-    <Sheet title="About & storage" onClose={onClose}>
+    <Sheet title="Settings" onClose={onClose}>
+      <section>
+        <h3>New pictures stay for</h3>
+        <div class="chips" role="group" aria-label="Default picture duration">
+          {[2, 3, 5, 7, 10].map((n) => (
+            <button key={n} class={`chip num ${prefs.imageSeconds === n ? 'on' : ''}`} aria-pressed={prefs.imageSeconds === n} onClick={() => setPrefs({ imageSeconds: n })}>
+              {n} s
+            </button>
+          ))}
+        </div>
+      </section>
+
+      <section>
+        <h3>Preview quality</h3>
+        <div class="chips" role="group" aria-label="Preview size">
+          {[144, 240, 360].map((n) => (
+            <button
+              key={n}
+              class={`chip num ${prefs.previewLong === n ? 'on' : ''}`}
+              aria-pressed={prefs.previewLong === n}
+              onClick={() => {
+                if (prefs.previewLong === n) return;
+                setPrefs({ previewLong: n });
+                requeueAllProxies(media, n);
+              }}
+            >
+              {n}p
+            </button>
+          ))}
+        </div>
+        <p class="hint">Videos are previewed from a small copy so editing stays smooth. Pick a lower number if the preview stutters on an older phone. The exported video always uses the originals.</p>
+      </section>
+
       <section>
         <h3>Saved project</h3>
         <p class="hint">
@@ -73,12 +97,12 @@ export function SettingsSheet({ onClose }: { onClose: () => void }) {
       <section>
         <h3>Offline</h3>
         <p class="hint">{offline ? 'Ready to work without a connection.' : 'Open the app once while online. After that it works offline.'}</p>
-        {!standalone && installEvent && (
-          <button class="btn" onClick={() => void installEvent?.prompt()}>
+        {!isStandalone && canPromptInstall() && (
+          <button class="btn" onClick={() => void promptInstall()}>
             Install app
           </button>
         )}
-        {!standalone && isIOS && <p class="hint">To install on iPhone or iPad: tap Share, then Add to Home Screen.</p>}
+        {!isStandalone && isIOS && <p class="hint">To install on iPhone or iPad: tap Share, then Add to Home Screen.</p>}
       </section>
     </Sheet>
   );

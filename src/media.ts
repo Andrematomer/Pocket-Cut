@@ -40,6 +40,15 @@ export function setProxy(id: string, proxy: Blob): boolean {
   e.proxyUrl = URL.createObjectURL(proxy);
   return true;
 }
+/** Forgets the small preview copy. Returns true if there was a video that can get a new one. */
+export function clearProxy(id: string): boolean {
+  const e = entries.get(id);
+  if (!e || e.bitmap) return false;
+  if (e.proxyUrl) URL.revokeObjectURL(e.proxyUrl);
+  e.proxy = null;
+  e.proxyUrl = '';
+  return true;
+}
 export const mediaEntry = (id: string): Entry | undefined => entries.get(id);
 export const mediaBitmap = (id: string): ImageBitmap | undefined => entries.get(id)?.bitmap ?? undefined;
 

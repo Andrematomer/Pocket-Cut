@@ -456,7 +456,8 @@ input[type='range']::-moz-range-thumb {
   background: rgba(240, 198, 74, 0.28);
   outline: 2px solid var(--accent);
 }
-.trim.fine .trim-grip {
+.trim.fine-start .trim-grip:not(.end),
+.trim.fine-end .trim-grip.end {
   background: #fff;
   box-shadow: 0 0 0 3px var(--accent), 0 0 18px 4px rgba(240, 198, 74, 0.8);
   top: -4px;
@@ -1076,4 +1077,93 @@ label.cta {
 .top {
   gap: 4px;
   padding-right: 10px;
+}
+
+.trim.fine-seek .trim-now {
+  width: 4px;
+  margin-left: -2px;
+  background: #fff;
+  box-shadow: 0 0 14px 4px rgba(240, 198, 74, 0.9);
+}
+
+.frame.fine {
+  box-shadow: 0 0 0 3px var(--accent), 0 0 22px 4px rgba(240, 198, 74, 0.7);
+}
+
+.tile,
+.tile * {
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+.tile .thumb-img {
+  position: absolute;
+  inset: 0;
+  background-size: cover;
+  background-position: center;
+  pointer-events: none;
+}
+.pitch,
+.pitch.on {
+  color: var(--accent);
+}
+.sound {
+  flex-wrap: wrap;
+}
+.volume-note {
+  flex: 0 0 100%;
+  margin: 4px 4px 0;
+  font-size: 12.5px;
+}
+.order {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 0;
+}
+.order .btn {
+  flex: none;
+}
+.order-pos {
+  color: var(--muted);
+  font-size: 14px;
+}
+.top .spacer {
+  flex: 1;
+}
+.install {
+  margin-top: 22px;
+  padding: 14px 16px;
+  border-radius: 14px;
+  background: var(--surface);
+  text-align: left;
+  max-width: 340px;
+  font-size: 14px;
+  line-height: 1.5;
+}
+.install h2 {
+  margin: 0 0 6px;
+  font-size: 15px;
+}
+.install p {
+  margin: 0 0 8px;
+}
+.install ol {
+  margin: 0;
+  padding-left: 20px;
+}
+.chips.wrap {
+  flex-wrap: wrap;
+}
+.name-field {
+  width: 100%;
+  height: 44px;
+  border-radius: 10px;
+  background: var(--raised);
+  border: 0;
+  color: var(--text);
+  padding: 0 12px;
+  font-size: 16px;
 }

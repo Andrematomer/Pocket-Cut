@@ -33,7 +33,7 @@ export interface Clip {
   keepPitch: boolean;
 }
 
-export type AspectChoice = 'auto' | '9:16' | '4:5' | '1:1' | '16:9';
+export type AspectChoice = '9:16' | '4:5' | '1:1' | '16:9';
 
 export interface ExportSettings {
   aspect: AspectChoice;
@@ -59,7 +59,7 @@ export interface Project {
 }
 
 export const DEFAULT_SETTINGS: ExportSettings = {
-  aspect: 'auto',
+  aspect: '9:16',
   resolution: 1080,
   fps: 30,
   quality: 'medium',

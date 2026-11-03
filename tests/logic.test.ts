@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { IDENTITY_VIEW, baseScale, dragView, fillZoom, fitZoom, frameTransform, normAngle, outputSize, pinchView, quarterTurned, snapView } from '../src/geometry.ts';
+import { IDENTITY_VIEW, baseScale, dragView, fillZoom, fitZoom, frameTransform, nearestAspect, normAngle, outputSize, pinchView, quarterTurned, snapView } from '../src/geometry.ts';
 import { layout, locate, planParts } from '../src/timeline.ts';
 import { resample, timeStretch } from '../src/stretch.ts';
 import { MAX_MBPS, MIN_MBPS, RATE_STOPS, autoBitrate, estimateBytes, fmtMbps, videoBitrate } from '../src/bitrate.ts';
@@ -77,12 +77,8 @@ test('normAngle and quarterTurned', () => {
   assert.deepEqual(quarterTurned(10, 20, 30), { w: 10, h: 20 });
 });
 
-test('outputSize: auto follows the first clip, presets are even-sized', () => {
+test('outputSize: presets are even-sized', () => {
   const p = emptyProject();
-  p.media.a = { id: 'a', name: 'a', duration: 10, width: 1920, height: 1080, hasAudio: true };
-  const clip: Clip = { id: 'c', mediaId: 'a', start: 0, end: 10, speed: 1, view: view({ rot: 90 }), volume: 1, keepPitch: true };
-  p.clips = [clip];
-  assert.deepEqual(outputSize(p), { w: 1920, h: 1080 }); // turning the clip does not change the canvas
   p.settings.resolution = 1080;
   p.settings.aspect = '4:5';
   assert.deepEqual(outputSize(p), { w: 1080, h: 1350 });
@@ -91,6 +87,13 @@ test('outputSize: auto follows the first clip, presets are even-sized', () => {
   p.settings.resolution = 720;
   p.settings.aspect = '9:16';
   assert.deepEqual(outputSize(p), { w: 720, h: 1280 });
+});
+
+test('nearestAspect: picks the canvas that suits the first picture', () => {
+  assert.equal(nearestAspect(1080, 1920), '9:16');
+  assert.equal(nearestAspect(1920, 1080), '16:9');
+  assert.equal(nearestAspect(1000, 1000), '1:1');
+  assert.equal(nearestAspect(1080, 1350), '4:5');
 });
 
 test('layout and locate honour speed', () => {

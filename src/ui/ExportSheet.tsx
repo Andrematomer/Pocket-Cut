@@ -4,7 +4,7 @@ import { engine } from '../engine.ts';
 import { RATE_STOPS, estimateBytes, fmtMbps, videoBitrate } from '../bitrate.ts';
 import { fmtBytes, saveBlob, shareFiles } from '../files.ts';
 import { outputSize } from '../geometry.ts';
-import { blobFor, setSettings, useStore } from '../store.ts';
+import { blobFor, setName, setSettings, useStore } from '../store.ts';
 import { fmtTime, layout, planParts } from '../timeline.ts';
 import type { ExportSettings } from '../types.ts';
 import { Check, Download, Share } from './icons.tsx';
@@ -83,6 +83,10 @@ export function ExportSheet({ onClose }: { onClose: () => void }) {
     <Sheet title={phase.name === 'done' ? 'Your videos' : 'Export'} onClose={close}>
       {phase.name === 'setup' && (
         <>
+          <section>
+            <h3>File name</h3>
+            <input class="name-field" value={project.name} onInput={(e) => setName((e.currentTarget as HTMLInputElement).value)} aria-label="File name" maxLength={60} autocomplete="off" />
+          </section>
           <section>
             <h3>Split into files</h3>
             <div class="chips">

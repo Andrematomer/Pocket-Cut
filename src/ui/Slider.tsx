@@ -33,7 +33,7 @@ export interface SliderProps {
 export function Slider(p: SliderProps) {
   const track = useRef<HTMLDivElement>(null);
   const [fine, setFine] = useState(false);
-  const drag = useRef<{ id: number; x0: number; last: number; offset: number; anchorX: number; anchorF: number; wobbled: boolean; fine: boolean; timer: number } | null>(null);
+  const drag = useRef<{ id: number; last: number; armX: number; offset: number; anchorX: number; anchorF: number; wobbled: boolean; fine: boolean; timer: number } | null>(null);
 
   const toFrac = (v: number) => (p.log ? Math.log(v / p.min) / Math.log(p.max / p.min) : (v - p.min) / (p.max - p.min));
   const fromFrac = (f: number) => {
@@ -63,34 +63,42 @@ export function Slider(p: SliderProps) {
   const latest = useRef(p);
   latest.current = p;
 
-  const down = (e: PointerEvent) => {
-    e.preventDefault();
-    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-    const r = track.current!.getBoundingClientRect();
-    const f0 = toFrac(p.value);
-    const grabbed = Math.abs(e.clientX - (r.left + f0 * r.width)) <= GRAB;
-    const d = { id: e.pointerId, x0: e.clientX, last: e.clientX, offset: grabbed ? f0 - fracAt(e.clientX) : 0, anchorX: e.clientX, anchorF: f0, wobbled: false, fine: false, timer: 0 };
-    drag.current = d;
-    if (!grabbed) emit(pick(fracAt(e.clientX), false)); // a tap jumps the thumb to the finger
+  /** (re)starts the hold timer: when the finger stays still this long, fine control begins right there */
+  const arm = (d: NonNullable<typeof drag.current>) => {
+    clearTimeout(d.timer);
     d.timer = window.setTimeout(() => {
-      // held still: switch to fine control from where the thumb is now
-      if (drag.current !== d || d.wobbled) return;
+      if (drag.current !== d || d.fine) return;
       d.fine = true;
       d.anchorX = d.last;
       d.anchorF = toFrac(latest.current.value);
       setFine(true);
     }, HOLD_MS);
   };
+
+  const down = (e: PointerEvent) => {
+    e.preventDefault();
+    if (drag.current) clearTimeout(drag.current.timer); // a stale drag (lost finger) is dropped
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    const r = track.current!.getBoundingClientRect();
+    const f0 = toFrac(p.value);
+    const grabbed = Math.abs(e.clientX - (r.left + f0 * r.width)) <= GRAB;
+    const d = { id: e.pointerId, last: e.clientX, armX: e.clientX, offset: grabbed ? f0 - fracAt(e.clientX) : 0, anchorX: e.clientX, anchorF: f0, wobbled: false, fine: false, timer: 0 };
+    drag.current = d;
+    if (!grabbed) emit(pick(fracAt(e.clientX), false)); // a tap jumps the thumb to the finger
+    arm(d);
+  };
   const move = (e: PointerEvent) => {
     const d = drag.current;
     if (!d || e.pointerId !== d.id) return;
     d.last = e.clientX;
-    if (!d.fine && Math.abs(e.clientX - d.x0) > JITTER) {
+    if (d.fine) return void emit(pick(d.anchorF + ((e.clientX - d.anchorX) / width()) * FINE, true));
+    // moving restarts the hold timer, so holding still anywhere along the way gives fine control
+    if (Math.abs(e.clientX - d.armX) > JITTER) {
+      d.armX = e.clientX;
       d.wobbled = true;
-      clearTimeout(d.timer);
+      arm(d);
     }
-    if (d.fine) emit(pick(d.anchorF + ((e.clientX - d.anchorX) / width()) * FINE, true));
-    else if (d.wobbled) emit(pick(fracAt(e.clientX) + d.offset, false));
+    if (d.wobbled) emit(pick(fracAt(e.clientX) + d.offset, false));
   };
   const up = (e: PointerEvent) => {
     const d = drag.current;

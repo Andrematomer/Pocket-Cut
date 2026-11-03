@@ -1,5 +1,5 @@
 import { ALL_FORMATS, BlobSource, BufferTarget, Conversion, Input, Mp4OutputFormat, Output, Quality, canEncodeAudio, getFirstEncodableVideoCodec } from 'mediabunny';
-import { mediaEntry, setProxy } from './media.ts';
+import { clearProxy, mediaEntry, setProxy } from './media.ts';
 import { saveMedia } from './persist.ts';
 import type { MediaInfo } from './types.ts';
 
@@ -9,8 +9,7 @@ import type { MediaInfo } from './types.ts';
  * small, easy-to-play copy (about 360 px, 30 fps, a key frame every second) that only the on-screen preview
  * uses. Export always reads the original file.
  */
-const LONG_SIDE = 360;
-const queue: { id: string; info: MediaInfo; done: () => void }[] = [];
+const queue: { id: string; info: MediaInfo; long: number }[] = [];
 let running = false;
 let listener: (working: boolean) => void = () => {};
 
@@ -19,13 +18,28 @@ export const onProxyWork = (f: (working: boolean) => void): void => {
 };
 
 /** true when a preview copy would help: only big pictures are worth it */
-export const wantsProxy = (info: MediaInfo): boolean => info.kind !== 'image' && Math.max(info.width, info.height) > 540;
+export const wantsProxy = (info: MediaInfo, long = 360): boolean => info.kind !== 'image' && Math.max(info.width, info.height) > long * 1.4;
 
-export function queueProxy(id: string, info: MediaInfo): void {
-  if (!wantsProxy(info) || queue.some((q) => q.id === id)) return;
-  queue.push({ id, info, done: () => {} });
+/** `long` is the size (long side, pixels) of the copy; smaller copies play more smoothly on weak phones. */
+export function queueProxy(id: string, info: MediaInfo, long: number): void {
+  if (!wantsProxy(info, long) || queue.some((q) => q.id === id)) return;
+  queue.push({ id, info, long });
   void drain();
 }
+
+/** The preview size was changed: drop the old copies and make them again. */
+export function requeueAllProxies(media: Record<string, MediaInfo>, long = loadLong()): void {
+  for (const [id, info] of Object.entries(media)) {
+    if (clearProxy(id)) queueProxy(id, info, long);
+  }
+}
+const loadLong = (): number => {
+  try {
+    return (JSON.parse(localStorage.getItem('pocket-cut:app-settings') ?? '{}') as { previewLong?: number }).previewLong ?? 360;
+  } catch {
+    return 360;
+  }
+};
 
 async function drain(): Promise<void> {
   if (running) return;
@@ -37,7 +51,7 @@ async function drain(): Promise<void> {
       const e = mediaEntry(job.id);
       if (!e || e.proxy) continue;
       try {
-        const blob = await makeProxy(e.blob, job.info, () => !mediaEntry(job.id));
+        const blob = await makeProxy(e.blob, job.info, job.long, () => !mediaEntry(job.id));
         if (!blob) console.info('preview copy skipped (no suitable encoder)');
         if (blob && setProxy(job.id, blob)) void saveMedia(job.id, { blob: e.blob, name: e.name, thumb: e.thumb, proxy: blob });
       } catch (err) {
@@ -50,14 +64,14 @@ async function drain(): Promise<void> {
   }
 }
 
-async function makeProxy(source: Blob, info: MediaInfo, cancelled: () => boolean): Promise<Blob | null> {
+async function makeProxy(source: Blob, info: MediaInfo, long: number, cancelled: () => boolean): Promise<Blob | null> {
   if (typeof VideoEncoder === 'undefined') return null;
   // H.264 plays everywhere; VP9 only as a fallback where there is no H.264 encoder (it plays in the browsers that offer it)
   const codec = await getFirstEncodableVideoCodec(['avc', 'vp9'], { width: 640, height: 360, frameRate: 30, quality: new Quality({ bitrate: 800_000 }) }).catch(() => null);
   if (!codec) return null;
   // sound must be copied too, or the preview would be silent: no AAC encoder means no preview copy
   if (info.hasAudio && !(await canEncodeAudio('aac', { numberOfChannels: 2, sampleRate: 48000, quality: new Quality({ bitrate: 64_000 }) }).catch(() => false))) return null;
-  const k = LONG_SIDE / Math.max(info.width, info.height);
+  const k = long / Math.max(info.width, info.height);
   const even = (n: number) => Math.max(2, Math.round(n / 2) * 2);
   const input = new Input({ source: new BlobSource(source), formats: ALL_FORMATS });
   try {

@@ -7,8 +7,13 @@
 > settings will change, and a saved project can be lost between versions.
 > Please don't rely on it for anything important, and keep the original videos.
 
-Quick video edits on your phone, without a 2 GB app: **trim, speed up, rotate, crop, join** clips and
-**export as several files of a fixed length** (for example 60-second parts for Instagram Stories).
+Ever tried to send a video to Discord and been greeted by the **5 MB limit**? Or needed to cut ten
+seconds out of a clip and ended up downloading a 2 GB video editor you will never open again? Or
+wanted to post a long video as Stories, only to find it cut off at the wrong second?
+
+Pocket Cut is for those moments. It is a quick-edit tool, not a CapCut or VN clone: **trim, speed up,
+place, join** clips and pictures, shrink them to a size that fits, and **export as several files of a
+fixed length** (for example 60-second parts for Instagram Stories). It stays small on purpose.
 
 Runs entirely in the browser. No account, no upload, no watermark, no ads.
 
@@ -30,12 +35,11 @@ After the first visit it works with no connection.
 
 | | |
 |---|---|
-| Trim | Drag the yellow ends of the bar; drag elsewhere on the bar to look around; hold an end for fine control. The scissors button cuts a clip in two. |
+| Trim | Drag the yellow ends of the bar; drag elsewhere on the bar to look around; hold still while dragging for fine control. The scissors button cuts a clip in two. |
 | Speed | A snapping slider from 0.25× to 4×. The voice keeps its pitch, or follows the speed if you prefer. |
-
 | Place | Drag, pinch and twist the clip right on the preview, like an Instagram story: free move, zoom and turn, with snapping to the center, quarter turns, "fits" and "fills". Black bars appear where the picture does not cover the canvas. |
-| Join | Add several videos and pictures. Press and hold a thumbnail to turn, reset, move, copy or remove it. A picture shows for 5 s by default (1 to 30 s). |
-| Export | MP4, 480p / 720p / 1080p, 24 / 30 / 60 fps. Choose the canvas shape with the button at the top (9:16, 4:5, 1:1, 16:9 or follow the first clip). Your last export settings are remembered. |
+| Join | Add several videos and pictures. Press and hold a thumbnail to turn, reset, copy or delete it; the Order tab moves it earlier or later. Undo and redo are in the header. A picture shows for 5 s by default (changeable in Settings). |
+| Export | MP4, 480p / 720p / 1080p, 24 / 30 / 60 fps. Choose the canvas shape with the button at the top (9:16, 4:5, 1:1 or 16:9; a new project picks the one closest to its first clip). Your last export settings are remembered. |
 | Quality | Low, Balanced, High, or Custom with a bitrate slider (1 to 20 Mbps) and a size estimate. The number is a target: simple pictures usually come out smaller. |
 | **Split** | Off (default), 15 s, 30 s, 60 s or a custom length. Optionally make all parts the same length. Parts are cut on exact frame boundaries, so nothing is lost or repeated at the seams. |
 
@@ -51,7 +55,8 @@ Your last project (with the original videos) is kept on the device until you del
 - Exporting runs on the main thread: keep the screen on and the app open until it finishes. Long 1080p exports are slow on old phones.
 - Each output part is held in memory while it is written, so very long parts at 1080p / 60 fps can run out of memory on low-end phones. Shorter parts help.
 - A web app can't run while it is closed, so the saved project is never cleaned up automatically. Use the delete button.
-- Big videos also get a small, light copy (about 360 px) made in the background, only for the on-screen preview. Export always reads your original file.
+- Big videos also get a small, light copy (144 to 360 px, set in Settings) made in the background, only for the on-screen preview. Export always reads your original file.
+- On iPhone the preview volume may not follow the Sound slider (the browser limits it); the export always does. The lock screen may show a bare player while a preview plays; a web page cannot fully switch that off.
 - The preview pauses briefly between two different source files. The exported video has no gap.
 
 ## Develop
@@ -59,7 +64,7 @@ Your last project (with the original videos) is kept on the device until you del
 ```
 npm install
 npm run dev      # dev server (no offline cache in dev)
-npm test         # unit tests: crop, rotation, splitting, bitrate, pitch-preserving speed
+npm test         # unit tests: placement, rotation, splitting, bitrate, pitch-preserving speed
 npm run build    # type-check + production build into dist/, including the service worker
 ```
 

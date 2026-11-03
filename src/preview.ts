@@ -22,6 +22,8 @@ export interface PreviewDeps {
  * video (never fighting it with seeks, which would cut the sound). If the browser ignores the speed
  * (some iPhones do), the timeline follows a clock and the picture is stepped by seeking.
  */
+const IOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+
 export class PreviewEngine {
   readonly video = document.createElement('video');
   private canvas: HTMLCanvasElement | null = null;
@@ -52,7 +54,28 @@ export class PreviewEngine {
     v.preload = 'auto';
     v.preservesPitch = true;
     v.style.cssText = 'position:fixed;left:0;top:0;width:2px;height:2px;opacity:0;pointer-events:none;';
+    // keep the phone from treating the preview as a media player (AirPlay picker, lock-screen controls)
+    v.disableRemotePlayback = true;
+    v.setAttribute('x-webkit-airplay', 'deny');
     document.body.appendChild(v);
+    // a Web Audio context only starts after a touch: wake it on every one, so the sound never stays muted
+    const wake = () => this.wakeAudio();
+    window.addEventListener('pointerdown', wake, { passive: true });
+    window.addEventListener('touchend', wake, { passive: true });
+    this.hideFromLockScreen();
+    v.addEventListener('play', () => this.hideFromLockScreen());
+  }
+
+  /** best effort: an empty "now playing" entry. iOS may still show a bare player while sound plays. */
+  private hideFromLockScreen(): void {
+    const ms = (navigator as Navigator & { mediaSession?: MediaSession }).mediaSession;
+    if (!ms) return;
+    try {
+      ms.metadata = null;
+      for (const a of ['play', 'pause', 'seekbackward', 'seekforward', 'previoustrack', 'nexttrack', 'seekto', 'stop'] as MediaSessionAction[]) ms.setActionHandler(a, null);
+    } catch {
+      /* some actions are not known to this browser */
+    }
   }
 
   attach(canvas: HTMLCanvasElement | null): void {
@@ -68,6 +91,11 @@ export class PreviewEngine {
     this.video.removeAttribute('src');
     this.video.load();
     this.video.remove();
+  }
+
+  /** the clip that is on screen right now */
+  currentIndex(): number {
+    return this.current()?.index ?? 0;
   }
 
   private current(): { clip: Clip; index: number } | null {
@@ -147,7 +175,8 @@ export class PreviewEngine {
 
   /**
    * Sets the loudness of the preview. Most browsers let a page set video.volume. iPhones do not (it
-   * stays at 1), so there the sound is routed through Web Audio and turned down by a gain node.
+   * is read-only there), so on iOS the sound is always routed through Web Audio and turned down by a
+   * gain node. Elsewhere that route is only used when the browser ignores video.volume.
    */
   applyVolume(vol: number): void {
     const v = this.video;
@@ -161,19 +190,25 @@ export class PreviewEngine {
     } catch {
       /* read-only on some browsers */
     }
-    if (vol < 1 && Math.abs(v.volume - vol) > 0.02) {
-      try {
-        const Ctx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-        const ctx = new Ctx();
-        const gain = ctx.createGain();
-        ctx.createMediaElementSource(v).connect(gain).connect(ctx.destination);
-        gain.gain.value = vol;
-        this.audio = { ctx, gain };
-        void ctx.resume().catch(() => {});
-      } catch {
-        /* no way to change the loudness here: the preview stays at full volume, the export is still right */
-      }
+    const ignored = IOS || (vol < 1 && Math.abs(v.volume - vol) > 0.02);
+    if (!ignored) return;
+    try {
+      const Ctx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+      const ctx = new Ctx();
+      const gain = ctx.createGain();
+      ctx.createMediaElementSource(v).connect(gain).connect(ctx.destination);
+      gain.gain.value = vol;
+      this.audio = { ctx, gain };
+      void ctx.resume().catch(() => {});
+    } catch {
+      /* no way to change the loudness here: the preview stays at full volume, the export is still right */
     }
+  }
+
+  /** whether the preview loudness really follows the volume setting in this browser */
+  volumeWorks(): boolean {
+    if (this.audio) return this.audio.ctx.state === 'running' || this.audio.ctx.state === 'suspended';
+    return !IOS;
   }
 
   /** call from a tap: a Web Audio context only starts after a gesture */

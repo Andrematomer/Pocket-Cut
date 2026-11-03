@@ -1,16 +1,17 @@
 import type { JSX } from 'preact';
 import { useRef, useState } from 'preact/hooks';
 import { engine } from '../engine.ts';
-import { getState, set, setSpeed, setTrim, updateClip, useStore, type Tool } from '../store.ts';
+import { getState, moveClip, set, setSpeed, setTrim, updateClip, useStore, type Tool } from '../store.ts';
 import { MAX_SPEED, MIN_CLIP, MIN_SPEED, clipDuration, fmtTime, layout, locate } from '../timeline.ts';
 import { IMAGE_MAX_SECONDS } from '../media.ts';
-import { Mute, Sound, Speed, Trim } from './icons.tsx';
+import { Left, Mute, Order, Right, Sound, Speed, Trim } from './icons.tsx';
 import { Slider } from './Slider.tsx';
 
 const TABS: { id: Tool; label: string; icon: () => JSX.Element }[] = [
   { id: 'trim', label: 'Trim', icon: Trim },
   { id: 'speed', label: 'Speed', icon: Speed },
   { id: 'sound', label: 'Sound', icon: Sound },
+  { id: 'order', label: 'Order', icon: Order },
 ];
 
 export function Tools() {
@@ -21,7 +22,7 @@ export function Tools() {
     return !m ? 'none' : m.kind === 'image' ? 'image' : m.hasAudio ? 'video' : 'silent';
   });
   // a picture only has a duration; a video without sound has no Sound tab
-  const tabs = kind === 'image' ? [{ id: 'trim' as Tool, label: 'Duration', icon: Trim }] : kind === 'silent' ? TABS.filter((t) => t.id !== 'sound') : TABS;
+  const tabs = kind === 'image' ? [{ id: 'trim' as Tool, label: 'Duration', icon: Trim }, { id: 'order' as Tool, label: 'Order', icon: Order }] : kind === 'silent' ? TABS.filter((t) => t.id !== 'sound') : TABS;
   const tool = tabs.some((t) => t.id === stored) ? stored : 'trim';
   return (
     <div class="tools">
@@ -37,6 +38,7 @@ export function Tools() {
         {tool === 'trim' && (kind === 'image' ? <DurationPanel /> : <TrimPanel />)}
         {tool === 'speed' && <SpeedPanel />}
         {tool === 'sound' && <SoundPanel />}
+        {tool === 'order' && <OrderPanel />}
       </div>
     </div>
   );
@@ -61,16 +63,18 @@ function TrimPanel() {
   const playhead = useStore((s) => s.playhead);
   const track = useRef<HTMLDivElement>(null);
   const els = useRef<Record<'keep' | 'gs' | 'ge' | 'rs' | 'rm' | 're', HTMLElement | null>>({ keep: null, gs: null, ge: null, rs: null, rm: null, re: null });
-  const [fine, setFine] = useState<'start' | 'end' | null>(null);
+  const [fine, setFine] = useState<'start' | 'end' | 'seek' | null>(null);
   const drag = useRef<{
     mode: 'start' | 'end' | 'seek';
     id: number;
-    x0: number;
     moved: boolean;
     /** handle time minus finger time at grab, so the handle does not jump under the finger */
     offset: number;
     anchorX: number;
     anchorT: number;
+    last: number;
+    armX: number;
+    seekT: number;
     fine: boolean;
     timer: number;
     /** the trim while dragging; only saved when the finger lifts */
@@ -108,6 +112,12 @@ function TrimPanel() {
     if (!c) return;
     engine.scrubSource(index, Math.min(c.end - 0.001, Math.max(c.start, timeAt(clientX))), true);
   };
+  const seekTo = (d: NonNullable<typeof drag.current>, t: number) => {
+    const c = clipAt(index);
+    if (!c) return;
+    d.seekT = t;
+    engine.scrubSource(index, Math.min(c.end - 0.001, Math.max(c.start, t)), true);
+  };
   /** after a handle is released: save the trim and show the clip's edge */
   const commit = (d: NonNullable<typeof drag.current>) => {
     setTrim(index, d.s, d.e);
@@ -115,9 +125,27 @@ function TrimPanel() {
     const start = layout(getState().project.clips).starts[index]!;
     void engine.showAt(d.mode === 'start' ? start : start + Math.max(0, clipDuration(now) - 0.05)).then(() => set({ playhead: engine.tl }));
   };
+  /** (re)starts the hold timer: when the finger stays still this long, fine control begins right there */
+  const arm = (d: NonNullable<typeof drag.current>) => {
+    clearTimeout(d.timer);
+    d.timer = window.setTimeout(() => {
+      if (drag.current !== d || d.fine) return;
+      d.fine = true;
+      d.anchorX = d.last;
+      d.anchorT = d.mode === 'start' ? d.s : d.mode === 'end' ? d.e : d.seekT;
+      setFine(d.mode);
+      try {
+        navigator.vibrate?.(8);
+      } catch {
+        /* not supported (iPhone) */
+      }
+    }, HOLD_MS);
+  };
+
   const down = (e: PointerEvent) => {
     e.preventDefault();
     engine.pause();
+    if (drag.current) clearTimeout(drag.current.timer); // a stale drag (lost finger) is dropped
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
     const r = rect();
     const xStart = r.left + (clip.start / media.duration) * r.width;
@@ -129,48 +157,40 @@ function TrimPanel() {
     const d = {
       mode,
       id: e.pointerId,
-      x0: e.clientX,
+      last: e.clientX,
+      armX: e.clientX,
       moved: false,
       offset: mode === 'seek' ? 0 : (mode === 'start' ? clip.start : clip.end) - timeAt(e.clientX),
       anchorX: e.clientX,
       anchorT: mode === 'start' ? clip.start : clip.end,
+      seekT: timeAt(e.clientX),
       fine: false,
       timer: 0,
       s: clip.start,
       e: clip.end,
     };
     drag.current = d;
-    if (mode === 'seek') {
-      seekAt(e.clientX);
-    } else {
-      d.timer = window.setTimeout(() => {
-        if (drag.current !== d || d.moved) return;
-        d.fine = true;
-        d.anchorX = d.x0;
-        d.anchorT = mode === 'start' ? d.s : d.e;
-        setFine(mode);
-        try {
-          navigator.vibrate?.(8);
-        } catch {
-          /* not supported (iPhone) */
-        }
-      }, HOLD_MS);
-    }
+    if (mode === 'seek') seekAt(e.clientX);
+    arm(d);
   };
   const move = (e: PointerEvent) => {
     const d = drag.current;
     if (!d || e.pointerId !== d.id) return;
-    if (!d.fine && Math.abs(e.clientX - d.x0) > JITTER) {
-      d.moved = true;
-      clearTimeout(d.timer);
-    }
-    if (d.mode === 'seek') return seekAt(e.clientX);
+    d.last = e.clientX;
+    const r = rect();
     if (d.fine) {
-      const r = rect();
-      moveHandle(d, Math.min(media.duration, Math.max(0, d.anchorT + ((e.clientX - d.anchorX) / r.width) * media.duration * FINE)));
-    } else if (d.moved) {
-      moveHandle(d, timeAt(e.clientX) + d.offset);
+      const t = Math.min(media.duration, Math.max(0, d.anchorT + ((e.clientX - d.anchorX) / r.width) * media.duration * FINE));
+      if (d.mode === 'seek') return seekTo(d, t);
+      return moveHandle(d, t);
     }
+    // moving restarts the hold timer, so holding still anywhere along the way gives fine control
+    if (Math.abs(e.clientX - d.armX) > JITTER) {
+      d.armX = e.clientX;
+      d.moved = true;
+      arm(d);
+    }
+    if (d.mode === 'seek') return seekTo(d, timeAt(e.clientX));
+    if (d.moved) moveHandle(d, timeAt(e.clientX) + d.offset);
   };
   const up = (e: PointerEvent) => {
     const d = drag.current;
@@ -187,7 +207,7 @@ function TrimPanel() {
 
   return (
     <>
-      <div class={`trim ${fine ? 'fine' : ''}`} onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up}>
+      <div class={`trim ${fine ? `fine fine-${fine}` : ''}`} onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up}>
         <div class="trim-track" ref={track}>
           <div class="trim-bar" />
           <div class="trim-keep" ref={(n) => void (els.current.keep = n)} style={{ left: pct(clip.start), width: pct(clip.end - clip.start) }} />
@@ -241,7 +261,7 @@ function SpeedPanel() {
       <div class="readout num">
         <span>{clip.speed.toFixed(2).replace(/0$/, '')}×</span>
         <span class="mid">plays for {fmtTime(clipDuration(clip))}</span>
-        <button class={`pitch ${clip.keepPitch ? 'on' : ''}`} aria-pressed={clip.keepPitch} onClick={() => updateClip(index, { keepPitch: !clip.keepPitch })}>
+        <button class="pitch" onClick={() => updateClip(index, { keepPitch: !clip.keepPitch })}>
           {clip.keepPitch ? 'Pitch kept' : 'Pitch follows speed'}
         </button>
       </div>
@@ -274,6 +294,27 @@ function SoundPanel() {
       </button>
       <Slider label="Volume" value={pct} min={0} max={100} step={1} fineStep={0.5} snaps={[0, 100]} snapPx={14} valueText={pct === 0 ? 'muted' : `${pct} percent`} onChange={set} />
       <span class="num vol">{pct === 0 ? 'Muted' : `${pct}%`}</span>
+      {!engine.volumeWorks() && <p class="hint volume-note">This browser can't turn the preview down, so you will hear it at full volume here. The exported video does use this volume.</p>}
+    </div>
+  );
+}
+
+// ---------- order ----------
+
+function OrderPanel() {
+  const { index } = useSel();
+  const count = useStore((s) => s.project.clips.length);
+  return (
+    <div class="order">
+      <button class="btn" disabled={index <= 0} onClick={() => moveClip(index, -1)}>
+        <Left /> Earlier
+      </button>
+      <span class="num order-pos">
+        Clip {index + 1} of {count}
+      </span>
+      <button class="btn" disabled={index >= count - 1} onClick={() => moveClip(index, 1)}>
+        Later <Right />
+      </button>
     </div>
   );
 }

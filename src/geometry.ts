@@ -4,7 +4,7 @@ export const IDENTITY_VIEW: View = { x: 0, y: 0, zoom: 1, rot: 0 };
 export const MIN_ZOOM = 0.1;
 export const MAX_ZOOM = 12;
 
-export const ASPECT_VALUE: Record<Exclude<AspectChoice, 'auto'>, number> = { '9:16': 9 / 16, '4:5': 4 / 5, '1:1': 1, '16:9': 16 / 9 };
+export const ASPECT_VALUE: Record<AspectChoice, number> = { '9:16': 9 / 16, '4:5': 4 / 5, '1:1': 1, '16:9': 16 / 9 };
 
 const RAD = Math.PI / 180;
 const even = (n: number) => Math.max(2, Math.round(n / 2) * 2);
@@ -174,19 +174,21 @@ export function quarterTurned(w: number, h: number, rot: number): { w: number; h
   return q % 2 === 1 ? { w: h, h: w } : { w, h };
 }
 
-/** Output size in pixels for a project. 'auto' follows the shape of the first clip. */
-export function outputSize(p: Project): { w: number; h: number } {
-  const s = p.settings;
-  let aspect = 9 / 16;
-  if (s.aspect !== 'auto') aspect = ASPECT_VALUE[s.aspect];
-  else {
-    const first = p.clips[0];
-    const m = first ? p.media[first.mediaId] : undefined;
-    if (first && m) {
-      // the shape of the first picture as shot: turning a clip later never changes the canvas
-      if (m.width > 0 && m.height > 0) aspect = m.width / m.height;
-    }
+/** The canvas shape that suits a picture best (closest in ratio). Used when a project starts. */
+export function nearestAspect(w: number, h: number): AspectChoice {
+  const r = Math.log(w / h);
+  let best: AspectChoice = '9:16';
+  let d = Infinity;
+  for (const k of Object.keys(ASPECT_VALUE) as AspectChoice[]) {
+    const dd = Math.abs(Math.log(ASPECT_VALUE[k]) - r);
+    if (dd < d) (d = dd), (best = k);
   }
-  const short = s.resolution;
+  return best;
+}
+
+/** Output size in pixels for a project. */
+export function outputSize(p: Project): { w: number; h: number } {
+  const aspect = ASPECT_VALUE[p.settings.aspect] ?? 9 / 16;
+  const short = p.settings.resolution;
   return aspect <= 1 ? { w: even(short), h: even(short / aspect) } : { w: even(short * aspect), h: even(short) };
 }

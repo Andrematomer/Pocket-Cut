@@ -102,86 +102,94 @@ export function Preview() {
 
 
 const fmtDeg = (d: number) => `${Math.round(d)}°`;
+const HOLD_MS = 450;
+const JITTER = 10;
+const FINE = 0.1;
+
+type Clip0 = ReturnType<typeof getState>['project']['clips'][number];
 
 /**
  * Moves the picture on the canvas with the fingers: one finger drags, two fingers pinch to zoom and
  * twist to turn. Magnets pull to the center lines, quarter turns, "whole picture fits" and "fills".
+ * Hold still for a moment (at any point of the gesture, with one finger or two) and the picture moves
+ * ten times slower, with the magnets off, for exact placement.
+ *
  * While fingers are down the view is only drawn (never saved); it is saved when the last finger lifts.
+ * Finger bookkeeping is defensive: iOS can lose a touch (for example when a finger slides into the
+ * home-bar area) without telling the page, which must never leave a "ghost finger" behind.
  */
 function Gestures({ boxW, boxH }: { boxW: number; boxH: number }) {
   const selected = useStore((s) => s.selected);
+  const root = useRef<HTMLDivElement>(null);
   const guideV = useRef<HTMLDivElement>(null);
   const guideH = useRef<HTMLDivElement>(null);
   const badge = useRef<HTMLDivElement>(null);
   const pts = useRef(new Map<number, Pt>());
+  const arm = useRef(new Map<number, Pt>());
   const base = useRef<{ view: View; a: Pt; b: Pt | null; ids: number[] } | null>(null);
   const live = useRef<View | null>(null);
+  const fine = useRef(false);
+  const timer = useRef(0);
   const frame = useRef(0);
+  const sizes = useRef({ boxW, boxH });
+  sizes.current = { boxW, boxH };
 
-  const rel = (e: PointerEvent): Pt => {
-    const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    return { x: e.clientX - r.left - boxW / 2, y: e.clientY - r.top - boxH / 2 };
-  };
-  const current = (): { clip: ReturnType<typeof getState>['project']['clips'][number]; media: NonNullable<ReturnType<typeof getState>['project']['media'][string]> } | null => {
+  const current = (): { clip: Clip0; media: NonNullable<ReturnType<typeof getState>['project']['media'][string]> } | null => {
     const st = getState();
     const clip = st.project.clips[st.selected];
     const media = clip && st.project.media[clip.mediaId];
     return clip && media ? { clip, media } : null;
+  };
+  const showBadge = (text: string) => {
+    const b = badge.current;
+    if (!b) return;
+    b.textContent = text;
+    b.classList.toggle('on', !!text);
+  };
+  const guides = (s: ReturnType<typeof snapView> | null) => {
+    guideV.current?.classList.toggle('on', !!s?.x);
+    guideH.current?.classList.toggle('on', !!s?.y);
+    if (fine.current) return;
+    showBadge(s ? (s.zoom === 'fit' ? 'Fit' : s.zoom === 'fill' ? 'Fill' : s.rot !== null ? fmtDeg(s.rot) : '') : '');
+  };
+  const setFineLook = (on: boolean) => {
+    fine.current = on;
+    root.current?.parentElement?.classList.toggle('fine', on);
+    if (on) {
+      guideV.current?.classList.remove('on');
+      guideH.current?.classList.remove('on');
+      showBadge('FINE');
+    } else showBadge('');
   };
   const rebase = () => {
     const c = current();
     if (!c) return;
     const ids = [...pts.current.keys()].slice(0, 2);
     base.current = ids.length ? { view: live.current ?? c.clip.view, a: pts.current.get(ids[0]!)!, b: ids[1] !== undefined ? pts.current.get(ids[1])! : null, ids } : null;
+    arm.current = new Map(pts.current);
   };
-  const guides = (s: ReturnType<typeof snapView> | null) => {
-    guideV.current?.classList.toggle('on', !!s?.x);
-    guideH.current?.classList.toggle('on', !!s?.y);
-    const b = badge.current;
-    if (!b) return;
-    const text = s ? (s.zoom === 'fit' ? 'Fit' : s.zoom === 'fill' ? 'Fill' : s.rot !== null ? fmtDeg(s.rot) : '') : '';
-    b.textContent = text;
-    b.classList.toggle('on', !!text);
+  /** (re)starts the hold timer: still fingers for this long switch to fine control from where they are */
+  const startTimer = () => {
+    clearTimeout(timer.current);
+    arm.current = new Map(pts.current);
+    timer.current = window.setTimeout(() => {
+      if (pts.current.size === 0 || fine.current) return;
+      rebase();
+      setFineLook(true);
+    }, HOLD_MS);
   };
   const paint = () => {
     frame.current = 0;
     engine.draw();
   };
-
-  const down = (e: PointerEvent) => {
-    e.preventDefault();
-    engine.pause();
-    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-    pts.current.set(e.pointerId, rel(e));
-    const c = current();
-    if (c && !live.current) live.current = c.clip.view;
-    rebase();
-  };
-  const move = (e: PointerEvent) => {
-    if (!pts.current.has(e.pointerId)) return;
-    pts.current.set(e.pointerId, rel(e));
-    const b = base.current;
-    const c = current();
-    if (!b || !c) return;
-    const a1 = pts.current.get(b.ids[0]!)!;
-    let v: View;
-    if (b.b) v = pinchView(b.view, boxW, boxH, b.a, b.b, a1, pts.current.get(b.ids[1]!)!);
-    else v = dragView(b.view, boxW, boxH, a1.x - b.a.x, a1.y - b.a.y);
-    const s = snapView(clampView(v), { sw: c.media.width, sh: c.media.height, W: boxW, H: boxH });
-    live.current = s.view;
-    engine.live = { index: getState().selected, view: s.view };
-    guides(s);
-    if (!frame.current) frame.current = requestAnimationFrame(paint);
-  };
-  const up = (e: PointerEvent) => {
-    if (!pts.current.delete(e.pointerId)) return;
-    if (pts.current.size > 0) {
-      // a finger lifted or was added: carry on from where the picture is now
-      rebase();
-      return;
-    }
+  /** ends everything: saves the picture where it is and forgets all fingers */
+  const flush = () => {
+    clearTimeout(timer.current);
+    pts.current.clear();
+    arm.current.clear();
     base.current = null;
     guides(null);
+    setFineLook(false);
     const v = live.current;
     live.current = null;
     if (v) {
@@ -189,6 +197,109 @@ function Gestures({ boxW, boxH }: { boxW: number; boxH: number }) {
       engine.live = null;
       engine.draw();
     }
+  };
+
+  useEffect(() => {
+    // safety nets: the element's own events are enough on a good day
+    const lost = (e: PointerEvent) => {
+      if (!pts.current.has(e.pointerId)) return;
+      pts.current.delete(e.pointerId);
+      if (pts.current.size === 0) flush();
+      else (rebase(), startTimer());
+    };
+    const touchEnd = (e: TouchEvent) => {
+      if (e.touches.length === 0 && pts.current.size > 0) flush();
+    };
+    const hide = () => flush();
+    window.addEventListener('pointerup', lost);
+    window.addEventListener('pointercancel', lost);
+    window.addEventListener('touchend', touchEnd);
+    window.addEventListener('touchcancel', touchEnd);
+    window.addEventListener('blur', hide);
+    document.addEventListener('visibilitychange', hide);
+    return () => {
+      window.removeEventListener('pointerup', lost);
+      window.removeEventListener('pointercancel', lost);
+      window.removeEventListener('touchend', touchEnd);
+      window.removeEventListener('touchcancel', touchEnd);
+      window.removeEventListener('blur', hide);
+      document.removeEventListener('visibilitychange', hide);
+      flush();
+    };
+  }, []);
+
+  const rel = (e: PointerEvent): Pt => {
+    const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    return { x: e.clientX - r.left - sizes.current.boxW / 2, y: e.clientY - r.top - sizes.current.boxH / 2 };
+  };
+
+  const down = (e: PointerEvent) => {
+    e.preventDefault();
+    // the first finger of a gesture: anything still remembered from before is a lost finger
+    if (e.isPrimary && pts.current.size > 0) flush();
+    // work on the clip that is on screen (playback may have moved on from the selected one)
+    const shown = engine.currentIndex();
+    if (shown !== getState().selected) set({ selected: shown });
+    engine.pause();
+    try {
+      (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    } catch {
+      /* the pointer is already gone */
+    }
+    pts.current.set(e.pointerId, rel(e));
+    const c = current();
+    if (c && !live.current) live.current = c.clip.view;
+    rebase();
+    startTimer();
+  };
+  const move = (e: PointerEvent) => {
+    if (!pts.current.has(e.pointerId)) return;
+    if (e.pointerType === 'mouse' && e.buttons === 0) return flush(); // button released somewhere we did not see
+    pts.current.set(e.pointerId, rel(e));
+    const b = base.current;
+    const c = current();
+    if (!b || !c) return;
+    if (!fine.current) {
+      // any finger moving more than a wobble restarts the hold timer
+      for (const [id, p] of pts.current) {
+        const q = arm.current.get(id);
+        if (!q || Math.hypot(p.x - q.x, p.y - q.y) > JITTER) return void (startTimer(), step(b, c));
+      }
+    }
+    step(b, c);
+  };
+  const step = (b: NonNullable<typeof base.current>, c: NonNullable<ReturnType<typeof current>>) => {
+    const { boxW: W, boxH: H } = sizes.current;
+    const raw1 = pts.current.get(b.ids[0]!);
+    const raw2 = b.b ? pts.current.get(b.ids[1]!) : undefined;
+    if (!raw1 || (b.b && !raw2)) return;
+    // in fine mode the fingers' movement counts a tenth
+    const f = (p: Pt, q: Pt): Pt => (fine.current ? { x: q.x + (p.x - q.x) * FINE, y: q.y + (p.y - q.y) * FINE } : p);
+    const a1 = f(raw1, b.a);
+    let v: View;
+    if (b.b && raw2) v = pinchView(b.view, W, H, b.a, b.b, a1, f(raw2, b.b));
+    else v = dragView(b.view, W, H, a1.x - b.a.x, a1.y - b.a.y);
+    v = clampView(v);
+    if (fine.current) {
+      live.current = v;
+      engine.live = { index: getState().selected, view: v };
+    } else {
+      const sn = snapView(v, { sw: c.media.width, sh: c.media.height, W, H });
+      live.current = sn.view;
+      engine.live = { index: getState().selected, view: sn.view };
+      guides(sn);
+    }
+    if (!frame.current) frame.current = requestAnimationFrame(paint);
+  };
+  const up = (e: PointerEvent) => {
+    if (!pts.current.delete(e.pointerId)) return;
+    if (pts.current.size > 0) {
+      // a finger lifted or was added: carry on from where the picture is now
+      rebase();
+      startTimer();
+      return;
+    }
+    flush();
   };
   const wheel = (e: WheelEvent) => {
     // desktop: scroll to zoom
@@ -201,7 +312,7 @@ function Gestures({ boxW, boxH }: { boxW: number; boxH: number }) {
   };
 
   return (
-    <div class="gestures" key={selected} onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up} onWheel={wheel}>
+    <div class="gestures" ref={root} key={selected} onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up} onWheel={wheel}>
       <div class="guide v" ref={guideV} />
       <div class="guide h" ref={guideH} />
       <div class="gesture-badge num" ref={badge} />

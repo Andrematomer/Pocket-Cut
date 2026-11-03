@@ -54,12 +54,12 @@ export async function saveMedia(id: string, m: SavedMedia): Promise<boolean> {
 }
 
 /** Saves the project JSON and drops stored media the project no longer uses. */
-export async function saveProject(p: Project): Promise<void> {
+export async function saveProject(p: Project, keep: Set<string> = new Set()): Promise<void> {
   try {
     const db = await open();
     const tx = db.transaction(['kv', 'media'], 'readwrite');
     tx.objectStore('kv').put(p, 'project');
-    const used = new Set(p.clips.map((c) => c.mediaId));
+    const used = new Set([...p.clips.map((c) => c.mediaId), ...keep]);
     const media = tx.objectStore('media');
     const keys = await wrap(media.getAllKeys());
     for (const k of keys) if (!used.has(String(k))) media.delete(k);

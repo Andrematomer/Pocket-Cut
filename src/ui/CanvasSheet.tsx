@@ -2,8 +2,8 @@ import { setSettings, useStore } from '../store.ts';
 import type { AspectChoice } from '../types.ts';
 import { Sheet } from './Sheet.tsx';
 
-export const ASPECT_LABEL: Record<AspectChoice, string> = { auto: 'Auto', '9:16': '9:16', '4:5': '4:5', '1:1': '1:1', '16:9': '16:9' };
-const ASPECTS: AspectChoice[] = ['auto', '9:16', '4:5', '1:1', '16:9'];
+export const ASPECT_LABEL: Record<AspectChoice, string> = { '9:16': '9:16', '4:5': '4:5', '1:1': '1:1', '16:9': '16:9' };
+const ASPECTS: AspectChoice[] = ['9:16', '4:5', '1:1', '16:9'];
 
 /** The shape of the exported picture, and how the selected clip sits in it. */
 export function CanvasSheet({ onClose }: { onClose: () => void }) {
@@ -19,7 +19,7 @@ export function CanvasSheet({ onClose }: { onClose: () => void }) {
             </button>
           ))}
         </div>
-        <p class="hint">The shape of the exported video. Move, zoom and turn each clip right on the preview to place it. Auto follows the first clip.</p>
+        <p class="hint">The shape of the exported video. It starts with the shape that suits your first clip. Move, zoom and turn each clip right on the preview to place it.</p>
       </section>
       <button class="cta" onClick={onClose}>
         Done

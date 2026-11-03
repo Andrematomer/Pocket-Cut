@@ -59,7 +59,7 @@ export function Strip() {
               set({ selected: i });
             }}
           >
-            <span class="thumb">{url && <img src={url} alt="" draggable={false} style={{ transform: `rotate(${Math.round(c.view.rot / 90) * 90}deg)` }} />}</span>
+            <span class="thumb">{url && <span class="thumb-img" style={{ backgroundImage: `url("${url}")`, transform: `rotate(${Math.round(c.view.rot / 90) * 90}deg)` }} />}</span>
             <span class="dur num">{fmtTime(clipDuration(c))}</span>
             {c.speed !== 1 && <span class="badge">{c.speed}×</span>}
           </button>
