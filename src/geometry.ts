@@ -125,6 +125,8 @@ export interface Snap {
   y: boolean;
   rot: number | null;
   zoom: 'fit' | 'fill' | null;
+  /** a side of the picture sits exactly on a side of the frame */
+  edge: boolean;
 }
 
 export interface SnapEnv {
@@ -144,7 +146,7 @@ export interface SnapEnv {
 export function snapView(raw: View, e: SnapEnv): Snap {
   let { x, y, zoom, rot } = raw;
   rot = normAngle(rot);
-  const out: Snap = { view: raw, x: false, y: false, rot: null, zoom: null };
+  const out: Snap = { view: raw, x: false, y: false, rot: null, zoom: null, edge: false };
   const q = Math.round(rot / 90) * 90;
   if (Math.abs(rot - q) <= (e.rotDeg ?? 4)) {
     rot = q === 180 ? 180 : q === -180 ? 180 : q;
@@ -159,6 +161,19 @@ export function snapView(raw: View, e: SnapEnv): Snap {
   const cp = e.centerPx ?? 7;
   if (Math.abs(x * e.W) <= cp) (x = 0), (out.x = true);
   if (Math.abs(y * e.H) <= cp) (y = 0), (out.y = true);
+  // sides of the picture onto the sides of the frame (when the middle did not already catch)
+  const bz = turnedBox(e.sw, e.sh, rot);
+  const sc = baseScale(e.sw, e.sh, e.W, e.H) * zoom;
+  const hw = (bz.w * sc) / 2;
+  const hh = (bz.h * sc) / 2;
+  if (!out.x) {
+    if (Math.abs(x * e.W - hw + e.W / 2) <= cp) (x = (hw - e.W / 2) / e.W), (out.edge = true);
+    else if (Math.abs(x * e.W + hw - e.W / 2) <= cp) (x = (e.W / 2 - hw) / e.W), (out.edge = true);
+  }
+  if (!out.y) {
+    if (Math.abs(y * e.H - hh + e.H / 2) <= cp) (y = (hh - e.H / 2) / e.H), (out.edge = true);
+    else if (Math.abs(y * e.H + hh - e.H / 2) <= cp) (y = (e.H / 2 - hh) / e.H), (out.edge = true);
+  }
   out.view = { x, y, zoom, rot };
   return out;
 }

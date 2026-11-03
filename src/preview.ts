@@ -1,3 +1,4 @@
+import { bakedAudio } from './bake.ts';
 import { drawFrame } from './geometry.ts';
 import { layout, locate, sourceTimeAt } from './timeline.ts';
 import type { Clip, Project, View } from './types.ts';
@@ -7,6 +8,8 @@ export interface PreviewDeps {
   getUrl(mediaId: string): string | undefined;
   /** the decoded picture when the clip is a still image */
   getImage(mediaId: string): ImageBitmap | undefined;
+  /** the original file (its sound is what gets baked for the preview) */
+  getBlob(mediaId: string): Blob | undefined;
   onTime(t: number): void;
   onPlaying(playing: boolean): void;
 }
@@ -183,6 +186,71 @@ export class PreviewEngine {
 
   private audio: { ctx: AudioContext; gain: GainNode } | null = null;
 
+  // ---- baked sound for clips that are not at normal speed ----
+  /** true while the video is kept silent because the clip's sound plays from a baked buffer */
+  private bakedActive = false;
+  private baked: { ctx: AudioContext; gain: GainNode; src: AudioBufferSourceNode | null } | null = null;
+
+  private bakedCtx(): { ctx: AudioContext; gain: GainNode; src: AudioBufferSourceNode | null } | null {
+    if (!this.baked) {
+      try {
+        const Ctx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+        const ctx = new Ctx();
+        const gain = ctx.createGain();
+        gain.connect(ctx.destination);
+        this.baked = { ctx, gain, src: null };
+      } catch {
+        return null;
+      }
+    }
+    return this.baked;
+  }
+
+  private stopBaked(): void {
+    const b = this.baked;
+    if (b?.src) {
+      try {
+        b.src.stop();
+      } catch {
+        /* already stopped */
+      }
+      b.src.disconnect();
+      b.src = null;
+    }
+  }
+
+  /** plays the baked sound of `clip` from `local` seconds into it (timeline seconds, i.e. after speed) */
+  private wantsBaked(clip: Clip): boolean {
+    const media = this.deps.getProject().media[clip.mediaId];
+    return !!media?.hasAudio && !!this.deps.getBlob(clip.mediaId) && !this.isImage(clip) && Math.abs(clip.speed - 1) > 1e-3;
+  }
+
+  private async startBaked(clip: Clip, tok: number): Promise<void> {
+    this.stopBaked();
+    const blob = this.deps.getBlob(clip.mediaId);
+    if (!this.bakedActive || !blob) return;
+    const buf = await bakedAudio(blob, clip);
+    if (tok !== this.token || !this.playing) return;
+    const b = buf ? this.bakedCtx() : null;
+    if (!buf || !b) {
+      // nothing to bake from: let the video's own sound do what it can
+      this.bakedActive = false;
+      this.applyVolume(clip.volume);
+      return;
+    }
+    // the video may have moved on while the sound was being made: start where the clip really is
+    const cur = this.current();
+    const L = layout(this.deps.getProject().clips);
+    const at = cur ? Math.max(0, this.tl - L.starts[cur.index]!) : 0;
+    void b.ctx.resume().catch(() => {});
+    const src = b.ctx.createBufferSource();
+    src.buffer = buf;
+    src.connect(b.gain);
+    b.gain.gain.value = clip.volume;
+    if (at < buf.duration) src.start(0, at);
+    b.src = src;
+  }
+
   /**
    * Sets the loudness of the preview. Most browsers let a page set video.volume. iPhones do not (it
    * is read-only there), so on iOS the sound is always routed through Web Audio and turned down by a
@@ -190,7 +258,8 @@ export class PreviewEngine {
    */
   applyVolume(vol: number): void {
     const v = this.video;
-    v.muted = vol <= 0;
+    v.muted = vol <= 0 || this.bakedActive;
+    if (this.baked) this.baked.gain.gain.value = vol;
     if (this.audio) {
       this.audio.gain.gain.value = vol;
       return;
@@ -224,6 +293,7 @@ export class PreviewEngine {
   /** call from a tap: a Web Audio context only starts after a gesture */
   wakeAudio(): void {
     void this.audio?.ctx.resume().catch(() => {});
+    void this.baked?.ctx.resume().catch(() => {});
   }
 
   /** false when the browser did not accept this speed for the video element */
@@ -281,6 +351,7 @@ export class PreviewEngine {
   }
 
   private stopPlaying(): void {
+    this.stopBaked();
     if (this.playing) {
       this.playing = false;
       this.video.pause();
@@ -358,8 +429,11 @@ export class PreviewEngine {
     if (this.isImage(clip)) {
       v.pause();
       this.clockMode = true;
+      this.bakedActive = false;
+      this.stopBaked();
       return true;
     }
+    this.bakedActive = this.wantsBaked(clip);
     this.applyClip(clip);
     this.clockMode = !this.nativeRate(clip);
     if (!this.clockMode) {
@@ -376,11 +450,13 @@ export class PreviewEngine {
     } else {
       v.pause();
     }
+    void this.startBaked(clip, tok);
     return true;
   }
 
   pause(): void {
     this.token++;
+    this.stopBaked();
     cancelAnimationFrame(this.raf);
     if (!this.playing) return;
     this.playing = false;

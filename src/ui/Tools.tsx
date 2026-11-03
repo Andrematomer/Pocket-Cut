@@ -1,10 +1,10 @@
 import type { JSX } from 'preact';
 import { useRef, useState } from 'preact/hooks';
 import { engine } from '../engine.ts';
-import { deleteClip, duplicateClip, getState, quarterTurn, resetView, set, splitAtPlayhead, toast, setSpeed, setTrim, updateClip, useStore, type Tool } from '../store.ts';
+import { deleteClip, duplicateClip, getState, set, splitAtPlayhead, toast, setSpeed, setTrim, updateClip, useStore, type Tool } from '../store.ts';
 import { MAX_SPEED, MIN_CLIP, MIN_SPEED, clipDuration, fmtTime, layout, locate } from '../timeline.ts';
 import { IMAGE_MAX_SECONDS } from '../media.ts';
-import { Clips, Copy, Mute, Rotate, RotateL, Sound, Speed, Split, Trash, Trim } from './icons.tsx';
+import { Clips, Copy, Mute, Sound, Speed, Split, Trash, Trim } from './icons.tsx';
 import { Slider } from './Slider.tsx';
 
 const TABS: { id: Tool; label: string; icon: () => JSX.Element }[] = [
@@ -305,7 +305,7 @@ function ClipPanel() {
   const { index, media } = useSel();
   const image = media?.kind === 'image';
   return (
-    <div class="grid3">
+    <div class="clip-row">
       {!image && (
         <button class="btn" onClick={() => !splitAtPlayhead() && toast('Move the position marker into this clip, away from its edges, to cut there.')}>
           <Split /> Split here
@@ -313,12 +313,6 @@ function ClipPanel() {
       )}
       <button class="btn" onClick={() => duplicateClip(index)}>
         <Copy /> Duplicate
-      </button>
-      <button class="btn" onClick={() => quarterTurn(index)}>
-        <Rotate /> Turn 90°
-      </button>
-      <button class="btn" onClick={() => resetView(index)}>
-        <RotateL /> Reset position
       </button>
       <button class="btn danger" onClick={() => deleteClip(index)}>
         <Trash /> Delete clip

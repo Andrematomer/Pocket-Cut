@@ -1,6 +1,7 @@
 import { ALL_FORMATS, BlobSource, BufferTarget, Conversion, Input, Mp4OutputFormat, Output, Quality, canEncodeAudio, getFirstEncodableVideoCodec } from 'mediabunny';
 import { clearProxy, mediaEntry, setProxy } from './media.ts';
 import { saveMedia } from './persist.ts';
+import { awakeForJob } from './wake.ts';
 import type { MediaInfo } from './types.ts';
 
 /**
@@ -66,6 +67,7 @@ async function drain(): Promise<void> {
   if (running) return;
   running = true;
   listener(true);
+  const wake = await awakeForJob().catch(() => null);
   try {
     while (queue.length) {
       // the clip being edited first, then the rest in timeline order
@@ -98,6 +100,7 @@ async function drain(): Promise<void> {
       }
     }
   } finally {
+    await wake?.release().catch(() => {});
     running = false;
     listener(false);
   }

@@ -42,6 +42,8 @@ export function Strip() {
       setTimeout(() => (swallow.current = false), 0);
       setDrag((d) => {
         if (commit && d && d.to !== d.from) reorderClip(d.from, d.to);
+        // picked up and put back without moving: the person probably wants to do something with the clip
+        else if (commit && d) set({ tool: 'clip' });
         return null;
       });
     }
@@ -137,7 +139,7 @@ export function Strip() {
             role="option"
             aria-selected={i === selected}
             class={`tile ${i === selected ? 'on' : ''} ${cls}`}
-            style={shift ? { transform: `translateX(${shift}px)${cls ? ' scale(1.08)' : ''}` } : undefined}
+            style={cls ? { transform: `translateX(${shift}px) scale(1.1)` } : shift ? { transform: `translateX(${shift}px)` } : undefined}
             onPointerDown={down(i)}
             onPointerMove={move}
             onPointerUp={up}

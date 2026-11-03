@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { ASPECT_VALUE, IDENTITY_VIEW, nearestAspect, normAngle } from './geometry.ts';
 import { decodeImage, dropAllMedia, isImageFile, mediaBlob, newId, probeImage, probeVideo, registerMedia, UnsupportedMediaError } from './media.ts';
+import { setAwakeMode } from './wake.ts';
 import { onProxyProgress, onProxyWork, queueProxy, requeueAllProxies, setProxyOrder } from './proxy.ts';
 import { clearSaved, loadSaved, requestPersistence, saveMedia, saveProject } from './persist.ts';
 import { layout, MAX_SPEED, MIN_CLIP, MIN_SPEED, locate } from './timeline.ts';
@@ -40,9 +41,11 @@ export interface AppPrefs {
   imageSeconds: number;
   /** long side of the small preview copy, pixels */
   previewLong: number;
+  /** keep the screen on: always, only while exporting / making preview copies, or never */
+  awake: 'on' | 'work' | 'off';
 }
 
-export const DEFAULT_PREFS: AppPrefs = { imageSeconds: 5, previewLong: 240 };
+export const DEFAULT_PREFS: AppPrefs = { imageSeconds: 5, previewLong: 240, awake: 'work' };
 
 function loadAppPrefs(): AppPrefs {
   try {
@@ -199,6 +202,7 @@ function clearHistory(): void {
 export function setPrefs(patch: Partial<AppPrefs>): void {
   const prefs = { ...state.prefs, ...patch };
   set({ prefs });
+  setAwakeMode(prefs.awake);
   try {
     localStorage.setItem('pocket-cut:app-settings', JSON.stringify(prefs));
   } catch {
@@ -406,6 +410,7 @@ subs.add(() => {
 
 export const blobFor = mediaBlob;
 
+setAwakeMode(state.prefs.awake);
 onProxyWork((working) => set({ preparing: working }));
 onProxyProgress((id, p) => {
   const next = { ...state.proxyProgress };

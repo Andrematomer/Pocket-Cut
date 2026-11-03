@@ -1215,3 +1215,14 @@ label.cta {
 .cut {
   display: none;
 }
+
+.tile.lifted {
+  box-shadow: 0 0 0 3px var(--accent), 0 0 22px 4px rgba(240, 198, 74, 0.75);
+}
+.clip-row {
+  display: flex;
+  gap: 8px;
+}
+.clip-row .btn {
+  flex: 1;
+}

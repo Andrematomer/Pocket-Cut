@@ -75,3 +75,36 @@ export async function keepAwake(): Promise<WakeHandle> {
     },
   };
 }
+
+// ---------- the "keep screen on" setting ----------
+
+export type AwakeMode = 'on' | 'work' | 'off';
+let mode: AwakeMode = 'work';
+let always: WakeHandle | null = null;
+let alwaysToken = 0;
+
+/** 'on': always while the app is open. 'work': only while exporting or making preview copies. 'off': never. */
+export function setAwakeMode(m: AwakeMode): void {
+  mode = m;
+  const token = ++alwaysToken;
+  if (m === 'on') {
+    if (!always) {
+      void keepAwake()
+        .then((h) => {
+          if (token === alwaysToken && mode === 'on') always = h;
+          else void h.release();
+        })
+        .catch(() => {});
+    }
+  } else if (always) {
+    void always.release();
+    always = null;
+  }
+}
+
+/** Held by a long job (export, making preview copies). Does nothing unless the setting is "while working". */
+export async function awakeForJob(): Promise<{ release(): Promise<void> }> {
+  if (mode !== 'work') return { release: async () => {} };
+  const h = await keepAwake().catch(() => null);
+  return { release: async () => void (await h?.release().catch(() => {})) };
+}

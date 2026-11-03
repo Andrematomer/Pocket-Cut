@@ -56,6 +56,7 @@ Your last project (with the original videos) is kept on the device until you del
 - Each output part is held in memory while it is written, so very long parts at 1080p / 60 fps can run out of memory on low-end phones. Shorter parts help.
 - A web app can't run while it is closed, so the saved project is never cleaned up automatically. Use the delete button.
 - Big videos also get a small, light copy (144 to 360 px, set in Settings) made in the background, only for the on-screen preview. Export always reads your original file.
+- At speeds other than 1× the preview plays the clip's sound from a separate, pre-rendered copy (a moment after you press play), because phones often mute video sound at unusual speeds.
 - On iPhone the preview volume may not follow the Sound slider (the browser limits it); the export always does. The lock screen may show a bare player while a preview plays; a web page cannot fully switch that off.
 - The preview pauses briefly between two different source files. The exported video has no gap.
 

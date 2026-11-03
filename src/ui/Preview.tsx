@@ -109,7 +109,7 @@ export function Preview() {
 
 
 const fmtDeg = (d: number) => `${Math.round(d)}°`;
-const HOLD_MS = 450;
+const HOLD_MS = 900; // on the preview fine control takes twice as long: it is too easy to trigger by accident here
 const JITTER = 10;
 const FINE = 0.1;
 
@@ -159,7 +159,7 @@ function Gestures({ boxW, boxH }: { boxW: number; boxH: number }) {
     guideV.current?.classList.toggle('on', !!s?.x);
     guideH.current?.classList.toggle('on', !!s?.y);
     if (fine.current) return;
-    showBadge(s ? (s.zoom === 'fit' ? 'Fit' : s.zoom === 'fill' ? 'Fill' : s.rot !== null ? fmtDeg(s.rot) : '') : '');
+    showBadge(s ? (s.zoom === 'fit' ? 'Fit' : s.zoom === 'fill' ? 'Fill' : s.rot !== null ? fmtDeg(s.rot) : s.edge ? 'Edge' : '') : '');
   };
   const setFineLook = (on: boolean) => {
     fine.current = on;

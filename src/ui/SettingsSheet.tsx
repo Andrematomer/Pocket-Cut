@@ -4,13 +4,11 @@ import { storageEstimate } from '../persist.ts';
 import { canPromptInstall, isIOS, isStandalone, promptInstall } from '../install.ts';
 import { discardProject, setPrefs, useStore } from '../store.ts';
 import { browserInfo, checkSupport } from '../support.ts';
-import { requeueAllProxies } from '../proxy.ts';
 import { Sheet } from './Sheet.tsx';
 
 export function SettingsSheet({ onClose }: { onClose: () => void }) {
   const hasProject = useStore((s) => s.project.clips.length > 0);
   const prefs = useStore((s) => s.prefs);
-  const media = useStore((s) => s.project.media);
   const [usage, setUsage] = useState<{ used: number; quota: number } | null>(null);
   const [confirm, setConfirm] = useState(false);
   const offline = !!navigator.serviceWorker?.controller;
@@ -43,14 +41,25 @@ export function SettingsSheet({ onClose }: { onClose: () => void }) {
               onClick={() => {
                 if (prefs.previewLong === n) return;
                 setPrefs({ previewLong: n });
-                requeueAllProxies(media, n);
               }}
             >
               {n}p
             </button>
           ))}
         </div>
-        <p class="hint">Videos are previewed from a small copy so editing stays smooth. Pick a lower number if the preview stutters on an older phone. The exported video always uses the originals.</p>
+        <p class="hint">Videos are previewed from a small copy so editing stays smooth. Pick a lower number if the preview stutters on an older phone. A new size applies to videos you add from now on, not to the ones already in the project. The exported video always uses the originals.</p>
+      </section>
+
+      <section>
+        <h3>Keep the screen on</h3>
+        <div class="chips" role="group" aria-label="Keep the screen on">
+          {([['on', 'Always'], ['work', 'While working'], ['off', 'Never']] as const).map(([v, label]) => (
+            <button key={v} class={`chip ${prefs.awake === v ? 'on' : ''}`} aria-pressed={prefs.awake === v} onClick={() => setPrefs({ awake: v })}>
+              {label}
+            </button>
+          ))}
+        </div>
+        <p class="hint">"While working" keeps the screen awake only while a video is exporting or a preview copy is being made. With "Never", keep the app open and the phone awake yourself during exports.</p>
       </section>
 
       <section>

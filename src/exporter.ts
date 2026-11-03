@@ -19,7 +19,7 @@ import { videoBitrate } from './bitrate.ts';
 import { mediaBitmap } from './media.ts';
 import { drawFrame, outputSize } from './geometry.ts';
 import { resample, timeStretch } from './stretch.ts';
-import { keepAwake } from './wake.ts';
+import { awakeForJob } from './wake.ts';
 import { layout, locate, planParts, sourceTimeAt, type Layout, type Part } from './timeline.ts';
 import type { Clip, Project } from './types.ts';
 
@@ -208,7 +208,7 @@ export async function exportProject(
   }
 
   const srcs = new Map<string, Src>();
-  const wake = await keepAwake().catch(() => null);
+  const wake = await awakeForJob().catch(() => null);
 
   const canvas = document.createElement('canvas');
   canvas.width = outW;

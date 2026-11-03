@@ -61,9 +61,11 @@ export function App() {
         <button class="icon" onClick={() => set({ sheet: 'settings' })} aria-label="Settings">
           <Gear />
         </button>
-        <button class="export" disabled={!hasClips} onClick={() => set({ sheet: 'export' })}>
-          Export
-        </button>
+        {hasClips && (
+          <button class="export" onClick={() => set({ sheet: 'export' })}>
+            Export
+          </button>
+        )}
       </header>
 
       {busy && !hasClips && <div class="busy">{busy}</div>}

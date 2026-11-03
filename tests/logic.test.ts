@@ -223,3 +223,14 @@ test('snapEight: goes to the closest of the eight tidy placements, and flips fit
   // 5:4 exists
   assert.equal(nearestAspect(1280, 1024), '5:4');
 });
+
+test('snapView: sides of the picture catch on the sides of the frame', () => {
+  const env = { sw: 1000, sh: 1000, W: 360, H: 640 };
+  // zoom 0.5 of "fits": a 180 px square (width of the frame / 2); its left side 3 px off the frame's left side
+  const z = 0.5;
+  const half = (1000 * (Math.min(360 / 1000, 640 / 1000) * z)) / 2;
+  const x = (half - 180 + 3) / 360;
+  const s = snapView({ x, y: 0.3, zoom: z, rot: 0 }, env);
+  assert.ok(s.edge);
+  assert.ok(Math.abs(s.view.x * 360 - (half - 180)) < 1e-9);
+});
