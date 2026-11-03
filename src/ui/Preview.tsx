@@ -1,16 +1,17 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { engine } from '../engine.ts';
-import { clampView, dragView, outputSize, pinchView, snapView, type Pt } from '../geometry.ts';
-import { getState, set, splitAtPlayhead, toast, updateClip, useStore } from '../store.ts';
+import { clampView, dragView, fitZoom, outputSize, pinchView, snapEight, snapView, type Pt } from '../geometry.ts';
+import { getState, set, updateClip, useStore } from '../store.ts';
 import { fmtTime, layout } from '../timeline.ts';
 import type { View } from '../types.ts';
-import { Pause, Play, Split } from './icons.tsx';
+import { Pause, Play } from './icons.tsx';
+import { Pie } from './Pie.tsx';
 
 export function Preview() {
   const project = useStore((s) => s.project);
   const selected = useStore((s) => s.selected);
   const busy = useStore((s) => s.busy);
-  const preparing = useStore((s) => s.preparing);
+  const progress = useStore((s) => s.proxyProgress);
   const wrap = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
   const [box, setBox] = useState({ w: 0, h: 0 });
@@ -94,7 +95,13 @@ export function Preview() {
       <div class="frame" style={{ width: `${box.w}px`, height: `${box.h}px` }}>
         <canvas ref={canvas} style={{ width: `${box.w}px`, height: `${box.h}px` }} />
         {box.w > 0 && <Gestures boxW={box.w} boxH={box.h} />}
-        {(busy || preparing) && <div class="overlay-note">{busy ?? 'Making a lighter copy for smooth preview…'}</div>}
+        {busy && <div class="overlay-note">{busy}</div>}
+        {!busy && progress[clip.mediaId] !== undefined && (
+          <div class="overlay-note with-pie">
+            <Pie value={progress[clip.mediaId]!} size={16} />
+            <span>Making a lighter copy for smooth preview… {Math.round(progress[clip.mediaId]! * 100)}%</span>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -129,6 +136,8 @@ function Gestures({ boxW, boxH }: { boxW: number; boxH: number }) {
   const base = useRef<{ view: View; a: Pt; b: Pt | null; ids: number[] } | null>(null);
   const live = useRef<View | null>(null);
   const fine = useRef(false);
+  const tap = useRef<{ t: number; x: number; y: number; moved: boolean; multi: boolean } | null>(null);
+  const lastTap = useRef<{ t: number; x: number; y: number } | null>(null);
   const timer = useRef(0);
   const frame = useRef(0);
   const sizes = useRef({ boxW, boxH });
@@ -192,7 +201,7 @@ function Gestures({ boxW, boxH }: { boxW: number; boxH: number }) {
     setFineLook(false);
     const v = live.current;
     live.current = null;
-    if (v) {
+    if (v && v !== getState().project.clips[getState().selected]?.view) {
       updateClip(getState().selected, { view: v });
       engine.live = null;
       engine.draw();
@@ -247,6 +256,9 @@ function Gestures({ boxW, boxH }: { boxW: number; boxH: number }) {
       /* the pointer is already gone */
     }
     pts.current.set(e.pointerId, rel(e));
+    if (pts.current.size > 1) {
+      if (tap.current) tap.current.multi = true;
+    } else tap.current = { t: performance.now(), x: e.clientX, y: e.clientY, moved: false, multi: false };
     const c = current();
     if (c && !live.current) live.current = c.clip.view;
     rebase();
@@ -256,6 +268,8 @@ function Gestures({ boxW, boxH }: { boxW: number; boxH: number }) {
     if (!pts.current.has(e.pointerId)) return;
     if (e.pointerType === 'mouse' && e.buttons === 0) return flush(); // button released somewhere we did not see
     pts.current.set(e.pointerId, rel(e));
+    const tp = tap.current;
+    if (tp && Math.hypot(e.clientX - tp.x, e.clientY - tp.y) > JITTER) tp.moved = true;
     const b = base.current;
     const c = current();
     if (!b || !c) return;
@@ -299,7 +313,27 @@ function Gestures({ boxW, boxH }: { boxW: number; boxH: number }) {
       startTimer();
       return;
     }
+    const tp = tap.current;
+    tap.current = null;
     flush();
+    if (tp && !tp.moved && !tp.multi && performance.now() - tp.t < 300) {
+      const lt = lastTap.current;
+      if (lt && tp.t - lt.t < 400 && Math.hypot(tp.x - lt.x, tp.y - lt.y) < 40) {
+        lastTap.current = null;
+        doubleTap();
+      } else lastTap.current = { t: tp.t, x: tp.x, y: tp.y };
+    }
+  };
+  /** snaps to the closest of the eight tidy placements (quarter turn x fit/fill); again flips fit/fill */
+  const doubleTap = () => {
+    const c = current();
+    if (!c) return;
+    const { boxW: W, boxH: H } = sizes.current;
+    const v = clampView(snapEight(c.clip.view, c.media.width, c.media.height, W, H));
+    updateClip(getState().selected, { view: v });
+    const fit = fitZoom(c.media.width, c.media.height, v.rot, W, H);
+    showBadge(Math.abs(v.zoom - fit) / fit < 0.02 ? 'Fit' : 'Fill');
+    window.setTimeout(() => !fine.current && showBadge(''), 700);
   };
   const wheel = (e: WheelEvent) => {
     // desktop: scroll to zoom
@@ -330,9 +364,6 @@ export function Transport() {
     if (playing) engine.pause();
     else void engine.play();
   };
-  const cut = () => {
-    if (!splitAtPlayhead()) toast('Move the position marker into a clip, away from its edges, to cut there.');
-  };
   const scrub = (e: Event) => {
     const t = Number((e.currentTarget as HTMLInputElement).value);
     set({ playhead: t });
@@ -343,9 +374,6 @@ export function Transport() {
     <div class="transport">
       <button class="play" onClick={toggle} aria-label={playing ? 'Pause' : 'Play'}>
         {playing ? <Pause /> : <Play />}
-      </button>
-      <button class="cut" onClick={cut} aria-label="Cut the clip at the position marker">
-        <Split />
       </button>
       <input class="scrub" type="range" min={0} max={Math.max(total, 0.01)} step={0.01} value={Math.min(playhead, total)} onInput={scrub} aria-label="Position" />
       <span class="time num">

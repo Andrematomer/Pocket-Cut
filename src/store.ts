@@ -1,13 +1,13 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { ASPECT_VALUE, IDENTITY_VIEW, nearestAspect, normAngle } from './geometry.ts';
 import { decodeImage, dropAllMedia, isImageFile, mediaBlob, newId, probeImage, probeVideo, registerMedia, UnsupportedMediaError } from './media.ts';
-import { onProxyWork, queueProxy, requeueAllProxies } from './proxy.ts';
+import { onProxyProgress, onProxyWork, queueProxy, requeueAllProxies, setProxyOrder } from './proxy.ts';
 import { clearSaved, loadSaved, requestPersistence, saveMedia, saveProject } from './persist.ts';
 import { layout, MAX_SPEED, MIN_CLIP, MIN_SPEED, locate } from './timeline.ts';
 import { DEFAULT_SETTINGS, emptyProject, type Clip, type ExportSettings, type MediaInfo, type Project } from './types.ts';
 
-export type Tool = 'trim' | 'speed' | 'sound' | 'order';
-export type Sheet = 'none' | 'export' | 'settings' | 'canvas' | 'help' | 'clip';
+export type Tool = 'trim' | 'speed' | 'sound' | 'clip';
+export type Sheet = 'none' | 'export' | 'settings' | 'canvas' | 'help';
 
 export interface Toast {
   text: string;
@@ -27,6 +27,8 @@ export interface State {
   ready: boolean;
   /** a small preview copy is being made in the background */
   preparing: boolean;
+  /** 0..1 per media id while its preview copy is waiting or being made */
+  proxyProgress: Record<string, number>;
   /** settings of the app itself (not of one project) */
   prefs: AppPrefs;
   canUndo: boolean;
@@ -40,7 +42,7 @@ export interface AppPrefs {
   previewLong: number;
 }
 
-export const DEFAULT_PREFS: AppPrefs = { imageSeconds: 5, previewLong: 360 };
+export const DEFAULT_PREFS: AppPrefs = { imageSeconds: 5, previewLong: 240 };
 
 function loadAppPrefs(): AppPrefs {
   try {
@@ -63,6 +65,7 @@ let state: State = {
   sheet: 'none',
   ready: false,
   preparing: false,
+  proxyProgress: {},
   prefs: loadAppPrefs(),
   canUndo: false,
   canRedo: false,
@@ -233,16 +236,16 @@ export function setTrim(index: number, start: number, end: number): void {
   updateClip(index, { start: s, end: e });
 }
 
-export function moveClip(index: number, dir: -1 | 1): void {
-  const j = index + dir;
-  const clips = state.project.clips;
-  if (j < 0 || j >= clips.length) return;
+export function reorderClip(from: number, to: number): void {
+  const n = state.project.clips.length;
+  if (from === to || from < 0 || to < 0 || from >= n || to >= n) return;
   edit((p) => {
     const next = [...p.clips];
-    [next[index], next[j]] = [next[j]!, next[index]!];
+    const [c] = next.splice(from, 1);
+    next.splice(to, 0, c!);
     return { ...p, clips: next };
   });
-  set({ selected: j });
+  set({ selected: to });
 }
 
 export function duplicateClip(index: number): void {
@@ -404,3 +407,14 @@ subs.add(() => {
 export const blobFor = mediaBlob;
 
 onProxyWork((working) => set({ preparing: working }));
+onProxyProgress((id, p) => {
+  const next = { ...state.proxyProgress };
+  if (p === null) delete next[id];
+  else next[id] = p;
+  set({ proxyProgress: next });
+});
+setProxyOrder(() => {
+  const ids = state.project.clips.map((c) => c.mediaId);
+  const sel = ids[state.selected];
+  return sel ? [sel, ...ids.filter((i) => i !== sel)] : ids;
+});

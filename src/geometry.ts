@@ -4,7 +4,7 @@ export const IDENTITY_VIEW: View = { x: 0, y: 0, zoom: 1, rot: 0 };
 export const MIN_ZOOM = 0.1;
 export const MAX_ZOOM = 12;
 
-export const ASPECT_VALUE: Record<AspectChoice, number> = { '9:16': 9 / 16, '4:5': 4 / 5, '1:1': 1, '16:9': 16 / 9 };
+export const ASPECT_VALUE: Record<AspectChoice, number> = { '9:16': 9 / 16, '4:5': 4 / 5, '1:1': 1, '5:4': 5 / 4, '16:9': 16 / 9 };
 
 const RAD = Math.PI / 180;
 const even = (n: number) => Math.max(2, Math.round(n / 2) * 2);
@@ -191,4 +191,34 @@ export function outputSize(p: Project): { w: number; h: number } {
   const aspect = ASPECT_VALUE[p.settings.aspect] ?? 9 / 16;
   const short = p.settings.resolution;
   return aspect <= 1 ? { w: even(short), h: even(short / aspect) } : { w: even(short * aspect), h: even(short) };
+}
+
+/**
+ * Double-tap snap: of the eight "tidy" placements (quarter turns 0/90/180/270, each either fitting
+ * the whole picture or filling the frame, centered) the one closest to the current view. Tapping again
+ * on a tidy placement switches between fit and fill.
+ */
+export function snapEight(v: View, sw: number, sh: number, W: number, H: number): View {
+  let best: View | null = null;
+  let cost = Infinity;
+  const options: { view: View; cost: number; fit: boolean; rot: number }[] = [];
+  for (let q = 0; q < 4; q++) {
+    const rot = q * 90;
+    const dAng = Math.abs(normAngle(v.rot - rot)) / 90;
+    const fit = fitZoom(sw, sh, rot, W, H);
+    const fill = fillZoom(sw, sh, rot, W, H);
+    const targets: [number, boolean][] = Math.abs(fill - fit) / fit > 0.02 ? [[fit, true], [fill, false]] : [[fit, true]];
+    for (const [z, isFit] of targets) {
+      const c = dAng + Math.abs(Math.log(v.zoom / z)) + Math.hypot(v.x, v.y) * 0.5;
+      options.push({ view: { x: 0, y: 0, zoom: z, rot }, cost: c, fit: isFit, rot });
+      if (c < cost) (cost = c), (best = options[options.length - 1]!.view);
+    }
+  }
+  const pick = options.find((o) => o.view === best)!;
+  // already there: flip to the other zoom of the same turn
+  if (pick.cost < 0.03) {
+    const other = options.find((o) => o.rot === pick.rot && o.fit !== pick.fit);
+    if (other) return other.view;
+  }
+  return pick.view;
 }

@@ -33,7 +33,7 @@ export interface Clip {
   keepPitch: boolean;
 }
 
-export type AspectChoice = '9:16' | '4:5' | '1:1' | '16:9';
+export type AspectChoice = '9:16' | '4:5' | '1:1' | '5:4' | '16:9';
 
 export interface ExportSettings {
   aspect: AspectChoice;

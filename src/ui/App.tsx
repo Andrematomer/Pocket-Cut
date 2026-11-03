@@ -3,7 +3,6 @@ import { engine } from '../engine.ts';
 import { canPromptInstall, isAndroid, isIOS, isMobile, isStandalone, onInstallChange, promptInstall } from '../install.ts';
 import { redo, restore, set, undo, useStore } from '../store.ts';
 import { ASPECT_LABEL, CanvasSheet } from './CanvasSheet.tsx';
-import { ClipMenu } from './ClipMenu.tsx';
 import { HelpSheet } from './HelpSheet.tsx';
 import { ExportSheet } from './ExportSheet.tsx';
 import { Gear, Help, Plus, Redo, Undo } from './icons.tsx';
@@ -84,7 +83,6 @@ export function App() {
 
       {sheet === 'export' && <ExportSheet onClose={() => set({ sheet: 'none' })} />}
       {sheet === 'help' && <HelpSheet onClose={() => set({ sheet: 'none' })} />}
-      {sheet === 'clip' && <ClipMenu onClose={() => set({ sheet: 'none' })} />}
       {sheet === 'canvas' && <CanvasSheet onClose={() => set({ sheet: 'none' })} />}
       {sheet === 'settings' && <SettingsSheet onClose={() => set({ sheet: 'none' })} />}
 

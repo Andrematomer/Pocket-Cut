@@ -1,17 +1,17 @@
 import type { JSX } from 'preact';
 import { useRef, useState } from 'preact/hooks';
 import { engine } from '../engine.ts';
-import { getState, moveClip, set, setSpeed, setTrim, updateClip, useStore, type Tool } from '../store.ts';
+import { deleteClip, duplicateClip, getState, quarterTurn, resetView, set, splitAtPlayhead, toast, setSpeed, setTrim, updateClip, useStore, type Tool } from '../store.ts';
 import { MAX_SPEED, MIN_CLIP, MIN_SPEED, clipDuration, fmtTime, layout, locate } from '../timeline.ts';
 import { IMAGE_MAX_SECONDS } from '../media.ts';
-import { Left, Mute, Order, Right, Sound, Speed, Trim } from './icons.tsx';
+import { Clips, Copy, Mute, Rotate, RotateL, Sound, Speed, Split, Trash, Trim } from './icons.tsx';
 import { Slider } from './Slider.tsx';
 
 const TABS: { id: Tool; label: string; icon: () => JSX.Element }[] = [
   { id: 'trim', label: 'Trim', icon: Trim },
   { id: 'speed', label: 'Speed', icon: Speed },
   { id: 'sound', label: 'Sound', icon: Sound },
-  { id: 'order', label: 'Order', icon: Order },
+  { id: 'clip', label: 'Clip', icon: Clips },
 ];
 
 export function Tools() {
@@ -22,7 +22,7 @@ export function Tools() {
     return !m ? 'none' : m.kind === 'image' ? 'image' : m.hasAudio ? 'video' : 'silent';
   });
   // a picture only has a duration; a video without sound has no Sound tab
-  const tabs = kind === 'image' ? [{ id: 'trim' as Tool, label: 'Duration', icon: Trim }, { id: 'order' as Tool, label: 'Order', icon: Order }] : kind === 'silent' ? TABS.filter((t) => t.id !== 'sound') : TABS;
+  const tabs = kind === 'image' ? [{ id: 'trim' as Tool, label: 'Duration', icon: Trim }, { id: 'clip' as Tool, label: 'Clip', icon: Clips }] : kind === 'silent' ? TABS.filter((t) => t.id !== 'sound') : TABS;
   const tool = tabs.some((t) => t.id === stored) ? stored : 'trim';
   return (
     <div class="tools">
@@ -38,7 +38,7 @@ export function Tools() {
         {tool === 'trim' && (kind === 'image' ? <DurationPanel /> : <TrimPanel />)}
         {tool === 'speed' && <SpeedPanel />}
         {tool === 'sound' && <SoundPanel />}
-        {tool === 'order' && <OrderPanel />}
+        {tool === 'clip' && <ClipPanel />}
       </div>
     </div>
   );
@@ -299,21 +299,29 @@ function SoundPanel() {
   );
 }
 
-// ---------- order ----------
+// ---------- clip ----------
 
-function OrderPanel() {
-  const { index } = useSel();
-  const count = useStore((s) => s.project.clips.length);
+function ClipPanel() {
+  const { index, media } = useSel();
+  const image = media?.kind === 'image';
   return (
-    <div class="order">
-      <button class="btn" disabled={index <= 0} onClick={() => moveClip(index, -1)}>
-        <Left /> Earlier
+    <div class="grid3">
+      {!image && (
+        <button class="btn" onClick={() => !splitAtPlayhead() && toast('Move the position marker into this clip, away from its edges, to cut there.')}>
+          <Split /> Split here
+        </button>
+      )}
+      <button class="btn" onClick={() => duplicateClip(index)}>
+        <Copy /> Duplicate
       </button>
-      <span class="num order-pos">
-        Clip {index + 1} of {count}
-      </span>
-      <button class="btn" disabled={index >= count - 1} onClick={() => moveClip(index, 1)}>
-        Later <Right />
+      <button class="btn" onClick={() => quarterTurn(index)}>
+        <Rotate /> Turn 90°
+      </button>
+      <button class="btn" onClick={() => resetView(index)}>
+        <RotateL /> Reset position
+      </button>
+      <button class="btn danger" onClick={() => deleteClip(index)}>
+        <Trash /> Delete clip
       </button>
     </div>
   );

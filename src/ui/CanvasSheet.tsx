@@ -2,8 +2,8 @@ import { setSettings, useStore } from '../store.ts';
 import type { AspectChoice } from '../types.ts';
 import { Sheet } from './Sheet.tsx';
 
-export const ASPECT_LABEL: Record<AspectChoice, string> = { '9:16': '9:16', '4:5': '4:5', '1:1': '1:1', '16:9': '16:9' };
-const ASPECTS: AspectChoice[] = ['9:16', '4:5', '1:1', '16:9'];
+export const ASPECT_LABEL: Record<AspectChoice, string> = { '9:16': '9:16', '4:5': '4:5', '1:1': '1:1', '5:4': '5:4', '16:9': '16:9' };
+const ASPECTS: AspectChoice[] = ['9:16', '4:5', '1:1', '5:4', '16:9'];
 
 /** The shape of the exported picture, and how the selected clip sits in it. */
 export function CanvasSheet({ onClose }: { onClose: () => void }) {

@@ -62,6 +62,16 @@ export class PreviewEngine {
     const wake = () => this.wakeAudio();
     window.addEventListener('pointerdown', wake, { passive: true });
     window.addEventListener('touchend', wake, { passive: true });
+    // leaving the app: release the audio session; coming back: wake it and repaint (iOS may have dropped the canvas)
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) {
+        this.pause();
+        void this.audio?.ctx.suspend().catch(() => {});
+      } else {
+        this.wakeAudio();
+        requestAnimationFrame(() => this.draw());
+      }
+    });
     this.hideFromLockScreen();
     v.addEventListener('play', () => this.hideFromLockScreen());
   }
@@ -224,6 +234,21 @@ export class PreviewEngine {
   private startClock(tl: number): void {
     this.clockT0 = performance.now();
     this.clockTl0 = tl;
+  }
+
+  /**
+   * A preview copy appeared or went away, so the address of the loaded video changed (and the old one
+   * may already be revoked). Drop what is loaded and show the current frame again from the new source.
+   */
+  refresh(): void {
+    const t = this.tl;
+    const was = this.playing;
+    this.token++;
+    this.stopPlaying();
+    this.media = null;
+    this.loadedUrl = '';
+    if (!this.deps.getProject().clips.length) return;
+    void this.showAt(t).then(() => was && void this.play());
   }
 
   /** Pause and show the frame at timeline time t. */

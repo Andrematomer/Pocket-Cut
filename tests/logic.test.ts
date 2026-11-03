@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { IDENTITY_VIEW, baseScale, dragView, fillZoom, fitZoom, frameTransform, nearestAspect, normAngle, outputSize, pinchView, quarterTurned, snapView } from '../src/geometry.ts';
+import { IDENTITY_VIEW, baseScale, dragView, fillZoom, fitZoom, frameTransform, nearestAspect, snapEight, normAngle, outputSize, pinchView, quarterTurned, snapView } from '../src/geometry.ts';
 import { layout, locate, planParts } from '../src/timeline.ts';
 import { resample, timeStretch } from '../src/stretch.ts';
 import { MAX_MBPS, MIN_MBPS, RATE_STOPS, autoBitrate, estimateBytes, fmtMbps, videoBitrate } from '../src/bitrate.ts';
@@ -208,4 +208,18 @@ test('bitrate slider stops start at 1 Mbps, rise, and are inside the limits', ()
 
 test('split is off by default', () => {
   assert.equal(emptyProject().settings.splitSeconds, null);
+});
+
+test('snapEight: goes to the closest of the eight tidy placements, and flips fit/fill when already there', () => {
+  const W = 360, H = 640;
+  // a 16:9 picture turned about 78° and made small: becomes the quarter turn at 90° that fits
+  const v = snapEight({ x: 0.02, y: 0, zoom: 0.3, rot: 78 }, 1920, 1080, W, H);
+  assert.equal(v.rot, 90);
+  assert.ok(Math.abs(v.zoom - fitZoom(1920, 1080, 90, W, H)) < 1e-9);
+  assert.deepEqual([v.x, v.y], [0, 0]);
+  // tapping again on a tidy placement switches to the other zoom
+  const w = snapEight(v, 1920, 1080, W, H);
+  assert.ok(Math.abs(w.zoom - fillZoom(1920, 1080, 90, W, H)) < 1e-9);
+  // 5:4 exists
+  assert.equal(nearestAspect(1280, 1024), '5:4');
 });
