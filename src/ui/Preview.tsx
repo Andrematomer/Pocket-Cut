@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { engine } from '../engine.ts';
 import { clampView, dragView, fitZoom, outputSize, pinchView, snapEight, snapView, type Pt } from '../geometry.ts';
 import { getState, set, updateClip, useStore } from '../store.ts';
-import { fmtTime, layout } from '../timeline.ts';
+import { activeAt, fmtTime, totalOf } from '../timeline.ts';
 import type { View } from '../types.ts';
 import { Pause, Play } from './icons.tsx';
 import { Pie } from './Pie.tsx';
@@ -80,12 +80,7 @@ export function Preview() {
       firstRun.current = false;
       if (project.clips.length === 0) return;
     }
-    const L = layout(project.clips);
-    const sel = getState().selected;
-    const t = Math.min(getState().playhead, L.total);
-    const playheadClipStart = L.starts[sel] ?? 0;
-    const inSel = t >= playheadClipStart - 1e-6 && t <= playheadClipStart + (L.durations[sel] ?? 0);
-    void engine.showAt(inSel ? t : playheadClipStart).then(() => set({ playhead: engine.tl }));
+    void engine.showAt(Math.min(getState().playhead, totalOf(project.clips))).then(() => set({ playhead: engine.tl }));
   }, [idsKey, selected]);
 
   if (!clip || !media) return <div class="stage" ref={wrap} />;
@@ -247,8 +242,12 @@ function Gestures({ boxW, boxH }: { boxW: number; boxH: number }) {
     // the first finger of a gesture: anything still remembered from before is a lost finger
     if (e.isPrimary && pts.current.size > 0) flush();
     // work on the clip that is on screen (playback may have moved on from the selected one)
-    const shown = engine.currentIndex();
-    if (shown !== getState().selected) set({ selected: shown });
+    const st0 = getState();
+    const visible = activeAt(st0.project.clips, st0.playhead);
+    if (!visible.includes(st0.selected)) {
+      const shown = engine.currentIndex();
+      if (shown >= 0) set({ selected: shown });
+    }
     engine.pause();
     try {
       (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
@@ -358,7 +357,7 @@ export function Transport() {
   const playing = useStore((s) => s.playing);
   const playhead = useStore((s) => s.playhead);
   const clips = useStore((s) => s.project.clips);
-  const total = layout(clips).total;
+  const total = totalOf(clips);
 
   const toggle = () => {
     if (playing) engine.pause();

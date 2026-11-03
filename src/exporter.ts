@@ -20,7 +20,7 @@ import { mediaBitmap } from './media.ts';
 import { drawFrame, outputSize } from './geometry.ts';
 import { resample, timeStretch } from './stretch.ts';
 import { awakeForJob } from './wake.ts';
-import { layout, locate, planParts, sourceTimeAt, type Layout, type Part } from './timeline.ts';
+import { activeAt, clipDuration, planParts, sourceAt, sourceTimeAt, totalOf, type Part } from './timeline.ts';
 import type { Clip, Project } from './types.ts';
 
 /** Shown to people instead of codec jargon. */
@@ -119,7 +119,6 @@ async function pickAudioPlan(): Promise<AudioPlan | null> {
 async function renderPartAudio(
   srcs: Map<string, Src>,
   clips: Clip[],
-  L: Layout,
   part: Part,
   fps: number,
   sampleRate: number,
@@ -131,11 +130,11 @@ async function renderPartAudio(
     const clip = clips[i]!;
     const s = srcs.get(clip.mediaId);
     if (!s?.at || clip.volume <= 0) continue;
-    const outStart = Math.max(part.start, L.starts[i]!);
-    const outEnd = Math.min(part.end, L.starts[i]! + L.durations[i]!);
+    const outStart = Math.max(part.start, clip.at);
+    const outEnd = Math.min(part.end, clip.at + clipDuration(clip));
     if (outEnd - outStart < 1e-3) continue;
-    const srcStart = sourceTimeAt(clip, outStart - L.starts[i]!);
-    const srcEnd = Math.min(clip.end, sourceTimeAt(clip, outEnd - L.starts[i]!));
+    const srcStart = sourceTimeAt(clip, outStart - clip.at);
+    const srcEnd = Math.min(clip.end, sourceTimeAt(clip, outEnd - clip.at));
 
     const rate = await s.at.getSampleRate();
     const chCount = Math.max(1, Math.min(2, await s.at.getNumberOfChannels()));
@@ -182,8 +181,8 @@ export async function exportProject(
   const { clips, settings } = project;
   if (clips.length === 0) throw new FriendlyError('Add a video first.');
   const { fps } = settings;
-  const L = layout(clips);
-  const parts = planParts(L.total, settings.splitSeconds, settings.equalParts, fps);
+  const total = totalOf(clips);
+  const parts = planParts(total, settings.splitSeconds, settings.equalParts, fps);
   if (parts.length === 0) throw new FriendlyError('Nothing to export: the clips are empty.');
   const { w: outW, h: outH } = outputSize(project);
   const bitrate = videoBitrate(settings, outW, outH);
@@ -233,6 +232,11 @@ export async function exportProject(
         continue;
       }
       const input = new Input({ source: new BlobSource(blob), formats: ALL_FORMATS });
+      if (project.media[id]?.kind === 'audio') {
+        const at = plan ? await input.getPrimaryAudioTrack() : null;
+        srcs.set(id, { input, sink: null, image: null, at: at && (await at.canDecode()) ? at : null });
+        continue;
+      }
       const vt = await input.getPrimaryVideoTrack();
       if (!vt) throw new FriendlyError('A video file has no picture in it.');
       const w = await vt.getDisplayWidth();
@@ -255,31 +259,44 @@ export async function exportProject(
         as = new AudioBufferSource({ codec: plan.codec, quality: new Quality({ bitrate: plan.bitrate }) });
         output.addAudioTrack(as);
       }
-      let reader: { index: number; r: FrameReader } | null = null;
+      const readers = new Map<string, FrameReader>();
+      const closeReaders = async () => {
+        for (const r of readers.values()) await r.close();
+        readers.clear();
+      };
       try {
         await output.start();
         for (let j = 0; j < frames; j++) {
           if (signal.aborted) throw abortError();
           const t = (part.startFrame + j) / fps;
-          const at = locate(L, t)!;
-          const clip = clips[at.index]!;
-          const srcT = Math.min(sourceTimeAt(clip, at.local), Math.max(clip.start, clip.end - 1e-3));
-          const src = srcs.get(clip.mediaId)!;
-          const o = { outW, outH, view: clip.view };
-          if (src.image) {
-            drawFrame(ctx, src.image, src.image.width, src.image.height, o);
-          } else {
-            if (!reader || reader.index !== at.index) {
-              await reader?.r.close();
-              reader = { index: at.index, r: new FrameReader(src.sink!, srcT, clip.end + 0.05) };
+          ctx.setTransform(1, 0, 0, 1, 0, 0);
+          ctx.fillStyle = '#000';
+          ctx.fillRect(0, 0, outW, outH);
+          const playing = activeAt(clips, t);
+          // a reader whose clip is no longer on screen is done
+          for (const [id, r] of readers) {
+            if (!playing.some((i) => clips[i]!.id === id)) {
+              await r.close();
+              readers.delete(id);
             }
-            const f = await reader.r.at(srcT);
-            if (f) {
-              drawFrame(ctx, f.canvas, f.canvas.width, f.canvas.height, o);
-            } else {
-              ctx.fillStyle = '#000';
-              ctx.fillRect(0, 0, outW, outH);
+          }
+          for (const i of playing) {
+            const clip = clips[i]!;
+            const src = srcs.get(clip.mediaId)!;
+            if (project.media[clip.mediaId]?.kind === 'audio') continue;
+            const o = { outW, outH, view: clip.view, keepBackground: true };
+            if (src.image) {
+              drawFrame(ctx, src.image, src.image.width, src.image.height, o);
+              continue;
             }
+            const srcT = sourceAt(clip, t);
+            let r = readers.get(clip.id);
+            if (!r) {
+              r = new FrameReader(src.sink!, srcT, clip.end + 0.05);
+              readers.set(clip.id, r);
+            }
+            const f = await r.at(srcT);
+            if (f) drawFrame(ctx, f.canvas, f.canvas.width, f.canvas.height, o);
           }
           await vs.add(j / fps, 1 / fps);
           framesDone++;
@@ -290,17 +307,16 @@ export async function exportProject(
             await new Promise((r) => setTimeout(r, 0)); // let the screen update
           }
         }
-        await reader?.r.close();
-        reader = null;
+        await closeReaders();
         vs.close();
         if (as && plan) {
-          const mix = await renderPartAudio(srcs, clips, L, part, fps, plan.sampleRate, signal);
+          const mix = await renderPartAudio(srcs, clips, part, fps, plan.sampleRate, signal);
           await as.add(mix);
           as.close();
         }
         await output.finalize();
       } catch (e) {
-        await reader?.r.close();
+        await closeReaders();
         await output.cancel().catch(() => {});
         throw e;
       }

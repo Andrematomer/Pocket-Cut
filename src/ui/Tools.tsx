@@ -2,7 +2,7 @@ import type { JSX } from 'preact';
 import { useRef, useState } from 'preact/hooks';
 import { engine } from '../engine.ts';
 import { deleteClip, duplicateClip, getState, set, splitAtPlayhead, toast, setSpeed, setTrim, updateClip, useStore, type Tool } from '../store.ts';
-import { MAX_SPEED, MIN_CLIP, MIN_SPEED, clipDuration, fmtTime, layout, locate } from '../timeline.ts';
+import { MAX_SPEED, MIN_CLIP, MIN_SPEED, clipDuration, clipEnd, fmtTime } from '../timeline.ts';
 import { IMAGE_MAX_SECONDS } from '../media.ts';
 import { Clips, Copy, Mute, Sound, Speed, Split, Trash, Trim } from './icons.tsx';
 import { Slider } from './Slider.tsx';
@@ -83,7 +83,6 @@ function TrimPanel() {
   } | null>(null);
   if (!clip || !media) return null;
 
-  const L = layout(project.clips);
   const rect = () => track.current!.getBoundingClientRect();
   const timeAt = (clientX: number) => {
     const r = rect();
@@ -122,7 +121,7 @@ function TrimPanel() {
   const commit = (d: NonNullable<typeof drag.current>) => {
     setTrim(index, d.s, d.e);
     const now = clipAt(index)!;
-    const start = layout(getState().project.clips).starts[index]!;
+    const start = now.at;
     void engine.showAt(d.mode === 'start' ? start : start + Math.max(0, clipDuration(now) - 0.05)).then(() => set({ playhead: engine.tl }));
   };
   /** (re)starts the hold timer: when the finger stays still this long, fine control begins right there */
@@ -202,8 +201,7 @@ function TrimPanel() {
   };
 
   const pct = (t: number) => `${(t / media.duration) * 100}%`;
-  const at = locate(L, playhead);
-  const srcNow = at && at.index === index ? clip.start + at.local * clip.speed : null;
+  const srcNow = playhead >= clip.at && playhead < clipEnd(clip) ? clip.start + (playhead - clip.at) * clip.speed : null;
 
   return (
     <>

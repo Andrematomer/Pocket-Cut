@@ -9,7 +9,7 @@ import { Gear, Help, Plus, Redo, Undo } from './icons.tsx';
 import { FilePicker, PickLabel } from './Picker.tsx';
 import { Preview, Transport } from './Preview.tsx';
 import { SettingsSheet } from './SettingsSheet.tsx';
-import { Strip } from './Strip.tsx';
+import { Timeline } from './Timeline.tsx';
 import { browserInfo, checkSupport } from '../support.ts';
 import { Tools } from './Tools.tsx';
 
@@ -76,7 +76,7 @@ export function App() {
         <main class="editor">
           <Preview />
           <Transport />
-          <Strip />
+          <Timeline />
           <Tools />
         </main>
       ) : (

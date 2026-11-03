@@ -1,6 +1,6 @@
 {
-  "name": "Pocket Cut",
-  "short_name": "Pocket Cut",
+  "name": "Pocket Cut NLA",
+  "short_name": "Cut NLA",
   "description": "Trim, rotate, crop, speed up and join videos on your phone. Works offline.",
   "id": "./",
   "start_url": "./",

@@ -114,6 +114,8 @@ async function canvasToJpeg(c: HTMLCanvasElement | OffscreenCanvas): Promise<Blo
 export const IMAGE_MAX_SECONDS = 30;
 export const IMAGE_DEFAULT_SECONDS = 5;
 
+export const isAudioFile = (f: File): boolean => f.type.startsWith('audio/') || /\.(mp3|m4a|aac|wav|ogg|oga|opus|flac|caf)$/i.test(f.name);
+
 export const isImageFile = (f: File): boolean => f.type.startsWith('image/') || /\.(jpe?g|png|webp|gif|bmp|avif|heic|heif)$/i.test(f.name);
 
 /** Decodes a still picture (upright, large ones scaled down to at most 4096 px). */
@@ -148,4 +150,18 @@ export async function probeImage(file: File, id: string): Promise<{ info: MediaI
     thumb = null;
   }
   return { info: { id, name: file.name.replace(/\.[^.]+$/, ''), duration: IMAGE_MAX_SECONDS, width: bitmap.width, height: bitmap.height, hasAudio: false, kind: 'image' }, thumb, bitmap };
+}
+
+/** A sound file: no picture, a duration. */
+export async function probeAudio(file: File, id: string): Promise<{ info: MediaInfo; thumb: Blob | null }> {
+  const input = new Input({ source: new BlobSource(file), formats: ALL_FORMATS });
+  try {
+    const at = await input.getPrimaryAudioTrack();
+    if (!at || !(await at.canDecode())) throw new UnsupportedMediaError(`This device can't read the sound of "${file.name}".`);
+    const duration = await input.computeDuration();
+    if (!(duration > 0)) throw new UnsupportedMediaError(`"${file.name}" looks empty or damaged.`);
+    return { info: { id, name: file.name.replace(/\.[^.]+$/, ''), duration, width: 0, height: 0, hasAudio: true, kind: 'audio' }, thumb: null };
+  } finally {
+    input.dispose();
+  }
 }

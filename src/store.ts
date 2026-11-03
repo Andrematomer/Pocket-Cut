@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { ASPECT_VALUE, IDENTITY_VIEW, nearestAspect, normAngle } from './geometry.ts';
-import { decodeImage, dropAllMedia, isImageFile, mediaBlob, newId, probeImage, probeVideo, registerMedia, UnsupportedMediaError } from './media.ts';
+import { decodeImage, dropAllMedia, isAudioFile, isImageFile, probeAudio, mediaBlob, newId, probeImage, probeVideo, registerMedia, UnsupportedMediaError } from './media.ts';
 import { setAwakeMode } from './wake.ts';
 import { onProxyProgress, onProxyWork, queueProxy, requeueAllProxies, setProxyOrder } from './proxy.ts';
 import { clearSaved, loadSaved, requestPersistence, saveMedia, saveProject } from './persist.ts';
-import { layout, MAX_SPEED, MIN_CLIP, MIN_SPEED, locate } from './timeline.ts';
+import { clipDuration, clipEnd, endOfTrack, MAX_SPEED, MIN_CLIP, MIN_SPEED, totalOf } from './timeline.ts';
 import { DEFAULT_SETTINGS, emptyProject, type Clip, type ExportSettings, type MediaInfo, type Project } from './types.ts';
 
 export type Tool = 'trim' | 'speed' | 'sound' | 'clip';
@@ -49,7 +49,7 @@ export const DEFAULT_PREFS: AppPrefs = { imageSeconds: 5, previewLong: 240, awak
 
 function loadAppPrefs(): AppPrefs {
   try {
-    const raw = localStorage.getItem('pocket-cut:app-settings');
+    const raw = localStorage.getItem('pocket-cut-nla:app-settings');
     if (raw) return { ...DEFAULT_PREFS, ...(JSON.parse(raw) as Partial<AppPrefs>) };
   } catch {
     /* defaults */
@@ -107,7 +107,7 @@ export function toast(text: string, action?: Toast['action'], ms = 5000): void {
 /** The export settings the person used last, or the defaults. Never throws (storage can be blocked). */
 export function loadPrefs(): ExportSettings {
   try {
-    const raw = localStorage.getItem('pocket-cut:export-settings');
+    const raw = localStorage.getItem('pocket-cut-nla:export-settings');
     if (raw) return { ...DEFAULT_SETTINGS, ...(JSON.parse(raw) as Partial<ExportSettings>) };
   } catch {
     /* storage unavailable or corrupt: use defaults */
@@ -117,7 +117,7 @@ export function loadPrefs(): ExportSettings {
 
 function savePrefs(s: ExportSettings): void {
   try {
-    localStorage.setItem('pocket-cut:export-settings', JSON.stringify(s));
+    localStorage.setItem('pocket-cut-nla:export-settings', JSON.stringify(s));
   } catch {
     /* ignore */
   }
@@ -168,14 +168,14 @@ function edit(fn: (p: Project) => Project, opts: { key?: string; history?: boole
     lastKey = opts.key ?? '';
     lastAt = now;
   }
-  set({ project, selected, playhead: Math.min(state.playhead, layout(project.clips).total), ...flags() });
+  set({ project, selected, playhead: Math.min(state.playhead, totalOf(project.clips)), ...flags() });
 }
 
 function restoreSnapshot(s: Snapshot): void {
   const project = { ...state.project, clips: s.clips, media: s.media, updated: Date.now() };
   const selected = Math.max(0, Math.min(state.selected, project.clips.length - 1));
   lastKey = '';
-  set({ project, selected, playhead: Math.min(state.playhead, layout(project.clips).total), ...flags() });
+  set({ project, selected, playhead: Math.min(state.playhead, totalOf(project.clips)), ...flags() });
 }
 
 export function undo(): void {
@@ -204,7 +204,7 @@ export function setPrefs(patch: Partial<AppPrefs>): void {
   set({ prefs });
   setAwakeMode(prefs.awake);
   try {
-    localStorage.setItem('pocket-cut:app-settings', JSON.stringify(prefs));
+    localStorage.setItem('pocket-cut-nla:app-settings', JSON.stringify(prefs));
   } catch {
     /* ignore */
   }
@@ -240,23 +240,28 @@ export function setTrim(index: number, start: number, end: number): void {
   updateClip(index, { start: s, end: e });
 }
 
-export function reorderClip(from: number, to: number): void {
-  const n = state.project.clips.length;
-  if (from === to || from < 0 || to < 0 || from >= n || to >= n) return;
-  edit((p) => {
-    const next = [...p.clips];
-    const [c] = next.splice(from, 1);
-    next.splice(to, 0, c!);
-    return { ...p, clips: next };
-  });
-  set({ selected: to });
+/** Moves a clip on the timeline: new start time and lane. */
+export function moveClipTo(index: number, at: number, track: number): void {
+  const c = state.project.clips[index];
+  if (!c) return;
+  const next = { at: Math.max(0, Math.round(at * 100) / 100), track };
+  if (next.at === c.at && next.track === c.track) return;
+  edit((p) => ({ ...p, clips: p.clips.map((x, i) => (i === index ? { ...x, ...next } : x)) }), { key: `move:${index}` });
+}
+
+/** Selects a clip and brings the position marker into it, so it shows in the preview. */
+export function selectClip(index: number): void {
+  const c = state.project.clips[index];
+  if (!c) return;
+  const inside = state.playhead >= c.at - 1e-6 && state.playhead < clipEnd(c);
+  set({ selected: index, playhead: inside ? state.playhead : c.at });
 }
 
 export function duplicateClip(index: number): void {
   const c = state.project.clips[index];
   if (!c) return;
-  edit((p) => ({ ...p, clips: [...p.clips.slice(0, index + 1), { ...c, id: newId() }, ...p.clips.slice(index + 1)] }));
-  set({ selected: index + 1 });
+  edit((p) => ({ ...p, clips: [...p.clips, { ...c, id: newId(), at: clipEnd(c) }] }));
+  set({ selected: state.project.clips.length - 1 });
 }
 
 export function deleteClip(index: number): void {
@@ -266,20 +271,20 @@ export function deleteClip(index: number): void {
   edit((p) => ({ ...p, clips: p.clips.filter((_, i) => i !== index) }));
 }
 
-/** Cuts the selected clip in two at the playhead. */
+/** Cuts the selected clip in two at the position marker. */
 export function splitAtPlayhead(): boolean {
-  const { project, playhead } = state;
-  const L = layout(project.clips);
-  const at = locate(L, playhead);
-  if (!at) return false;
-  const c = project.clips[at.index]!;
-  const cut = c.start + at.local * c.speed;
+  const { project, playhead, selected } = state;
+  const c = project.clips[selected];
+  if (!c) return false;
+  const local = playhead - c.at;
+  if (local <= 0 || local >= clipDuration(c)) return false;
+  const cut = c.start + local * c.speed;
   if (cut - c.start < MIN_CLIP || c.end - cut < MIN_CLIP) return false;
   edit((p) => ({
     ...p,
-    clips: [...p.clips.slice(0, at.index), { ...c, end: cut }, { ...c, id: newId(), start: cut }, ...p.clips.slice(at.index + 1)],
+    clips: [...p.clips.slice(0, selected), { ...c, end: cut }, { ...c, id: newId(), start: cut, at: playhead }, ...p.clips.slice(selected + 1)],
   }));
-  set({ selected: at.index + 1 });
+  set({ selected: selected + 1 });
   return true;
 }
 
@@ -303,7 +308,8 @@ export async function importFiles(files: File[]): Promise<void> {
   for (let i = 0; i < files.length; i++) {
     const file = files[i]!;
     const image = isImageFile(file);
-    set({ busy: files.length > 1 ? `Reading ${i + 1} of ${files.length}…` : image ? 'Reading picture…' : 'Reading video…' });
+    const audio = !image && isAudioFile(file);
+    set({ busy: files.length > 1 ? `Reading ${i + 1} of ${files.length}…` : image ? 'Reading picture…' : audio ? 'Reading sound…' : 'Reading video…' });
     const id = newId();
     try {
       let info: MediaInfo;
@@ -313,6 +319,11 @@ export async function importFiles(files: File[]): Promise<void> {
         info = r.info;
         thumb = r.thumb;
         registerMedia(id, file, thumb, { name: file.name, bitmap: r.bitmap });
+      } else if (audio) {
+        const r = await probeAudio(file, id);
+        info = r.info;
+        thumb = r.thumb;
+        registerMedia(id, file, thumb, { name: file.name });
       } else {
         const r = await probeVideo(file, id);
         info = r.info;
@@ -320,7 +331,10 @@ export async function importFiles(files: File[]): Promise<void> {
         registerMedia(id, file, thumb, { name: file.name });
       }
       media[id] = info;
-      added.push({ id: newId(), mediaId: id, start: 0, end: image ? Math.min(info.duration, state.prefs.imageSeconds) : info.duration, speed: 1, view: { ...IDENTITY_VIEW }, volume: 1, keepPitch: true });
+      const track = audio ? -1 : 0;
+      // new clips go to the end of their lane, one after another
+      const at = endOfTrack([...state.project.clips, ...added], track);
+      added.push({ id: newId(), mediaId: id, start: 0, end: image ? Math.min(info.duration, state.prefs.imageSeconds) : info.duration, speed: 1, view: { ...IDENTITY_VIEW }, volume: 1, keepPitch: true, at, track });
       void saveMedia(id, { blob: file, name: file.name, thumb });
       queueProxy(id, info, state.prefs.previewLong);
     } catch (e) {
@@ -332,16 +346,17 @@ export async function importFiles(files: File[]): Promise<void> {
   if (failed) toast(failed > 1 ? `${failed} files could not be opened. ${lastError}` : lastError);
   if (added.length === 0) return;
   const firstNew = state.project.clips.length;
-  const first = state.project.clips.length === 0 ? media[added[0]!.mediaId]! : null;
+  const first = state.project.clips.length === 0 ? (added.map((c) => media[c.mediaId]!).find((m) => m.kind !== 'audio') ?? null) : null;
   edit((p) => ({
     ...p,
     clips: [...p.clips, ...added],
     media: { ...p.media, ...media },
-    name: first ? first.name : p.name,
+    name: first ? first.name : p.name || media[added[0]!.mediaId]!.name,
     // a new project starts with the canvas shape that suits its first picture
     settings: first ? { ...p.settings, aspect: nearestAspect(first.width, first.height) } : p.settings,
   }));
-  set({ selected: firstNew, tool: 'trim' });
+  set({ tool: 'trim' });
+  selectClip(firstNew);
   void requestPersistence();
 }
 
@@ -375,7 +390,17 @@ export async function restore(): Promise<void> {
       }
     }
     // older saves had 90-degree turns, a crop and a mute switch: carry over what still exists
-    const clips = saved.project.clips.filter((c) => usable.has(c.mediaId)).map(normalizeClip);
+    let run = 0;
+    const clips = saved.project.clips
+      .filter((c) => usable.has(c.mediaId))
+      .map(normalizeClip)
+      .map((c) => {
+        // a project saved as a plain sequence: lay the clips end to end on the first lane
+        const old = typeof (c as Partial<Clip>).at !== 'number';
+        const placed = old ? { ...c, at: run, track: 0 } : c;
+        run = Math.max(run, clipEnd(placed));
+        return placed;
+      });
     const settings = loadPrefs();
     if (!(saved.project.settings?.aspect in ASPECT_VALUE)) {
       const m = clips[0] && saved.project.media[clips[0].mediaId];

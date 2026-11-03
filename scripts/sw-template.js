@@ -2,7 +2,7 @@
 // Every file of the app is cached when the service worker installs. A new build has a new version,
 // installs a new cache, and deletes the old one.
 const VERSION = '__VERSION__';
-const CACHE = 'pve-' + VERSION;
+const CACHE = 'nla-' + VERSION;
 const FILES = __FILES__;
 
 self.addEventListener('install', (event) => {
@@ -18,7 +18,7 @@ self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches
       .keys()
-      .then((keys) => Promise.all(keys.filter((k) => k.startsWith('pve-') && k !== CACHE).map((k) => caches.delete(k))))
+      .then((keys) => Promise.all(keys.filter((k) => k.startsWith('nla-') && k !== CACHE).map((k) => caches.delete(k))))
       .then(() => self.clients.claim()),
   );
 });

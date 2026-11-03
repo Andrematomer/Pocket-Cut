@@ -10,7 +10,7 @@ import type { Clip } from './types.ts';
 const cache = new Map<string, Promise<AudioBuffer | null>>();
 const MAX_ENTRIES = 4;
 
-const keyOf = (c: Clip) => `${c.mediaId}|${c.start}|${c.end}|${c.speed}|${c.keepPitch}`;
+export const keyOf = (c: Clip) => `${c.mediaId}|${c.start}|${c.end}|${c.speed}|${c.keepPitch}`;
 
 export function bakedAudio(blob: Blob, clip: Clip): Promise<AudioBuffer | null> {
   const key = keyOf(clip);

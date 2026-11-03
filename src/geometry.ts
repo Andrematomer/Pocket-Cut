@@ -16,6 +16,8 @@ export interface DrawOptions {
   outW: number;
   outH: number;
   view: View;
+  /** false: draw on top of what is already there (layers) instead of starting from black */
+  keepBackground?: boolean;
 }
 
 export interface FrameTransform {
@@ -47,8 +49,10 @@ type Ctx2D = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
 export function drawFrame(ctx: Ctx2D, src: CanvasImageSource, sw: number, sh: number, o: DrawOptions): void {
   const t = frameTransform(sw, sh, o);
   ctx.setTransform(1, 0, 0, 1, 0, 0);
-  ctx.fillStyle = '#000';
-  ctx.fillRect(0, 0, o.outW, o.outH);
+  if (!o.keepBackground) {
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, o.outW, o.outH);
+  }
   ctx.save();
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = 'high';

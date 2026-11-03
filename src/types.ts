@@ -16,7 +16,7 @@ export interface MediaInfo {
   height: number;
   hasAudio: boolean;
   /** missing = video */
-  kind?: 'video' | 'image';
+  kind?: 'video' | 'image' | 'audio';
 }
 
 export interface Clip {
@@ -31,6 +31,10 @@ export interface Clip {
   /** 0..1, 0 = muted */
   volume: number;
   keepPitch: boolean;
+  /** when the clip starts on the timeline, seconds */
+  at: number;
+  /** lane: higher lanes are drawn on top; audio clips live on lane -1 and below */
+  track: number;
 }
 
 export type AspectChoice = '9:16' | '4:5' | '1:1' | '5:4' | '16:9';

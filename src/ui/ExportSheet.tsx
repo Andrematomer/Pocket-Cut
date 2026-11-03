@@ -5,7 +5,7 @@ import { RATE_STOPS, estimateBytes, fmtMbps, videoBitrate } from '../bitrate.ts'
 import { fmtBytes, saveBlob, shareFiles } from '../files.ts';
 import { outputSize } from '../geometry.ts';
 import { blobFor, setName, setSettings, useStore } from '../store.ts';
-import { fmtTime, layout, planParts } from '../timeline.ts';
+import { fmtTime, planParts, totalOf } from '../timeline.ts';
 import type { ExportSettings } from '../types.ts';
 import { Check, Download, Share } from './icons.tsx';
 import { Sheet } from './Sheet.tsx';
@@ -48,7 +48,7 @@ export function ExportSheet({ onClose }: { onClose: () => void }) {
   const [note, setNote] = useState('');
 
   const s = project.settings;
-  const total = layout(project.clips).total;
+  const total = totalOf(project.clips);
   const parts = planParts(total, s.splitSeconds, s.equalParts, s.fps);
   const size = outputSize(project);
   const isCustomValue = s.splitSeconds !== null && !SPLITS.some((x) => x.value === s.splitSeconds);

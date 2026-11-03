@@ -5,7 +5,7 @@ import type { Project } from './types.ts';
  * It stays until the user deletes it. Everything is best-effort: if storage is blocked or full the
  * editor keeps working, it just won't remember anything.
  */
-const DB = 'pwa-video-editor';
+const DB = 'pocket-cut-nla'; // its own database: this experimental build must not touch the saved project of the normal app
 
 export interface SavedMedia {
   blob: Blob;

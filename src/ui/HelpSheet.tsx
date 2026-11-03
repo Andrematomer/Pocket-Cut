@@ -47,8 +47,8 @@ export function HelpSheet({ onClose }: { onClose: () => void }) {
         <p>Touch the preview. One finger moves the clip. Two fingers pinch to zoom and twist to turn it. Hold still for a moment and it moves ten times slower, for exact placement. It snaps to the middle, to quarter turns, and to "fits the whole frame" and "fills the frame". Double-tap the preview to snap to the closest tidy placement (a quarter turn, fitting or filling); double-tap again to switch between fit and fill. Shrink it for black bars, enlarge it to fill the frame. The shape of the canvas is set with the button at the top.</p>
       </section>
       <section>
-        <h3>Clips</h3>
-        <p>Tap a thumbnail to select it. To reorder, press and hold a thumbnail until it lifts, then drag it left or right (the strip scrolls when you reach the edge). The pie on a thumbnail means its smooth-preview copy is still being made.</p>
+        <h3>Timeline</h3>
+        <p>Every clip is a strip on a lane. Lanes higher up are drawn on top of the lanes below, so you can layer a small video over a big one. Sound files sit on the ♪ lane. Tap a strip to select it. Press and hold a strip until it lifts, then drag it left or right in time, or up and down to another lane (up to the empty lane on top for a new layer); it snaps to other clips and the position marker. Drag the ruler to move the position marker. Use − and + to zoom.</p>
       </section>
       <section>
         <h3>Fine control</h3>

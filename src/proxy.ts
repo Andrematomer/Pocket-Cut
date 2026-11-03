@@ -36,7 +36,7 @@ export const onProxyWork = (f: (working: boolean) => void): void => {
 };
 
 /** true when a preview copy would help: only big pictures are worth it */
-export const wantsProxy = (info: MediaInfo, long = 360): boolean => info.kind !== 'image' && Math.max(info.width, info.height) > long * 1.4;
+export const wantsProxy = (info: MediaInfo, long = 360): boolean => info.kind !== 'image' && info.kind !== 'audio' && Math.max(info.width, info.height) > long * 1.4;
 
 /** `long` is the size (long side, pixels) of the copy; smaller copies play more smoothly on weak phones. */
 export function queueProxy(id: string, info: MediaInfo, long: number): void {
@@ -57,7 +57,7 @@ export function requeueAllProxies(media: Record<string, MediaInfo>, long = loadL
 }
 const loadLong = (): number => {
   try {
-    return (JSON.parse(localStorage.getItem('pocket-cut:app-settings') ?? '{}') as { previewLong?: number }).previewLong ?? 240;
+    return (JSON.parse(localStorage.getItem('pocket-cut-nla:app-settings') ?? '{}') as { previewLong?: number }).previewLong ?? 240;
   } catch {
     return 240;
   }

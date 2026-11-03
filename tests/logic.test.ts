@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { IDENTITY_VIEW, baseScale, dragView, fillZoom, fitZoom, frameTransform, nearestAspect, snapEight, normAngle, outputSize, pinchView, quarterTurned, snapView } from '../src/geometry.ts';
-import { layout, locate, planParts } from '../src/timeline.ts';
+import { activeAt, endOfTrack, planParts, sourceAt, totalOf } from '../src/timeline.ts';
 import { resample, timeStretch } from '../src/stretch.ts';
 import { MAX_MBPS, MIN_MBPS, RATE_STOPS, autoBitrate, estimateBytes, fmtMbps, videoBitrate } from '../src/bitrate.ts';
 import { emptyProject, type Clip } from '../src/types.ts';
@@ -96,16 +96,18 @@ test('nearestAspect: picks the canvas that suits the first picture', () => {
   assert.equal(nearestAspect(1080, 1350), '4:5');
 });
 
-test('layout and locate honour speed', () => {
-  const mk = (id: string, start: number, end: number, speed: number): Clip => ({ id, mediaId: 'a', start, end, speed, view: IDENTITY_VIEW, volume: 1, keepPitch: true });
-  const l = layout([mk('1', 0, 10, 2), mk('2', 5, 8, 1)]);
-  assert.deepEqual(l.durations, [5, 3]);
-  close(l.total, 8);
-  assert.equal(locate(l, 4.9)!.index, 0);
-  const at = locate(l, 6)!;
-  assert.equal(at.index, 1);
-  close(at.local, 1);
-  assert.equal(locate(l, 99)!.index, 1);
+test('timeline: clips sit at their own start, lanes stack, speed changes length', () => {
+  const mk = (id: string, start: number, end: number, speed: number, at: number, track: number): Clip => ({ id, mediaId: 'a', start, end, speed, view: IDENTITY_VIEW, volume: 1, keepPitch: true, at, track });
+  const clips = [mk('1', 0, 10, 2, 0, 0), mk('2', 5, 8, 1, 5, 0), mk('3', 0, 4, 1, 3, 1), mk('4', 0, 4, 1, 20, -1)];
+  close(totalOf(clips), 24);
+  assert.deepEqual(activeAt(clips, 4), [0, 2]); // lane 0 below lane 1
+  assert.deepEqual(activeAt(clips, 6), [1, 2]);
+  assert.deepEqual(activeAt(clips, 10), []); // a gap
+  assert.deepEqual(activeAt(clips, 21), [3]);
+  close(endOfTrack(clips, 0), 8);
+  close(endOfTrack(clips, 7), 0);
+  close(sourceAt(clips[0]!, 2), 4); // 2 s in at double speed = 4 s into the source
+  assert.ok(sourceAt(clips[0]!, 99) < 10); // never past the trim
 });
 
 test('planParts: fixed length, remainder last', () => {

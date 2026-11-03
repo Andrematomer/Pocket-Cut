@@ -22,6 +22,8 @@ Runs entirely in the browser. No account, no upload, no watermark, no ads.
 It works as a normal web page. Installing it as an app is optional: that only adds offline use and
 full-screen mode.
 
+> **Experimental `nla` build.** This branch replaces the one-after-another clip list with a multi-lane timeline (layers of video and pictures, a sound lane, free placement in time). It is published next to the normal app at `/nla/` and keeps its own saved data.
+
 ## Install on your phone (optional)
 
 - **Android (Chrome):** menu → Install app.

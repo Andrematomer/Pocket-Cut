@@ -1226,3 +1226,162 @@ label.cta {
 .clip-row .btn {
   flex: 1;
 }
+
+/* ---- the multi-lane timeline ---- */
+.tl {
+  padding: 0 0 6px;
+}
+.tl-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 12px 4px 16px;
+}
+.tl-add {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 34px;
+  padding: 0 14px 0 10px;
+  border-radius: 17px;
+  background: var(--raised);
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+}
+.tl-hint {
+  flex: 1;
+  text-align: right;
+  color: var(--muted);
+  font-size: 13px;
+}
+.tl-zoom {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: var(--raised);
+  font-size: 20px;
+  line-height: 1;
+  color: var(--text);
+}
+.tl-scroll {
+  overflow: auto;
+  max-height: 168px;
+  scrollbar-width: none;
+  overscroll-behavior: contain;
+  margin: 0 8px;
+  border-radius: 10px;
+  background: var(--surface);
+}
+.tl-scroll::-webkit-scrollbar {
+  display: none;
+}
+.tl.dragging .tl-scroll {
+  touch-action: none;
+}
+.tl-inner {
+  position: relative;
+}
+.tl-ruler {
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  background: var(--surface);
+  touch-action: none;
+  border-bottom: 1px solid var(--line);
+}
+.tl-tick {
+  position: absolute;
+  top: 3px;
+  padding-left: 4px;
+  font-size: 10px;
+  color: var(--muted);
+  border-left: 1px solid var(--line);
+  height: 16px;
+  line-height: 14px;
+  pointer-events: none;
+}
+.tl-lane {
+  position: absolute;
+  left: 0;
+  right: 0;
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 6px;
+}
+.tl-lane.sound {
+  background: rgba(120, 170, 255, 0.06);
+}
+.tl-lane.target {
+  background: rgba(240, 198, 74, 0.14);
+}
+.tl-lane-name {
+  position: sticky;
+  left: 4px;
+  font-size: 10px;
+  color: var(--muted);
+  opacity: 0.7;
+  padding-left: 4px;
+  pointer-events: none;
+}
+.strip-clip,
+.strip-clip * {
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.strip-clip {
+  position: absolute;
+  z-index: 2;
+  border-radius: 7px;
+  overflow: hidden;
+  background: #3a4552;
+  border: 2px solid transparent;
+  box-sizing: border-box;
+  text-align: left;
+  padding: 0;
+}
+.strip-clip.audio {
+  background: #2c4a78;
+}
+.strip-clip.on {
+  border-color: var(--accent);
+}
+.strip-clip.lifted {
+  z-index: 6;
+  box-shadow: 0 0 0 3px var(--accent), 0 0 22px 4px rgba(240, 198, 74, 0.75);
+}
+.strip-thumb {
+  position: absolute;
+  inset: 0;
+  background-size: auto 100%;
+  background-repeat: repeat-x;
+  background-position: left center;
+  opacity: 0.85;
+  pointer-events: none;
+}
+.strip-label {
+  position: absolute;
+  left: 4px;
+  bottom: 2px;
+  right: 4px;
+  font-size: 10.5px;
+  color: #fff;
+  text-shadow: 0 0 3px #000, 0 0 3px #000;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
+.strip-clip .tile-pie {
+  top: 2px;
+  right: 2px;
+}
+.tl-playhead {
+  position: absolute;
+  top: 0;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--accent);
+  z-index: 5;
+  pointer-events: none;
+}

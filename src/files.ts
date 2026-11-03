@@ -1,6 +1,6 @@
 import { importFiles } from './store.ts';
 
-export const ACCEPT = 'video/*,image/*,.mp4,.mov,.m4v,.webm,.mkv,.3gp,.jpg,.jpeg,.png,.webp,.gif,.heic,.heif,.avif';
+export const ACCEPT = 'video/*,image/*,audio/*,.mp4,.mov,.m4v,.webm,.mkv,.3gp,.jpg,.jpeg,.png,.webp,.gif,.heic,.heif,.avif,.mp3,.m4a,.wav,.aac,.ogg,.flac';
 export const PICKER_ID = 'pc-file-input';
 
 /**

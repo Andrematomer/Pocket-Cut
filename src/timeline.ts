@@ -9,38 +9,37 @@ export function clipDuration(c: Clip): number {
   return Math.max(0, (c.end - c.start) / c.speed);
 }
 
-export interface Layout {
-  starts: number[];
-  durations: number[];
-  total: number;
-}
+export const clipEnd = (c: Clip): number => c.at + clipDuration(c);
 
-export function layout(clips: Clip[]): Layout {
-  const starts: number[] = [];
-  const durations: number[] = [];
+/** Length of the whole timeline: the end of the last clip. */
+export function totalOf(clips: Clip[]): number {
   let t = 0;
-  for (const c of clips) {
-    starts.push(t);
-    const d = clipDuration(c);
-    durations.push(d);
-    t += d;
-  }
-  return { starts, durations, total: t };
+  for (const c of clips) t = Math.max(t, clipEnd(c));
+  return t;
 }
 
-/** Which clip plays at timeline time t, and how far into it (in timeline seconds). */
-export function locate(l: Layout, t: number): { index: number; local: number } | null {
-  if (l.starts.length === 0) return null;
-  const tt = Math.max(0, Math.min(t, l.total));
-  for (let i = l.starts.length - 1; i >= 0; i--) {
-    if (tt >= l.starts[i]! - 1e-9) {
-      const local = Math.min(tt - l.starts[i]!, l.durations[i]!);
-      return { index: i, local };
-    }
-  }
-  return { index: 0, local: 0 };
+/** Where the next clip added to `track` goes: right after the last clip on it. */
+export function endOfTrack(clips: Clip[], track: number): number {
+  let t = 0;
+  for (const c of clips) if (c.track === track) t = Math.max(t, clipEnd(c));
+  return t;
 }
 
+/** Indices of the clips that play at timeline time t, lowest lane first (drawing order). */
+export function activeAt(clips: Clip[], t: number): number[] {
+  const out: number[] = [];
+  clips.forEach((c, i) => {
+    if (t >= c.at - 1e-9 && t < clipEnd(c) - 1e-9) out.push(i);
+  });
+  return out.sort((a, b) => clips[a]!.track - clips[b]!.track || a - b);
+}
+
+/** The picture of a clip at timeline time t (seconds in its source file), kept inside the trim. */
+export function sourceAt(c: Clip, t: number): number {
+  return Math.min(c.start + Math.max(0, t - c.at) * c.speed, Math.max(c.start, c.end - 1e-3));
+}
+
+/** source time for a time `local` seconds into the clip */
 export const sourceTimeAt = (c: Clip, local: number) => c.start + local * c.speed;
 
 export interface Part {
