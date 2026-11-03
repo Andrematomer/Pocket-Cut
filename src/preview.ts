@@ -70,6 +70,7 @@ export class PreviewEngine {
       if (document.hidden) {
         this.pause();
         void this.audio?.ctx.suspend().catch(() => {});
+        void this.baked?.ctx.suspend().catch(() => {});
       } else {
         this.wakeAudio();
         requestAnimationFrame(() => this.draw());

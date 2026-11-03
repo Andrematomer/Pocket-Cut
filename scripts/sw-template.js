@@ -55,6 +55,8 @@ function networkFirst(req) {
 self.addEventListener('fetch', (event) => {
   const req = event.request;
   if (req.method !== 'GET' || new URL(req.url).origin !== self.location.origin) return;
+  // an experimental build lives in ./nla/ and has its own service worker
+  if (new URL(req.url).pathname.startsWith(new URL('./nla/', self.registration.scope).pathname)) return;
   if (req.mode === 'navigate') return void event.respondWith(networkFirst(req));
   event.respondWith(
     caches.match(req, { ignoreSearch: true, ignoreVary: true }).then((hit) => hit || fetch(req).catch(() => Response.error())),
