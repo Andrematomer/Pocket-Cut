@@ -9,6 +9,7 @@ import { fmtTime, layout, planParts } from '../timeline.ts';
 import type { ExportSettings } from '../types.ts';
 import { Check, Download, Share } from './icons.tsx';
 import { Sheet } from './Sheet.tsx';
+import { Slider } from './Slider.tsx';
 
 const SPLITS: { label: string; value: number | null }[] = [
   { label: 'Off', value: null },
@@ -17,7 +18,11 @@ const SPLITS: { label: string; value: number | null }[] = [
   { label: '60 s', value: 60 },
 ];
 
-const PRESETS = [2, 5];
+const QUALITIES: { label: string; value: ExportSettings['quality'] }[] = [
+  { label: 'Low', value: 'small' },
+  { label: 'Balanced', value: 'medium' },
+  { label: 'High', value: 'high' },
+];
 const nearestStop = (m: number): number => RATE_STOPS.reduce((a, b) => (Math.abs(b - m) < Math.abs(a - m) ? b : a));
 
 function Chips<T>({ options, value, onPick, label }: { options: { label: string; value: T }[]; value: T; onPick: (v: T) => void; label: string }) {
@@ -38,7 +43,7 @@ export function ExportSheet({ onClose }: { onClose: () => void }) {
   const project = useStore((s) => s.project);
   const [phase, setPhase] = useState<Phase>({ name: 'setup' });
   const [custom, setCustom] = useState(false);
-  const [customRate, setCustomRate] = useState(() => project.settings.bitrateMbps !== null && !PRESETS.includes(project.settings.bitrateMbps));
+  const [customRate, setCustomRate] = useState(() => project.settings.bitrateMbps !== null);
   const abort = useRef<AbortController | null>(null);
   const [note, setNote] = useState('');
 
@@ -48,9 +53,8 @@ export function ExportSheet({ onClose }: { onClose: () => void }) {
   const size = outputSize(project);
   const isCustomValue = s.splitSeconds !== null && !SPLITS.some((x) => x.value === s.splitSeconds);
   const showSlider = customRate;
-  const rateIndex = s.bitrateMbps === null ? 0 : Math.max(0, RATE_STOPS.findIndex((x) => x >= s.bitrateMbps!));
   const vbps = videoBitrate(s, size.w, size.h);
-  const withSound = project.clips.some((c) => !c.muted && project.media[c.mediaId]?.hasAudio);
+  const withSound = project.clips.some((c) => c.volume > 0 && project.media[c.mediaId]?.hasAudio);
   const longest = parts.reduce((m, p) => Math.max(m, p.end - p.start), 0);
 
   const run = async () => {
@@ -130,24 +134,19 @@ export function ExportSheet({ onClose }: { onClose: () => void }) {
               ]}
             />
             <Chips<ExportSettings['fps']> label="Frame rate" value={s.fps} onPick={(v) => setN({ fps: v })} options={[{ label: '24 fps', value: 24 }, { label: '30 fps', value: 30 }, { label: '60 fps', value: 60 }]} />
-            {s.bitrateMbps === null && (
-              <Chips<ExportSettings['quality']> label="Quality" value={s.quality} onPick={(v) => setN({ quality: v })} options={[{ label: 'Small file', value: 'small' }, { label: 'Balanced', value: 'medium' }, { label: 'Best', value: 'high' }]} />
-            )}
           </section>
 
           <section>
-            <h3>Video bitrate</h3>
-            <div class="chips" role="group" aria-label="Target video bitrate">
-              <button class={`chip num ${!showSlider && s.bitrateMbps === null ? 'on' : ''}`} onClick={() => (setCustomRate(false), setN({ bitrateMbps: null }))}>
-                Auto
-              </button>
-              {PRESETS.map((m) => (
-                <button key={m} class={`chip num ${!showSlider && s.bitrateMbps === m ? 'on' : ''}`} onClick={() => (setCustomRate(false), setN({ bitrateMbps: m }))}>
-                  {m} Mbps
+            <h3>Quality</h3>
+            <div class="chips" role="group" aria-label="Video quality">
+              {QUALITIES.map((q) => (
+                <button key={q.value} class={`chip ${!showSlider && s.quality === q.value ? 'on' : ''}`} aria-pressed={!showSlider && s.quality === q.value} onClick={() => (setCustomRate(false), setN({ quality: q.value, bitrateMbps: null }))}>
+                  {q.label}
                 </button>
               ))}
               <button
                 class={`chip ${showSlider ? 'on' : ''}`}
+                aria-pressed={showSlider}
                 onClick={() => {
                   setCustomRate(true);
                   if (s.bitrateMbps === null) setN({ bitrateMbps: nearestStop(vbps / 1e6) });
@@ -159,29 +158,13 @@ export function ExportSheet({ onClose }: { onClose: () => void }) {
             {showSlider && s.bitrateMbps !== null && (
               <div class="rate-slider">
                 <div class="rate-now num">{fmtMbps(s.bitrateMbps * 1e6)}</div>
-                <input
-                  class="slider"
-                  type="range"
-                  min={0}
-                  max={RATE_STOPS.length - 1}
-                  step={1}
-                  value={rateIndex}
-                  aria-label="Target video bitrate"
-                  aria-valuetext={`${s.bitrateMbps} megabits per second`}
-                  onInput={(e) => setN({ bitrateMbps: RATE_STOPS[Number((e.currentTarget as HTMLInputElement).value)]! })}
-                />
-                <div class="ticks num" aria-hidden="true">
-                  <span>{RATE_STOPS[0]} Mbps</span>
-                  <span>{RATE_STOPS[RATE_STOPS.length - 1]} Mbps</span>
-                </div>
+                <Slider label="Video bitrate" value={s.bitrateMbps} min={RATE_STOPS[0]} max={RATE_STOPS[RATE_STOPS.length - 1]!} snaps={RATE_STOPS} snapAlways step={1} fineStep={0.1} valueText={`${s.bitrateMbps} megabits per second`} onChange={(v) => setN({ bitrateMbps: Math.round(v * 10) / 10 })} />
               </div>
             )}
             <p class="hint num">
-              {size.w}×{size.h}, MP4 · {fmtMbps(vbps)}
-              {s.bitrateMbps === null ? ' (from quality)' : ' target'}
+              {size.w}×{size.h}, MP4{showSlider ? ` · ${fmtMbps(vbps)}` : ''}
               {longest > 0 && ` · up to about ${fmtBytes(estimateBytes(vbps, longest, withSound))}${parts.length > 1 ? ' per file' : ''}`}
             </p>
-            <p class="hint">This is a target. Simple pictures with little motion usually come out smaller, and very busy ones can run a bit over.</p>
           </section>
 
           <button class="cta" onClick={run} disabled={parts.length === 0}>

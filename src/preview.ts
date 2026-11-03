@@ -1,6 +1,6 @@
 import { drawFrame } from './geometry.ts';
 import { layout, locate, sourceTimeAt } from './timeline.ts';
-import type { Clip, Project } from './types.ts';
+import type { Clip, Project, View } from './types.ts';
 
 export interface PreviewDeps {
   getProject(): Project;
@@ -33,8 +33,8 @@ export class PreviewEngine {
   private idx = 0;
   tl = 0;
   playing = false;
-  /** show the whole rotated frame (no crop) so the crop box can be edited on top */
-  editCrop = false;
+  /** while a finger is moving the picture, this view is drawn instead of the saved one */
+  live: { index: number; view: View } | null = null;
 
   /** timeline clock, used for pictures and when the video can't run at the clip's speed */
   private clockMode = false;
@@ -88,13 +88,7 @@ export class PreviewEngine {
       ctx.fillRect(0, 0, canvas.width, canvas.height);
     };
     if (!cur) return black();
-    const o = {
-      rotation: cur.clip.rotation,
-      crop: this.editCrop ? null : cur.clip.crop,
-      outW: canvas.width,
-      outH: canvas.height,
-      fit: this.editCrop ? ('contain' as const) : cur.clip.fit,
-    };
+    const o = { outW: canvas.width, outH: canvas.height, view: this.live && this.live.index === cur.index ? this.live.view : cur.clip.view };
     const img = this.deps.getImage(cur.clip.mediaId);
     if (img) return drawFrame(ctx, img, img.width, img.height, o);
     if (v.readyState < 2 || !v.videoWidth || this.media !== cur.clip.mediaId) return black();
@@ -146,7 +140,45 @@ export class PreviewEngine {
     (v as HTMLVideoElement & { webkitPreservesPitch?: boolean }).webkitPreservesPitch = clip.keepPitch;
     v.playbackRate = clip.speed;
     v.defaultPlaybackRate = clip.speed;
-    v.muted = clip.muted;
+    this.applyVolume(clip.volume);
+  }
+
+  private audio: { ctx: AudioContext; gain: GainNode } | null = null;
+
+  /**
+   * Sets the loudness of the preview. Most browsers let a page set video.volume. iPhones do not (it
+   * stays at 1), so there the sound is routed through Web Audio and turned down by a gain node.
+   */
+  applyVolume(vol: number): void {
+    const v = this.video;
+    v.muted = vol <= 0;
+    if (this.audio) {
+      this.audio.gain.gain.value = vol;
+      return;
+    }
+    try {
+      v.volume = vol;
+    } catch {
+      /* read-only on some browsers */
+    }
+    if (vol < 1 && Math.abs(v.volume - vol) > 0.02) {
+      try {
+        const Ctx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+        const ctx = new Ctx();
+        const gain = ctx.createGain();
+        ctx.createMediaElementSource(v).connect(gain).connect(ctx.destination);
+        gain.gain.value = vol;
+        this.audio = { ctx, gain };
+        void ctx.resume().catch(() => {});
+      } catch {
+        /* no way to change the loudness here: the preview stays at full volume, the export is still right */
+      }
+    }
+  }
+
+  /** call from a tap: a Web Audio context only starts after a gesture */
+  wakeAudio(): void {
+    void this.audio?.ctx.resume().catch(() => {});
   }
 
   /** false when the browser did not accept this speed for the video element */
@@ -243,6 +275,7 @@ export class PreviewEngine {
   // ---- playback ----
 
   async play(): Promise<void> {
+    this.wakeAudio();
     const clips = this.deps.getProject().clips;
     if (clips.length === 0) return;
     const L = layout(clips);

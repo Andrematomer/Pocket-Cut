@@ -1,11 +1,9 @@
-export type Rotation = 0 | 90 | 180 | 270;
-
-/** Normalized rectangle (0..1) inside the *rotated* frame of a clip. */
-export interface Crop {
+/** How a clip sits on the canvas. x/y: picture center offset in canvas widths/heights, zoom 1 = whole picture fits, rot in degrees. */
+export interface View {
   x: number;
   y: number;
-  w: number;
-  h: number;
+  zoom: number;
+  rot: number;
 }
 
 export interface MediaInfo {
@@ -29,15 +27,9 @@ export interface Clip {
   end: number;
   /** playback speed, 1 = normal */
   speed: number;
-  rotation: Rotation;
-  /** null = whole frame */
-  crop: Crop | null;
-  /** aspect (w/h) the crop is locked to, null = free */
-  cropAspect: number | null;
-  muted: boolean;
-  /** how the clip sits in the output when its shape differs: bars around it, or fill and trim the edges */
-  fit: 'contain' | 'cover';
-  /** true: sound keeps its pitch at any speed; false: pitch follows the speed like a tape */
+  view: View;
+  /** 0..1, 0 = muted */
+  volume: number;
   keepPitch: boolean;
 }
 

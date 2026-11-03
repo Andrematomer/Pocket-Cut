@@ -1,83 +1,44 @@
-import type { Crop, Project, Rotation } from './types.ts';
+import type { AspectChoice, Project, View } from './types.ts';
 
-export const FULL_CROP: Crop = { x: 0, y: 0, w: 1, h: 1 };
-export const MIN_CROP = 0.08;
+export const IDENTITY_VIEW: View = { x: 0, y: 0, zoom: 1, rot: 0 };
+export const MIN_ZOOM = 0.1;
+export const MAX_ZOOM = 12;
 
-export function rotatedSize(w: number, h: number, rotation: Rotation): { w: number; h: number } {
-  return rotation === 90 || rotation === 270 ? { w: h, h: w } : { w, h };
-}
+export const ASPECT_VALUE: Record<Exclude<AspectChoice, 'auto'>, number> = { '9:16': 9 / 16, '4:5': 4 / 5, '1:1': 1, '16:9': 16 / 9 };
 
-/** Crop rectangle in pixels of the rotated frame. */
-export function cropPixels(rw: number, rh: number, crop: Crop | null): { x: number; y: number; w: number; h: number } {
-  const c = crop ?? FULL_CROP;
-  return { x: c.x * rw, y: c.y * rh, w: c.w * rw, h: c.h * rh };
-}
+const RAD = Math.PI / 180;
+const even = (n: number) => Math.max(2, Math.round(n / 2) * 2);
 
-export function clampCrop(c: Crop): Crop {
-  const w = Math.min(1, Math.max(MIN_CROP, c.w));
-  const h = Math.min(1, Math.max(MIN_CROP, c.h));
-  const x = Math.min(1 - w, Math.max(0, c.x));
-  const y = Math.min(1 - h, Math.max(0, c.y));
-  return { x, y, w, h };
-}
+/** Scale (canvas pixels per source pixel) at which the whole unrotated picture just fits the canvas. zoom 1 means this. */
+export const baseScale = (sw: number, sh: number, outW: number, outH: number): number => Math.min(outW / sw, outH / sh);
 
-/** Rotating a clip by 90° clockwise carries its crop rectangle along. */
-export function rotateCrop(c: Crop | null, dir: 'cw' | 'ccw'): Crop | null {
-  if (!c) return null;
-  return dir === 'cw' ? { x: 1 - c.y - c.h, y: c.x, w: c.h, h: c.w } : { x: c.y, y: 1 - c.x - c.w, w: c.h, h: c.w };
-}
-
-/** Largest centered crop with the given aspect (w/h) inside a rotated frame of rw x rh pixels. */
-export function cropForAspect(rw: number, rh: number, aspect: number): Crop {
-  let w: number;
-  let h: number;
-  if (rw / rh > aspect) {
-    h = 1;
-    w = (aspect * rh) / rw;
-  } else {
-    w = 1;
-    h = rw / (aspect * rh);
-  }
-  return { x: (1 - w) / 2, y: (1 - h) / 2, w, h };
+export interface DrawOptions {
+  outW: number;
+  outH: number;
+  view: View;
 }
 
 export interface FrameTransform {
-  /** where the center of the source frame lands on the output canvas */
+  /** where the center of the source picture lands on the output canvas */
   tx: number;
   ty: number;
   /** radians, clockwise */
   angle: number;
+  /** canvas pixels per source pixel */
   scale: number;
-  /** area of the canvas the picture covers */
-  dest: { x: number; y: number; w: number; h: number };
-}
-
-export interface DrawOptions {
-  rotation: Rotation;
-  crop: Crop | null;
-  outW: number;
-  outH: number;
-  fit: 'contain' | 'cover';
 }
 
 /**
- * Pure maths for placing a source frame (sw x sh) onto an output canvas. Preview and export both
- * go through this, so what you see is what you get.
+ * Pure maths for placing a source picture (sw x sh) on an output canvas. `view.x/y` move the picture's
+ * center away from the canvas center in canvas widths/heights, `view.zoom` 1 is "whole picture fits",
+ * `view.rot` is degrees clockwise. Preview and export both use this, so what you see is what you get.
  */
 export function frameTransform(sw: number, sh: number, o: DrawOptions): FrameTransform {
-  const { w: rw, h: rh } = rotatedSize(sw, sh, o.rotation);
-  const cp = cropPixels(rw, rh, o.crop);
-  const scale = o.fit === 'cover' ? Math.max(o.outW / cp.w, o.outH / cp.h) : Math.min(o.outW / cp.w, o.outH / cp.h);
-  const dw = cp.w * scale;
-  const dh = cp.h * scale;
-  const ccx = cp.x + cp.w / 2;
-  const ccy = cp.y + cp.h / 2;
   return {
-    tx: o.outW / 2 + scale * (rw / 2 - ccx),
-    ty: o.outH / 2 + scale * (rh / 2 - ccy),
-    angle: (o.rotation * Math.PI) / 180,
-    scale,
-    dest: { x: (o.outW - dw) / 2, y: (o.outH - dh) / 2, w: dw, h: dh },
+    tx: o.outW / 2 + o.view.x * o.outW,
+    ty: o.outH / 2 + o.view.y * o.outH,
+    angle: o.view.rot * RAD,
+    scale: baseScale(sw, sh, o.outW, o.outH) * o.view.zoom,
   };
 }
 
@@ -91,80 +52,141 @@ export function drawFrame(ctx: Ctx2D, src: CanvasImageSource, sw: number, sh: nu
   ctx.save();
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = 'high';
-  ctx.beginPath();
-  ctx.rect(t.dest.x, t.dest.y, t.dest.w, t.dest.h);
-  ctx.clip();
   ctx.translate(t.tx, t.ty);
   ctx.rotate(t.angle);
   ctx.scale(t.scale, t.scale);
-  ctx.translate(-sw / 2, -sh / 2);
-  ctx.drawImage(src, 0, 0, sw, sh);
+  ctx.drawImage(src, -sw / 2, -sh / 2, sw, sh);
   ctx.restore();
 }
 
-export const ASPECT_VALUE: Record<string, number> = { '9:16': 9 / 16, '4:5': 4 / 5, '1:1': 1, '16:9': 16 / 9 };
+/** Normalizes degrees to (-180, 180]. */
+export function normAngle(d: number): number {
+  let a = ((d % 360) + 360) % 360;
+  if (a > 180) a -= 360;
+  return a;
+}
 
-const even = (n: number) => Math.max(2, Math.round(n / 2) * 2);
+/** Size of the box that holds the picture turned by `rot` degrees. */
+export function turnedBox(sw: number, sh: number, rot: number): { w: number; h: number } {
+  const c = Math.abs(Math.cos(rot * RAD));
+  const s = Math.abs(Math.sin(rot * RAD));
+  return { w: sw * c + sh * s, h: sw * s + sh * c };
+}
 
-/** Output size in pixels for a project. 'auto' follows the first clip's cropped shape. */
+/** zoom at which the turned picture just fits inside the canvas (bars if the shapes differ). */
+export function fitZoom(sw: number, sh: number, rot: number, outW: number, outH: number): number {
+  const b = turnedBox(sw, sh, rot);
+  return Math.min(outW / b.w, outH / b.h) / baseScale(sw, sh, outW, outH);
+}
+
+/** zoom at which the turned picture just covers the whole canvas (edges trimmed if the shapes differ). */
+export function fillZoom(sw: number, sh: number, rot: number, outW: number, outH: number): number {
+  const b = turnedBox(sw, sh, rot);
+  return Math.max(outW / b.w, outH / b.h) / baseScale(sw, sh, outW, outH);
+}
+
+export interface Pt {
+  x: number;
+  y: number;
+}
+
+/** One finger: the picture follows it. `dx/dy` in canvas units (same units as W, H). */
+export function dragView(v: View, W: number, H: number, dx: number, dy: number): View {
+  return { ...v, x: v.x + dx / W, y: v.y + dy / H };
+}
+
+/**
+ * Two fingers: pinch to zoom, twist to turn, move to pan, all about the point between the fingers.
+ * Points are relative to the canvas center, in canvas units.
+ */
+export function pinchView(v: View, W: number, H: number, a0: Pt, b0: Pt, a1: Pt, b1: Pt): View {
+  const v0 = { x: b0.x - a0.x, y: b0.y - a0.y };
+  const v1 = { x: b1.x - a1.x, y: b1.y - a1.y };
+  const l0 = Math.hypot(v0.x, v0.y) || 1;
+  const l1 = Math.hypot(v1.x, v1.y) || 1;
+  const s = l1 / l0;
+  const d = Math.atan2(v1.y, v1.x) - Math.atan2(v0.y, v0.x);
+  const m0 = { x: (a0.x + b0.x) / 2, y: (a0.y + b0.y) / 2 };
+  const m1 = { x: (a1.x + b1.x) / 2, y: (a1.y + b1.y) / 2 };
+  const c0 = { x: v.x * W - m0.x, y: v.y * H - m0.y };
+  const cos = Math.cos(d);
+  const sin = Math.sin(d);
+  const cx = m1.x + s * (c0.x * cos - c0.y * sin);
+  const cy = m1.y + s * (c0.x * sin + c0.y * cos);
+  return { x: cx / W, y: cy / H, zoom: clampZoom(v.zoom * s), rot: v.rot + d / RAD };
+}
+
+export const clampZoom = (z: number): number => Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, z));
+
+export interface Snap {
+  view: View;
+  /** what the view snapped to, for the guides on screen */
+  x: boolean;
+  y: boolean;
+  rot: number | null;
+  zoom: 'fit' | 'fill' | null;
+}
+
+export interface SnapEnv {
+  sw: number;
+  sh: number;
+  W: number;
+  H: number;
+  /** px (canvas units) within which the center snaps */
+  centerPx?: number;
+  /** degrees within which rotation snaps to a multiple of 90 */
+  rotDeg?: number;
+  /** relative distance within which zoom snaps to fit or fill */
+  zoomRel?: number;
+}
+
+/** Magnets for the free transform: center on both axes, quarter turns, whole picture fits, picture fills. */
+export function snapView(raw: View, e: SnapEnv): Snap {
+  let { x, y, zoom, rot } = raw;
+  rot = normAngle(rot);
+  const out: Snap = { view: raw, x: false, y: false, rot: null, zoom: null };
+  const q = Math.round(rot / 90) * 90;
+  if (Math.abs(rot - q) <= (e.rotDeg ?? 4)) {
+    rot = q === 180 ? 180 : q === -180 ? 180 : q;
+    out.rot = normAngle(q);
+  }
+  const fit = fitZoom(e.sw, e.sh, rot, e.W, e.H);
+  const fill = fillZoom(e.sw, e.sh, rot, e.W, e.H);
+  const near = (z: number) => Math.abs(zoom - z) / z <= (e.zoomRel ?? 0.035);
+  // when fit and fill are almost the same, the shapes match: call it fit
+  if (near(fit)) (zoom = fit), (out.zoom = 'fit');
+  else if (Math.abs(fill - fit) / fit > 0.02 && near(fill)) (zoom = fill), (out.zoom = 'fill');
+  const cp = e.centerPx ?? 7;
+  if (Math.abs(x * e.W) <= cp) (x = 0), (out.x = true);
+  if (Math.abs(y * e.H) <= cp) (y = 0), (out.y = true);
+  out.view = { x, y, zoom, rot };
+  return out;
+}
+
+/** Keeps the picture's center on the canvas, so it can never be dragged out of reach. */
+export function clampView(v: View): View {
+  return { ...v, x: Math.min(0.5, Math.max(-0.5, v.x)), y: Math.min(0.5, Math.max(-0.5, v.y)), zoom: clampZoom(v.zoom) };
+}
+
+/** Picture size after the nearest quarter turn: decides the shape of the "Auto" canvas. */
+export function quarterTurned(w: number, h: number, rot: number): { w: number; h: number } {
+  const q = ((Math.round(rot / 90) % 4) + 4) % 4;
+  return q % 2 === 1 ? { w: h, h: w } : { w, h };
+}
+
+/** Output size in pixels for a project. 'auto' follows the shape of the first clip. */
 export function outputSize(p: Project): { w: number; h: number } {
   const s = p.settings;
   let aspect = 9 / 16;
-  if (s.aspect !== 'auto') aspect = ASPECT_VALUE[s.aspect]!;
+  if (s.aspect !== 'auto') aspect = ASPECT_VALUE[s.aspect];
   else {
     const first = p.clips[0];
     const m = first ? p.media[first.mediaId] : undefined;
     if (first && m) {
-      const r = rotatedSize(m.width, m.height, first.rotation);
-      const cp = cropPixels(r.w, r.h, first.crop);
-      if (cp.w > 0 && cp.h > 0) aspect = cp.w / cp.h;
+      // the shape of the first picture as shot: turning a clip later never changes the canvas
+      if (m.width > 0 && m.height > 0) aspect = m.width / m.height;
     }
   }
   const short = s.resolution;
   return aspect <= 1 ? { w: even(short), h: even(short / aspect) } : { w: even(short * aspect), h: even(short) };
-}
-
-/** Drags one corner of the crop box by (dx, dy) (normalized units), optionally keeping the aspect. */
-export function resizeCrop(
-  c: Crop,
-  corner: 'tl' | 'tr' | 'bl' | 'br',
-  dx: number,
-  dy: number,
-  aspect: number | null,
-  rw: number,
-  rh: number,
-): Crop {
-  const left = corner === 'tl' || corner === 'bl';
-  const top = corner === 'tl' || corner === 'tr';
-  const ax = left ? c.x + c.w : c.x; // the opposite corner stays put
-  const ay = top ? c.y + c.h : c.y;
-  const clamp01 = (v: number) => Math.min(1, Math.max(0, v));
-  const px = clamp01((left ? c.x : c.x + c.w) + dx);
-  const py = clamp01((top ? c.y : c.y + c.h) + dy);
-  let w = Math.abs(px - ax);
-  let h = Math.abs(py - ay);
-  const roomW = left ? ax : 1 - ax;
-  const roomH = top ? ay : 1 - ay;
-  if (aspect) {
-    const k = rw / (aspect * rh); // h = w * k
-    if (h > w * k) w = h / k;
-    else h = w * k;
-    const maxW = Math.min(roomW, roomH / k);
-    if (w > maxW) {
-      w = maxW;
-      h = w * k;
-    }
-    if (w < MIN_CROP) {
-      w = MIN_CROP;
-      h = w * k;
-    }
-    if (h < MIN_CROP) {
-      h = MIN_CROP;
-      w = h / k;
-    }
-  } else {
-    w = Math.min(roomW, Math.max(MIN_CROP, w));
-    h = Math.min(roomH, Math.max(MIN_CROP, h));
-  }
-  return { x: left ? ax - w : ax, y: top ? ay - h : ay, w, h };
 }

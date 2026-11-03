@@ -1,43 +1,27 @@
 import type { JSX } from 'preact';
 import { useRef, useState } from 'preact/hooks';
 import { engine } from '../engine.ts';
-import { PickLabel } from './Picker.tsx';
-import {
-  deleteClip,
-  duplicateClip,
-  getState,
-  moveClip,
-  rotateClip,
-  set,
-  setCropAspect,
-  setSpeed,
-  setTrim,
-  splitAtPlayhead,
-  toast,
-  updateClip,
-  useStore,
-  type Tool,
-} from '../store.ts';
+import { getState, set, setSpeed, setTrim, updateClip, useStore, type Tool } from '../store.ts';
 import { MAX_SPEED, MIN_CLIP, MIN_SPEED, clipDuration, fmtTime, layout, locate } from '../timeline.ts';
-import { Clips, Crop, Left, Copy, Mute, Plus, Right, Rotate, RotateL, Sound, Speed, Split, Trash, Trim } from './icons.tsx';
+import { IMAGE_MAX_SECONDS } from '../media.ts';
+import { Mute, Sound, Speed, Trim } from './icons.tsx';
+import { Slider } from './Slider.tsx';
 
 const TABS: { id: Tool; label: string; icon: () => JSX.Element }[] = [
   { id: 'trim', label: 'Trim', icon: Trim },
   { id: 'speed', label: 'Speed', icon: Speed },
-  { id: 'rotate', label: 'Rotate', icon: Rotate },
-  { id: 'crop', label: 'Crop', icon: Crop },
   { id: 'sound', label: 'Sound', icon: Sound },
-  { id: 'clip', label: 'Clip', icon: Clips },
 ];
 
 export function Tools() {
   const stored = useStore((s) => s.tool);
-  const picture = useStore((s) => {
+  const kind = useStore((s) => {
     const c = s.project.clips[s.selected];
-    return !!c && s.project.media[c.mediaId]?.kind === 'image';
+    const m = c && s.project.media[c.mediaId];
+    return !m ? 'none' : m.kind === 'image' ? 'image' : m.hasAudio ? 'video' : 'silent';
   });
-  // a picture has no speed or sound
-  const tabs = picture ? TABS.filter((t) => t.id !== 'speed' && t.id !== 'sound') : TABS;
+  // a picture only has a duration; a video without sound has no Sound tab
+  const tabs = kind === 'image' ? [{ id: 'trim' as Tool, label: 'Duration', icon: Trim }] : kind === 'silent' ? TABS.filter((t) => t.id !== 'sound') : TABS;
   const tool = tabs.some((t) => t.id === stored) ? stored : 'trim';
   return (
     <div class="tools">
@@ -50,12 +34,9 @@ export function Tools() {
         ))}
       </div>
       <div class="panel">
-        {tool === 'trim' && <TrimPanel />}
+        {tool === 'trim' && (kind === 'image' ? <DurationPanel /> : <TrimPanel />)}
         {tool === 'speed' && <SpeedPanel />}
-        {tool === 'rotate' && <RotatePanel />}
-        {tool === 'crop' && <CropPanel />}
         {tool === 'sound' && <SoundPanel />}
-        {tool === 'clip' && <ClipPanel />}
       </div>
     </div>
   );
@@ -134,16 +115,6 @@ function TrimPanel() {
     const start = layout(getState().project.clips).starts[index]!;
     void engine.showAt(d.mode === 'start' ? start : start + Math.max(0, clipDuration(now) - 0.05)).then(() => set({ playhead: engine.tl }));
   };
-  const apply = (which: 'start' | 'end', t: number) => {
-    const c = clipAt(index);
-    if (!c) return;
-    if (which === 'start') setTrim(index, Math.min(t, c.end - MIN_CLIP), c.end);
-    else setTrim(index, c.start, Math.max(t, c.start + MIN_CLIP));
-    const now = clipAt(index)!;
-    const start = layout(getState().project.clips).starts[index]!;
-    void engine.showAt(which === 'start' ? start : start + Math.max(0, clipDuration(now) - 0.05)).then(() => set({ playhead: engine.tl }));
-  };
-
   const down = (e: PointerEvent) => {
     e.preventDefault();
     engine.pause();
@@ -214,14 +185,6 @@ function TrimPanel() {
   const at = locate(L, playhead);
   const srcNow = at && at.index === index ? clip.start + at.local * clip.speed : null;
 
-  const setHere = (which: 'start' | 'end') => {
-    if (srcNow === null) return toast('Move the position marker onto this clip first.');
-    apply(which, srcNow);
-  };
-  const split = () => {
-    if (!splitAtPlayhead()) toast('Move the marker into the clip, away from its edges, to cut here.');
-  };
-
   return (
     <>
       <div class={`trim ${fine ? 'fine' : ''}`} onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up}>
@@ -234,7 +197,6 @@ function TrimPanel() {
           {fine && <div class="trim-fine-label">FINE · slide slowly</div>}
         </div>
       </div>
-      <p class={`hint trim-hint ${fine ? 'on' : ''}`}>{fine ? 'Fine control is on. Slide to adjust slowly.' : 'Drag the bar to look around. Press and hold a yellow end, then slide, for fine control.'}</p>
       <div class="readout num">
         <span ref={(n) => void (els.current.rs = n)}>{fmtTime(clip.start, 2)}</span>
         <span class="mid" ref={(n) => void (els.current.rm = n)}>
@@ -242,157 +204,76 @@ function TrimPanel() {
         </span>
         <span ref={(n) => void (els.current.re = n)}>{fmtTime(clip.end, 2)}</span>
       </div>
-      <div class="row">
-        <button class="btn" onClick={() => setHere('start')}>
-          Start here
-        </button>
-        <button class="btn" onClick={() => setHere('end')}>
-          End here
-        </button>
-        <button class="btn" onClick={split}>
-          <Split /> Cut here
-        </button>
-      </div>
     </>
   );
 }
 
 const clipAt = (i: number) => getState().project.clips[i];
 
+// ---------- duration (pictures) ----------
+
+const DURATIONS = [1, 2, 3, 5, 7, 10, 15, 20, 30];
+
+function DurationPanel() {
+  const { index, clip } = useSel();
+  if (!clip) return null;
+  const d = clip.end - clip.start;
+  return (
+    <>
+      <Slider label="Duration" value={d} min={0.5} max={IMAGE_MAX_SECONDS} step={0.5} fineStep={0.1} snaps={DURATIONS} snapPx={10} valueText={`${d.toFixed(1)} seconds`} onChange={(v) => updateClip(index, { start: 0, end: Math.min(IMAGE_MAX_SECONDS, v) })} />
+      <div class="readout num">
+        <span class="mid">{d.toFixed(d % 1 ? 1 : 0)} seconds</span>
+      </div>
+    </>
+  );
+}
+
 // ---------- speed ----------
 
-const SPEEDS = [0.25, 0.5, 1, 1.5, 2, 3, 4];
+const SPEEDS = [0.25, 0.5, 0.75, 1, 1.5, 2, 3, 4];
 
 function SpeedPanel() {
   const { index, clip } = useSel();
   if (!clip) return null;
   return (
     <>
-      <div class="chips">
-        {SPEEDS.map((s) => (
-          <button key={s} class={`chip num ${clip.speed === s ? 'on' : ''}`} onClick={() => setSpeed(index, s)}>
-            {s}×
-          </button>
-        ))}
-      </div>
-      <input class="slider" type="range" min={MIN_SPEED} max={MAX_SPEED} step={0.05} value={clip.speed} onInput={(e) => setSpeed(index, Number((e.currentTarget as HTMLInputElement).value))} aria-label="Speed" />
+      <Slider label="Speed" value={clip.speed} min={MIN_SPEED} max={MAX_SPEED} log snaps={SPEEDS} snapPx={12} step={0.05} fineStep={0.01} valueText={`${clip.speed} times`} onChange={(v) => setSpeed(index, v)} />
       <div class="readout num">
-        <span>{clip.speed.toFixed(2)}×</span>
+        <span>{clip.speed.toFixed(2).replace(/0$/, '')}×</span>
         <span class="mid">plays for {fmtTime(clipDuration(clip))}</span>
-      </div>
-      <div class="chips" role="group" aria-label="Pitch">
-        <button class={`chip ${clip.keepPitch ? 'on' : ''}`} aria-pressed={clip.keepPitch} onClick={() => updateClip(index, { keepPitch: true })}>
-          Keep voice pitch
-        </button>
-        <button class={`chip ${!clip.keepPitch ? 'on' : ''}`} aria-pressed={!clip.keepPitch} onClick={() => updateClip(index, { keepPitch: false })}>
-          Pitch follows speed
+        <button class={`pitch ${clip.keepPitch ? 'on' : ''}`} aria-pressed={clip.keepPitch} onClick={() => updateClip(index, { keepPitch: !clip.keepPitch })}>
+          {clip.keepPitch ? 'Pitch kept' : 'Pitch follows speed'}
         </button>
       </div>
-    </>
-  );
-}
-
-// ---------- rotate ----------
-
-function RotatePanel() {
-  const { index, clip } = useSel();
-  if (!clip) return null;
-  return (
-    <>
-      <div class="row big">
-        <button class="btn" onClick={() => rotateClip(index, 'ccw')}>
-          <RotateL /> Left
-        </button>
-        <button class="btn" onClick={() => rotateClip(index, 'cw')}>
-          <Rotate /> Right
-        </button>
-      </div>
-      <div class="readout num">
-        <span class="mid">{clip.rotation}° turned</span>
-      </div>
-    </>
-  );
-}
-
-// ---------- crop ----------
-
-const ASPECTS: { label: string; value: number }[] = [
-  { label: '9:16', value: 9 / 16 },
-  { label: '4:5', value: 4 / 5 },
-  { label: '1:1', value: 1 },
-  { label: '16:9', value: 16 / 9 },
-];
-
-function CropPanel() {
-  const { index, clip } = useSel();
-  if (!clip) return null;
-  const free = clip.cropAspect === null;
-  return (
-    <>
-      <div class="chips">
-        <button class={`chip ${free && clip.crop ? 'on' : ''}`} onClick={() => setCropAspect(index, null)}>
-          Free
-        </button>
-        {ASPECTS.map((a) => (
-          <button key={a.label} class={`chip num ${clip.cropAspect !== null && Math.abs(clip.cropAspect - a.value) < 1e-3 ? 'on' : ''}`} onClick={() => setCropAspect(index, a.value)}>
-            {a.label}
-          </button>
-        ))}
-        <button class="chip" onClick={() => updateClip(index, { crop: null, cropAspect: null })}>
-          Reset
-        </button>
-      </div>
-      <p class="hint">Drag the box or its corners on the picture.</p>
-      <div class="chips" role="group" aria-label="Picture fit">
-        <button class={`chip ${clip.fit === 'contain' ? 'on' : ''}`} aria-pressed={clip.fit === 'contain'} onClick={() => updateClip(index, { fit: 'contain' })}>
-          Fit (bars)
-        </button>
-        <button class={`chip ${clip.fit === 'cover' ? 'on' : ''}`} aria-pressed={clip.fit === 'cover'} onClick={() => updateClip(index, { fit: 'cover' })}>
-          Fill (trim edges)
-        </button>
-      </div>
-      <p class="hint">Only matters when this clip's shape differs from the export shape. Applies to this clip.</p>
     </>
   );
 }
 
 // ---------- sound ----------
 
+/** the loudness each clip had before it was muted, so tapping the speaker brings it back */
+const before = new Map<string, number>();
+
 function SoundPanel() {
-  const { index, clip, media } = useSel();
-  if (!clip || !media) return null;
-  if (!media.hasAudio) return <p class="hint">This video has no sound.</p>;
+  const { index, clip } = useSel();
+  if (!clip) return null;
+  const pct = Math.round(clip.volume * 100);
+  const set = (v: number) => updateClip(index, { volume: Math.min(1, Math.max(0, v / 100)) });
+  const toggle = () => {
+    if (clip.volume > 0) {
+      before.set(clip.id, clip.volume);
+      updateClip(index, { volume: 0 });
+    } else {
+      updateClip(index, { volume: before.get(clip.id) ?? 1 });
+    }
+  };
   return (
-    <div class="row big">
-      <button class={`btn ${clip.muted ? 'on' : ''}`} onClick={() => updateClip(index, { muted: !clip.muted })} aria-pressed={clip.muted}>
-        {clip.muted ? <Mute /> : <Sound />} {clip.muted ? 'Muted' : 'Sound on'}
+    <div class="sound">
+      <button class={`speaker ${pct === 0 ? 'muted' : ''}`} onClick={toggle} aria-label={pct === 0 ? 'Unmute' : 'Mute'} aria-pressed={pct === 0}>
+        {pct === 0 ? <Mute /> : <Sound />}
       </button>
-    </div>
-  );
-}
-
-// ---------- clip ----------
-
-function ClipPanel() {
-  const { project, index } = useSel();
-  const last = project.clips.length - 1;
-  return (
-    <div class="grid2">
-      <button class="btn" disabled={index <= 0} onClick={() => moveClip(index, -1)}>
-        <Left /> Earlier
-      </button>
-      <button class="btn" disabled={index >= last} onClick={() => moveClip(index, 1)}>
-        Later <Right />
-      </button>
-      <button class="btn" onClick={() => duplicateClip(index)}>
-        <Copy /> Duplicate
-      </button>
-      <button class="btn danger" onClick={() => deleteClip(index)}>
-        <Trash /> Remove
-      </button>
-      <PickLabel class="btn wide">
-        <Plus /> Add videos or pictures
-      </PickLabel>
+      <Slider label="Volume" value={pct} min={0} max={100} step={1} fineStep={0.5} snaps={[0, 100]} snapPx={14} valueText={pct === 0 ? 'muted' : `${pct} percent`} onChange={set} />
+      <span class="num vol">{pct === 0 ? 'Muted' : `${pct}%`}</span>
     </div>
   );
 }

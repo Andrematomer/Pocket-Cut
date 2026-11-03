@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { cropForAspect, resizeCrop, frameTransform, outputSize, rotateCrop, rotatedSize } from '../src/geometry.ts';
+import { IDENTITY_VIEW, baseScale, dragView, fillZoom, fitZoom, frameTransform, normAngle, outputSize, pinchView, quarterTurned, snapView } from '../src/geometry.ts';
 import { layout, locate, planParts } from '../src/timeline.ts';
 import { resample, timeStretch } from '../src/stretch.ts';
 import { MAX_MBPS, MIN_MBPS, RATE_STOPS, autoBitrate, estimateBytes, fmtMbps, videoBitrate } from '../src/bitrate.ts';
@@ -8,88 +8,82 @@ import { emptyProject, type Clip } from '../src/types.ts';
 
 const close = (a: number, b: number, eps = 1e-6) => assert.ok(Math.abs(a - b) <= eps, `${a} !~ ${b}`);
 
-/** Where a point of the source frame ends up on the output canvas. */
-function map(sw: number, sh: number, o: Parameters<typeof frameTransform>[2], px: number, py: number) {
-  const t = frameTransform(sw, sh, o);
-  const x = px - sw / 2;
-  const y = py - sh / 2;
-  const c = Math.cos(t.angle);
-  const s = Math.sin(t.angle);
-  return { x: t.tx + t.scale * (x * c - y * s), y: t.ty + t.scale * (x * s + y * c) };
-}
+const view = (o: Partial<typeof IDENTITY_VIEW> = {}) => ({ ...IDENTITY_VIEW, ...o });
 
-test('rotation 90 clockwise moves the source top-left to the top-right', () => {
-  // source 200x100, rotated frame is 100x200, output the same shape
-  const o = { rotation: 90 as const, crop: null, outW: 100, outH: 200, fit: 'contain' as const };
-  const tl = map(200, 100, o, 0, 0);
-  close(tl.x, 100);
-  close(tl.y, 0);
-  const br = map(200, 100, o, 200, 100);
-  close(br.x, 0);
-  close(br.y, 200);
+test('default view: the whole picture fits and sits in the middle', () => {
+  const t = frameTransform(1920, 1080, { outW: 1080, outH: 1920, view: view() });
+  close(t.tx, 540);
+  close(t.ty, 960);
+  close(t.scale, 1080 / 1920);
+  close(baseScale(1920, 1080, 1080, 1920), 0.5625);
 });
 
-test('crop maps the crop rectangle onto the whole canvas', () => {
-  const o = { rotation: 0 as const, crop: { x: 0.25, y: 0.5, w: 0.5, h: 0.25 }, outW: 200, outH: 100, fit: 'contain' as const };
-  // source 400x400 -> crop is x 100..300, y 200..300 -> 200x100 px, scale 1
-  const a = map(400, 400, o, 100, 200);
-  close(a.x, 0);
-  close(a.y, 0);
-  const b = map(400, 400, o, 300, 300);
-  close(b.x, 200);
-  close(b.y, 100);
+test('fit and fill zoom: bars versus trimmed edges, also when turned', () => {
+  // 16:9 picture on a 9:16 canvas
+  close(fitZoom(1920, 1080, 0, 1080, 1920), 1);
+  close(fillZoom(1920, 1080, 0, 1080, 1920), 1920 / 1080 / (1080 / 1920), 1e-9);
+  // turned a quarter, the same picture fills a portrait canvas exactly
+  close(fitZoom(1920, 1080, 90, 1080, 1920), fillZoom(1920, 1080, 90, 1080, 1920));
+  assert.ok(fitZoom(1920, 1080, 90, 1080, 1920) > 1);
 });
 
-test('contain letterboxes, cover fills', () => {
-  const contain = frameTransform(1920, 1080, { rotation: 0, crop: null, outW: 1080, outH: 1920, fit: 'contain' });
-  close(contain.dest.w, 1080);
-  close(contain.dest.h, 607.5);
-  const cover = frameTransform(1920, 1080, { rotation: 0, crop: null, outW: 1080, outH: 1920, fit: 'cover' });
-  close(cover.dest.h, 1920);
-  assert.ok(cover.dest.w > 1080);
+test('dragView moves by canvas fractions', () => {
+  const v = dragView(view(), 200, 400, 20, -40);
+  close(v.x, 0.1);
+  close(v.y, -0.1);
 });
 
-test('rotateCrop cw then ccw is identity, and four cw turns return home', () => {
-  const c = { x: 0.1, y: 0.2, w: 0.3, h: 0.4 };
-  const back = rotateCrop(rotateCrop(c, 'cw'), 'ccw')!;
-  for (const k of ['x', 'y', 'w', 'h'] as const) close(back[k], c[k]);
-  let r: typeof c | null = c;
-  for (let i = 0; i < 4; i++) r = rotateCrop(r, 'cw');
-  for (const k of ['x', 'y', 'w', 'h'] as const) close(r![k], c[k]);
+test('pinchView: pinch zooms, twist turns, both about the point between the fingers', () => {
+  // fingers 100 apart horizontally, then 200 apart: zoom doubles, centre stays
+  const a0 = { x: -50, y: 0 };
+  const b0 = { x: 50, y: 0 };
+  const z = pinchView(view(), 400, 400, a0, b0, { x: -100, y: 0 }, { x: 100, y: 0 });
+  close(z.zoom, 2);
+  close(z.x, 0);
+  close(z.rot, 0);
+  // twist a quarter turn clockwise (screen y points down)
+  const t = pinchView(view(), 400, 400, a0, b0, { x: 0, y: -50 }, { x: 0, y: 50 });
+  close(normAngle(t.rot), 90);
+  close(t.zoom, 1);
+  // a picture off to the right swings round the fingers' midpoint
+  const off = pinchView(view({ x: 0.25 }), 400, 400, a0, b0, { x: 0, y: -50 }, { x: 0, y: 50 });
+  close(off.x * 400, 0, 1e-6);
+  close(off.y * 400, 100, 1e-6);
 });
 
-test('rotateCrop agrees with the pixel rotation', () => {
-  // 200x100 source, crop the left half -> after 90 cw the crop must be the top half of the 100x200 frame
-  const c = rotateCrop({ x: 0, y: 0, w: 0.5, h: 1 }, 'cw')!;
-  close(c.x, 0);
-  close(c.y, 0);
-  close(c.w, 1);
-  close(c.h, 0.5);
+test('snapView: centre, quarter turns, fit and fill pull in; far values are left alone', () => {
+  const env = { sw: 1920, sh: 1080, W: 360, H: 640 };
+  const s = snapView(view({ x: 0.01, y: -0.008, rot: 87, zoom: fitZoom(1920, 1080, 90, 360, 640) * 1.01 }), env);
+  assert.equal(s.view.x, 0);
+  assert.equal(s.view.y, 0);
+  assert.equal(s.view.rot, 90);
+  assert.equal(s.zoom, 'fit');
+  close(s.view.zoom, fitZoom(1920, 1080, 90, 360, 640));
+  const far = snapView(view({ x: 0.2, y: 0.2, rot: 40, zoom: 3 }), env);
+  assert.equal(far.view.x, 0.2);
+  assert.equal(far.view.rot, 40);
+  assert.equal(far.view.zoom, 3);
+  assert.equal(far.rot, null);
+  const fill = snapView(view({ zoom: fillZoom(1920, 1080, 0, 360, 640) * 0.99 }), env);
+  assert.equal(fill.zoom, 'fill');
 });
 
-test('cropForAspect gives the requested shape, centered', () => {
-  const rw = 1920;
-  const rh = 1080;
-  const c = cropForAspect(rw, rh, 9 / 16);
-  close((c.w * rw) / (c.h * rh), 9 / 16);
-  close(c.x + c.w / 2, 0.5);
-  close(c.h, 1);
-  const tall = cropForAspect(1080, 1920, 1);
-  close((tall.w * 1080) / (tall.h * 1920), 1);
-  close(tall.w, 1);
-});
-
-test('rotatedSize swaps for 90/270', () => {
-  assert.deepEqual(rotatedSize(10, 20, 90), { w: 20, h: 10 });
-  assert.deepEqual(rotatedSize(10, 20, 180), { w: 10, h: 20 });
+test('normAngle and quarterTurned', () => {
+  close(normAngle(270), -90);
+  close(normAngle(-181), 179);
+  assert.deepEqual(quarterTurned(10, 20, 90), { w: 20, h: 10 });
+  assert.deepEqual(quarterTurned(10, 20, -90), { w: 20, h: 10 });
+  assert.deepEqual(quarterTurned(10, 20, 180), { w: 10, h: 20 });
+  assert.deepEqual(quarterTurned(10, 20, 30), { w: 10, h: 20 });
 });
 
 test('outputSize: auto follows the first clip, presets are even-sized', () => {
   const p = emptyProject();
   p.media.a = { id: 'a', name: 'a', duration: 10, width: 1920, height: 1080, hasAudio: true };
-  const clip: Clip = { id: 'c', mediaId: 'a', start: 0, end: 10, speed: 1, rotation: 90, crop: null, cropAspect: null, muted: false, fit: 'contain', keepPitch: true };
+  const clip: Clip = { id: 'c', mediaId: 'a', start: 0, end: 10, speed: 1, view: view({ rot: 90 }), volume: 1, keepPitch: true };
   p.clips = [clip];
-  assert.deepEqual(outputSize(p), { w: 1080, h: 1920 });
+  assert.deepEqual(outputSize(p), { w: 1920, h: 1080 }); // turning the clip does not change the canvas
+  p.settings.resolution = 1080;
   p.settings.aspect = '4:5';
   assert.deepEqual(outputSize(p), { w: 1080, h: 1350 });
   p.settings.aspect = '16:9';
@@ -100,7 +94,7 @@ test('outputSize: auto follows the first clip, presets are even-sized', () => {
 });
 
 test('layout and locate honour speed', () => {
-  const mk = (id: string, start: number, end: number, speed: number): Clip => ({ id, mediaId: 'a', start, end, speed, rotation: 0, crop: null, cropAspect: null, muted: false, fit: 'contain', keepPitch: true });
+  const mk = (id: string, start: number, end: number, speed: number): Clip => ({ id, mediaId: 'a', start, end, speed, view: IDENTITY_VIEW, volume: 1, keepPitch: true });
   const l = layout([mk('1', 0, 10, 2), mk('2', 5, 8, 1)]);
   assert.deepEqual(l.durations, [5, 3]);
   close(l.total, 8);
@@ -170,22 +164,6 @@ test('timeStretch keeps pitch and scales length (2x faster, 0.5x slower)', () =>
 test('timeStretch is a no-op at speed 1', () => {
   const input = [sine(300, 48000, 0.5)];
   assert.equal(timeStretch(input, 48000, 1), input);
-});
-
-test('resizeCrop keeps the opposite corner fixed and the aspect locked', () => {
-  const start = { x: 0.25, y: 0.25, w: 0.5, h: 0.5 };
-  const free = resizeCrop(start, 'br', 0.1, -0.1, null, 1000, 1000);
-  close(free.x, 0.25);
-  close(free.y, 0.25);
-  close(free.w, 0.6);
-  close(free.h, 0.4);
-  const locked = resizeCrop(start, 'tl', -0.1, 0, 1, 1000, 1000);
-  close(locked.x + locked.w, 0.75);
-  close(locked.y + locked.h, 0.75);
-  close((locked.w * 1000) / (locked.h * 1000), 1);
-  const edge = resizeCrop(start, 'br', 5, 5, 9 / 16, 1920, 1080);
-  assert.ok(edge.x + edge.w <= 1 + 1e-9 && edge.y + edge.h <= 1 + 1e-9);
-  close((edge.w * 1920) / (edge.h * 1080), 9 / 16, 1e-6);
 });
 
 test('bitrate: a target overrides the quality preset, is clamped, and null falls back to auto', () => {

@@ -30,13 +30,13 @@ After the first visit it works with no connection.
 
 | | |
 |---|---|
-| Trim | Drag the ends of the bar, or set start/end at the playhead. Cut a clip in two. |
-| Speed | 0.25× to 4×. The sound keeps its pitch, or follows the speed if you prefer. |
-| Rotate | 90° steps. |
-| Crop | Free, or locked to 9:16, 4:5, 1:1, 16:9. |
-| Join | Add several videos and pictures, reorder, duplicate, remove. A picture shows for 5 s by default; trim it to 0.1–30 s. |
-| Export | MP4, 480p / 720p / 1080p, 24 / 30 / 60 fps. Choose the canvas shape with the button at the top (9:16, 4:5, 1:1, 16:9 or follow the first clip) . Per clip: fit with bars or fill the frame, and keep or follow pitch when changing speed. Your last export settings are remembered. |
-| Bitrate | A quality preset, or a **target video bitrate** slider (1 to 20 Mbps), with a size estimate. The target is an average the encoder aims for: simple pictures usually come out smaller. |
+| Trim | Drag the yellow ends of the bar; drag elsewhere on the bar to look around; hold an end for fine control. The scissors button cuts a clip in two. |
+| Speed | A snapping slider from 0.25× to 4×. The voice keeps its pitch, or follows the speed if you prefer. |
+
+| Place | Drag, pinch and twist the clip right on the preview, like an Instagram story: free move, zoom and turn, with snapping to the center, quarter turns, "fits" and "fills". Black bars appear where the picture does not cover the canvas. |
+| Join | Add several videos and pictures. Press and hold a thumbnail to turn, reset, move, copy or remove it. A picture shows for 5 s by default (1 to 30 s). |
+| Export | MP4, 480p / 720p / 1080p, 24 / 30 / 60 fps. Choose the canvas shape with the button at the top (9:16, 4:5, 1:1, 16:9 or follow the first clip). Your last export settings are remembered. |
+| Quality | Low, Balanced, High, or Custom with a bitrate slider (1 to 20 Mbps) and a size estimate. The number is a target: simple pictures usually come out smaller. |
 | **Split** | Off (default), 15 s, 30 s, 60 s or a custom length. Optionally make all parts the same length. Parts are cut on exact frame boundaries, so nothing is lost or repeated at the seams. |
 
 Your last project (with the original videos) is kept on the device until you delete it in the settings.

@@ -115,3 +115,10 @@ export const Check = () => (
     <path d="M5 12.5l4.5 4.5L19 7.5" stroke-width="2.4" />
   </I>
 );
+export const Help = () => (
+  <I>
+    <circle cx="12" cy="12" r="9" />
+    <path d="M9.5 9.5a2.5 2.5 0 1 1 3.6 2.2c-.7.4-1.1.9-1.1 1.8" />
+    <circle cx="12" cy="17" r="0.6" fill="currentColor" stroke-width="1.4" />
+  </I>
+);

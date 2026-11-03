@@ -3,6 +3,9 @@ import './styles.css';
 import { toast } from './store.ts';
 import { App } from './ui/App.tsx';
 
+// The app is not a web page: no pinch zoom. Safari ignores user-scalable=no, but honours this.
+for (const t of ['gesturestart', 'gesturechange', 'gestureend']) document.addEventListener(t, (e) => e.preventDefault());
+
 /** If something in the UI throws, show it instead of a blank screen. */
 class Boundary extends Component<{ children: ComponentChildren }, { error: Error | null }> {
   state = { error: null as Error | null };

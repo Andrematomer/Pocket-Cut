@@ -1,13 +1,13 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
-import { cropForAspect, rotateCrop, rotatedSize } from './geometry.ts';
+import { IDENTITY_VIEW, normAngle } from './geometry.ts';
 import { IMAGE_DEFAULT_SECONDS, decodeImage, dropAllMedia, dropMedia, isImageFile, mediaBlob, newId, probeImage, probeVideo, registerMedia, UnsupportedMediaError } from './media.ts';
 import { onProxyWork, queueProxy } from './proxy.ts';
 import { clearSaved, loadSaved, requestPersistence, saveMedia, saveProject } from './persist.ts';
 import { layout, MAX_SPEED, MIN_CLIP, MIN_SPEED, locate } from './timeline.ts';
 import { DEFAULT_SETTINGS, emptyProject, type Clip, type ExportSettings, type MediaInfo, type Project } from './types.ts';
 
-export type Tool = 'trim' | 'speed' | 'rotate' | 'crop' | 'sound' | 'clip';
-export type Sheet = 'none' | 'export' | 'settings' | 'canvas';
+export type Tool = 'trim' | 'speed' | 'sound';
+export type Sheet = 'none' | 'export' | 'settings' | 'canvas' | 'help' | 'clip';
 
 export interface Toast {
   text: string;
@@ -111,22 +111,16 @@ export function setSpeed(index: number, speed: number): void {
   updateClip(index, { speed: Math.min(MAX_SPEED, Math.max(MIN_SPEED, Math.round(speed * 100) / 100)) });
 }
 
-export function rotateClip(index: number, dir: 'cw' | 'ccw'): void {
+/** Turns the clip a quarter turn clockwise about the middle of the canvas. */
+export function quarterTurn(index: number): void {
   const c = state.project.clips[index];
   if (!c) return;
-  const rotation = ((c.rotation + (dir === 'cw' ? 90 : 270)) % 360) as Clip['rotation'];
-  const crop = rotateCrop(c.crop, dir);
-  updateClip(index, { rotation, crop, cropAspect: c.cropAspect ? 1 / c.cropAspect : null });
+  const rot = normAngle(Math.round(c.view.rot / 90) * 90 + 90);
+  updateClip(index, { view: { ...c.view, rot } });
 }
 
-/** Locks the crop to an aspect (w/h) and fits the biggest centered crop of that shape. */
-export function setCropAspect(index: number, aspect: number | null): void {
-  const c = state.project.clips[index];
-  const m = c && state.project.media[c.mediaId];
-  if (!c || !m) return;
-  if (aspect === null) return updateClip(index, { cropAspect: null });
-  const r = rotatedSize(m.width, m.height, c.rotation);
-  updateClip(index, { cropAspect: aspect, crop: cropForAspect(r.w, r.h, aspect) });
+export function resetView(index: number): void {
+  updateClip(index, { view: { ...IDENTITY_VIEW } });
 }
 
 export function setTrim(index: number, start: number, end: number): void {
@@ -224,7 +218,7 @@ export async function importFiles(files: File[]): Promise<void> {
         registerMedia(id, file, thumb, { name: file.name });
       }
       media[id] = info;
-      added.push({ id: newId(), mediaId: id, start: 0, end: image ? IMAGE_DEFAULT_SECONDS : info.duration, speed: 1, rotation: 0, crop: null, cropAspect: null, muted: false, fit: 'contain', keepPitch: true });
+      added.push({ id: newId(), mediaId: id, start: 0, end: image ? IMAGE_DEFAULT_SECONDS : info.duration, speed: 1, view: { ...IDENTITY_VIEW }, volume: 1, keepPitch: true });
       void saveMedia(id, { blob: file, name: file.name, thumb });
       queueProxy(id, info);
     } catch (e) {
@@ -243,6 +237,17 @@ export async function importFiles(files: File[]): Promise<void> {
 
 // ---------- saved project ----------
 
+/** Brings a clip saved by an older version up to the current shape. */
+function normalizeClip(raw: Clip): Clip {
+  const o = raw as unknown as { view?: Clip['view']; rotation?: number; muted?: boolean; volume?: number; keepPitch?: boolean };
+  return {
+    ...raw,
+    view: o.view ?? { ...IDENTITY_VIEW, rot: o.rotation === 90 ? 90 : o.rotation === 180 ? 180 : o.rotation === 270 ? -90 : 0 },
+    volume: typeof o.volume === 'number' ? o.volume : o.muted ? 0 : 1,
+    keepPitch: o.keepPitch ?? true,
+  };
+}
+
 export async function restore(): Promise<void> {
   // IndexedDB can hang forever in some Safari modes (for example private browsing). Don't wait for it.
   const saved = await Promise.race([loadSaved(), new Promise<null>((resolve) => setTimeout(() => resolve(null), 3000))]);
@@ -259,11 +264,8 @@ export async function restore(): Promise<void> {
         /* a picture that no longer decodes is dropped below */
       }
     }
-    // older saves kept "fit" in the export settings and had no pitch option: carry it over per clip
-    const oldFit = (saved.project.settings as { fit?: Clip['fit'] } | undefined)?.fit === 'cover' ? 'cover' : 'contain';
-    const clips = saved.project.clips
-      .filter((c) => usable.has(c.mediaId))
-      .map((c) => ({ ...c, fit: c.fit ?? oldFit, keepPitch: c.keepPitch ?? true }));
+    // older saves had 90-degree turns, a crop and a mute switch: carry over what still exists
+    const clips = saved.project.clips.filter((c) => usable.has(c.mediaId)).map(normalizeClip);
     set({ project: { ...saved.project, clips, settings: loadPrefs() }, selected: 0, ready: true });
   } else {
     set({ ready: true });

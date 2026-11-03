@@ -130,7 +130,7 @@ async function renderPartAudio(
   for (let i = 0; i < clips.length; i++) {
     const clip = clips[i]!;
     const s = srcs.get(clip.mediaId);
-    if (!s?.at || clip.muted) continue;
+    if (!s?.at || clip.volume <= 0) continue;
     const outStart = Math.max(part.start, L.starts[i]!);
     const outEnd = Math.min(part.end, L.starts[i]! + L.durations[i]!);
     if (outEnd - outStart < 1e-3) continue;
@@ -153,6 +153,7 @@ async function renderPartAudio(
       }
     }
     const stretched = clip.keepPitch ? timeStretch(chans, rate, clip.speed) : resample(chans, clip.speed);
+    if (clip.volume < 1) for (const ch of stretched) for (let i = 0; i < ch.length; i++) ch[i]! *= clip.volume;
     const ab = new AudioBuffer({ length: stretched[0]!.length, numberOfChannels: chCount, sampleRate: rate });
     stretched.forEach((data, c) => ab.copyToChannel(data as Float32Array<ArrayBuffer>, c));
     const node = ctx.createBufferSource();
@@ -198,7 +199,7 @@ export async function exportProject(
   }
   if (codec !== 'avc') warnings.push("This device can't make H.264 video, so the files use VP9. Some apps may not accept them.");
 
-  const wantsAudio = clips.some((c) => !c.muted && project.media[c.mediaId]?.hasAudio);
+  const wantsAudio = clips.some((c) => c.volume > 0 && project.media[c.mediaId]?.hasAudio);
   let plan: AudioPlan | null = null;
   if (wantsAudio) {
     plan = typeof AudioEncoder === 'undefined' ? null : await pickAudioPlan();
@@ -264,7 +265,7 @@ export async function exportProject(
           const clip = clips[at.index]!;
           const srcT = Math.min(sourceTimeAt(clip, at.local), Math.max(clip.start, clip.end - 1e-3));
           const src = srcs.get(clip.mediaId)!;
-          const o = { rotation: clip.rotation, crop: clip.crop, outW, outH, fit: clip.fit };
+          const o = { outW, outH, view: clip.view };
           if (src.image) {
             drawFrame(ctx, src.image, src.image.width, src.image.height, o);
           } else {

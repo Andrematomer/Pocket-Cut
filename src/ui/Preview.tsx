@@ -1,15 +1,16 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { engine } from '../engine.ts';
-import { FULL_CROP, clampCrop, outputSize, resizeCrop, rotatedSize } from '../geometry.ts';
-import { getState, set, updateClip, useStore } from '../store.ts';
+import { clampView, dragView, outputSize, pinchView, snapView, type Pt } from '../geometry.ts';
+import { getState, set, splitAtPlayhead, toast, updateClip, useStore } from '../store.ts';
 import { fmtTime, layout } from '../timeline.ts';
-import type { Crop } from '../types.ts';
-import { Pause, Play } from './icons.tsx';
+import type { View } from '../types.ts';
+import { Pause, Play, Split } from './icons.tsx';
 
 export function Preview() {
   const project = useStore((s) => s.project);
   const selected = useStore((s) => s.selected);
-  const editingCrop = useStore((s) => s.tool === 'crop');
+  const busy = useStore((s) => s.busy);
+  const preparing = useStore((s) => s.preparing);
   const wrap = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
   const [box, setBox] = useState({ w: 0, h: 0 });
@@ -18,16 +19,11 @@ export function Preview() {
   const clip = project.clips[selected];
   const media = clip && project.media[clip.mediaId];
 
-  // aspect of what the canvas shows: the result, or (while cropping) the whole rotated frame
+  // the preview always has the shape of the exported video, so the picture can be placed on it directly
   let aspect = 9 / 16;
   if (clip && media) {
-    if (editingCrop) {
-      const r = rotatedSize(media.width, media.height, clip.rotation);
-      aspect = r.w / r.h;
-    } else {
-      const o = outputSize(project);
-      aspect = o.w / o.h;
-    }
+    const o = outputSize(project);
+    aspect = o.w / o.h;
   }
 
   useLayoutEffect(() => {
@@ -70,12 +66,6 @@ export function Preview() {
 
   useEffect(() => () => engine.attach(null), []);
 
-  // crop editing shows the whole frame
-  useEffect(() => {
-    engine.editCrop = editingCrop;
-    engine.draw();
-  }, [editingCrop]);
-
   // any edit that changes the picture, not the position in time
   useEffect(() => {
     engine.draw();
@@ -103,81 +93,118 @@ export function Preview() {
     <div class="stage" ref={wrap}>
       <div class="frame" style={{ width: `${box.w}px`, height: `${box.h}px` }}>
         <canvas ref={canvas} style={{ width: `${box.w}px`, height: `${box.h}px` }} />
-        {editingCrop && box.w > 0 && <CropBox boxW={box.w} boxH={box.h} />}
+        {box.w > 0 && <Gestures boxW={box.w} boxH={box.h} />}
+        {(busy || preparing) && <div class="overlay-note">{busy ?? 'Making a lighter copy for smooth preview…'}</div>}
       </div>
     </div>
   );
 }
 
-type Corner = 'tl' | 'tr' | 'bl' | 'br';
+
+const fmtDeg = (d: number) => `${Math.round(d)}°`;
 
 /**
- * Crop box. While a finger is down the box is moved straight in the DOM (no store update, no
- * re-render, no canvas redraw), so it follows the finger smoothly. The result is saved on release.
+ * Moves the picture on the canvas with the fingers: one finger drags, two fingers pinch to zoom and
+ * twist to turn. Magnets pull to the center lines, quarter turns, "whole picture fits" and "fills".
+ * While fingers are down the view is only drawn (never saved); it is saved when the last finger lifts.
  */
-function CropBox({ boxW, boxH }: { boxW: number; boxH: number }) {
-  const project = useStore((s) => s.project);
+function Gestures({ boxW, boxH }: { boxW: number; boxH: number }) {
   const selected = useStore((s) => s.selected);
-  const clip = project.clips[selected]!;
-  const media = project.media[clip.mediaId]!;
-  const crop: Crop = clip.crop ?? FULL_CROP;
-  const drag = useRef<{ mode: Corner | 'move'; id: number; x: number; y: number; crop: Crop; live: Crop } | null>(null);
-  const els = useRef<Record<'rect' | 't' | 'b' | 'l' | 'r', HTMLDivElement | null>>({ rect: null, t: null, b: null, l: null, r: null });
-  const r = rotatedSize(media.width, media.height, clip.rotation);
+  const guideV = useRef<HTMLDivElement>(null);
+  const guideH = useRef<HTMLDivElement>(null);
+  const badge = useRef<HTMLDivElement>(null);
+  const pts = useRef(new Map<number, Pt>());
+  const base = useRef<{ view: View; a: Pt; b: Pt | null; ids: number[] } | null>(null);
+  const live = useRef<View | null>(null);
+  const frame = useRef(0);
 
-  const paint = (c: Crop) => {
-    const e = els.current;
-    const x = c.x * boxW;
-    const y = c.y * boxH;
-    const w = c.w * boxW;
-    const h = c.h * boxH;
-    if (e.rect) e.rect.style.transform = `translate(${x}px, ${y}px)`, (e.rect.style.width = `${w}px`), (e.rect.style.height = `${h}px`);
-    if (e.t) e.t.style.height = `${y}px`;
-    if (e.b) e.b.style.height = `${Math.max(0, boxH - y - h)}px`;
-    if (e.l) (e.l.style.top = `${y}px`), (e.l.style.height = `${h}px`), (e.l.style.width = `${x}px`);
-    if (e.r) (e.r.style.top = `${y}px`), (e.r.style.height = `${h}px`), (e.r.style.width = `${Math.max(0, boxW - x - w)}px`);
+  const rel = (e: PointerEvent): Pt => {
+    const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    return { x: e.clientX - r.left - boxW / 2, y: e.clientY - r.top - boxH / 2 };
+  };
+  const current = (): { clip: ReturnType<typeof getState>['project']['clips'][number]; media: NonNullable<ReturnType<typeof getState>['project']['media'][string]> } | null => {
+    const st = getState();
+    const clip = st.project.clips[st.selected];
+    const media = clip && st.project.media[clip.mediaId];
+    return clip && media ? { clip, media } : null;
+  };
+  const rebase = () => {
+    const c = current();
+    if (!c) return;
+    const ids = [...pts.current.keys()].slice(0, 2);
+    base.current = ids.length ? { view: live.current ?? c.clip.view, a: pts.current.get(ids[0]!)!, b: ids[1] !== undefined ? pts.current.get(ids[1])! : null, ids } : null;
+  };
+  const guides = (s: ReturnType<typeof snapView> | null) => {
+    guideV.current?.classList.toggle('on', !!s?.x);
+    guideH.current?.classList.toggle('on', !!s?.y);
+    const b = badge.current;
+    if (!b) return;
+    const text = s ? (s.zoom === 'fit' ? 'Fit' : s.zoom === 'fill' ? 'Fill' : s.rot !== null ? fmtDeg(s.rot) : '') : '';
+    b.textContent = text;
+    b.classList.toggle('on', !!text);
+  };
+  const paint = () => {
+    frame.current = 0;
+    engine.draw();
   };
 
-  const down = (mode: Corner | 'move') => (e: PointerEvent) => {
+  const down = (e: PointerEvent) => {
     e.preventDefault();
-    e.stopPropagation();
+    engine.pause();
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-    drag.current = { mode, id: e.pointerId, x: e.clientX, y: e.clientY, crop, live: crop };
+    pts.current.set(e.pointerId, rel(e));
+    const c = current();
+    if (c && !live.current) live.current = c.clip.view;
+    rebase();
   };
   const move = (e: PointerEvent) => {
-    const d = drag.current;
-    if (!d || e.pointerId !== d.id) return;
-    const dx = (e.clientX - d.x) / boxW;
-    const dy = (e.clientY - d.y) / boxH;
-    d.live = d.mode === 'move' ? clampCrop({ ...d.crop, x: d.crop.x + dx, y: d.crop.y + dy }) : resizeCrop(d.crop, d.mode, dx, dy, clip.cropAspect, r.w, r.h);
-    paint(d.live);
+    if (!pts.current.has(e.pointerId)) return;
+    pts.current.set(e.pointerId, rel(e));
+    const b = base.current;
+    const c = current();
+    if (!b || !c) return;
+    const a1 = pts.current.get(b.ids[0]!)!;
+    let v: View;
+    if (b.b) v = pinchView(b.view, boxW, boxH, b.a, b.b, a1, pts.current.get(b.ids[1]!)!);
+    else v = dragView(b.view, boxW, boxH, a1.x - b.a.x, a1.y - b.a.y);
+    const s = snapView(clampView(v), { sw: c.media.width, sh: c.media.height, W: boxW, H: boxH });
+    live.current = s.view;
+    engine.live = { index: getState().selected, view: s.view };
+    guides(s);
+    if (!frame.current) frame.current = requestAnimationFrame(paint);
   };
   const up = (e: PointerEvent) => {
-    const d = drag.current;
-    if (!d || e.pointerId !== d.id) return;
-    drag.current = null;
-    updateClip(selected, { crop: d.live });
+    if (!pts.current.delete(e.pointerId)) return;
+    if (pts.current.size > 0) {
+      // a finger lifted or was added: carry on from where the picture is now
+      rebase();
+      return;
+    }
+    base.current = null;
+    guides(null);
+    const v = live.current;
+    live.current = null;
+    if (v) {
+      updateClip(getState().selected, { view: v });
+      engine.live = null;
+      engine.draw();
+    }
+  };
+  const wheel = (e: WheelEvent) => {
+    // desktop: scroll to zoom
+    const c = current();
+    if (!c) return;
+    e.preventDefault();
+    const z = c.clip.view.zoom * Math.exp(-e.deltaY / 500);
+    const s = snapView(clampView({ ...c.clip.view, zoom: z }), { sw: c.media.width, sh: c.media.height, W: boxW, H: boxH });
+    updateClip(getState().selected, { view: s.view });
   };
 
-  const px = (c: Crop) => ({ x: c.x * boxW, y: c.y * boxH, w: c.w * boxW, h: c.h * boxH });
-  const o = px(crop);
   return (
-    <div class="cropper" onPointerMove={move} onPointerUp={up} onPointerCancel={up}>
-      <div class="dim" ref={(n) => void (els.current.t = n)} style={{ left: '0px', top: '0px', width: `${boxW}px`, height: `${o.y}px` }} />
-      <div class="dim" ref={(n) => void (els.current.b = n)} style={{ left: '0px', bottom: '0px', width: `${boxW}px`, height: `${Math.max(0, boxH - o.y - o.h)}px` }} />
-      <div class="dim" ref={(n) => void (els.current.l = n)} style={{ left: '0px', top: `${o.y}px`, width: `${o.x}px`, height: `${o.h}px` }} />
-      <div class="dim" ref={(n) => void (els.current.r = n)} style={{ right: '0px', top: `${o.y}px`, width: `${Math.max(0, boxW - o.x - o.w)}px`, height: `${o.h}px` }} />
-      <div
-        class="crop-rect"
-        ref={(n) => void (els.current.rect = n)}
-        style={{ left: '0px', top: '0px', transform: `translate(${o.x}px, ${o.y}px)`, width: `${o.w}px`, height: `${o.h}px` }}
-        onPointerDown={down('move')}
-      >
-        <i class="grid" />
-        {(['tl', 'tr', 'bl', 'br'] as Corner[]).map((c) => (
-          <b key={c} class={`handle ${c}`} onPointerDown={down(c)} />
-        ))}
-      </div>
+    <div class="gestures" key={selected} onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up} onWheel={wheel}>
+      <div class="guide v" ref={guideV} />
+      <div class="guide h" ref={guideH} />
+      <div class="gesture-badge num" ref={badge} />
     </div>
   );
 }
@@ -192,6 +219,9 @@ export function Transport() {
     if (playing) engine.pause();
     else void engine.play();
   };
+  const cut = () => {
+    if (!splitAtPlayhead()) toast('Move the position marker into a clip, away from its edges, to cut there.');
+  };
   const scrub = (e: Event) => {
     const t = Number((e.currentTarget as HTMLInputElement).value);
     set({ playhead: t });
@@ -202,6 +232,9 @@ export function Transport() {
     <div class="transport">
       <button class="play" onClick={toggle} aria-label={playing ? 'Pause' : 'Play'}>
         {playing ? <Pause /> : <Play />}
+      </button>
+      <button class="cut" onClick={cut} aria-label="Cut the clip at the position marker">
+        <Split />
       </button>
       <input class="scrub" type="range" min={0} max={Math.max(total, 0.01)} step={0.01} value={Math.min(playhead, total)} onInput={scrub} aria-label="Position" />
       <span class="time num">
