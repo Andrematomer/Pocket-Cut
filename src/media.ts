@@ -114,7 +114,7 @@ async function canvasToJpeg(c: HTMLCanvasElement | OffscreenCanvas): Promise<Blo
 export const IMAGE_MAX_SECONDS = 30;
 export const IMAGE_DEFAULT_SECONDS = 5;
 
-export const isAudioFile = (f: File): boolean => f.type.startsWith('audio/') || /\.(mp3|m4a|aac|wav|ogg|oga|opus|flac|caf)$/i.test(f.name);
+export const isAudioFile = (f: File): boolean => f.type.startsWith('audio/') || /\.(mp3|m4a|aac|wav|ogg|oga|opus|flac|caf|aiff?)$/i.test(f.name);
 
 export const isImageFile = (f: File): boolean => f.type.startsWith('image/') || /\.(jpe?g|png|webp|gif|bmp|avif|heic|heif)$/i.test(f.name);
 

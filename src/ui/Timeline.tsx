@@ -1,45 +1,63 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { engine } from '../engine.ts';
 import { thumbUrl } from '../media.ts';
-import { moveClipTo, selectClip, set, useStore } from '../store.ts';
-import { clipDuration, clipEnd, fmtTime, totalOf } from '../timeline.ts';
+import { getState, moveClipTo, selectClip, set, updateClip, useStore } from '../store.ts';
+import { MIN_CLIP, clipDuration, clipEnd, fmtTime, totalOf } from '../timeline.ts';
 import type { Clip, MediaInfo } from '../types.ts';
 import { PickLabel } from './Picker.tsx';
 import { Pie } from './Pie.tsx';
-import { Plus } from './icons.tsx';
+import { Pause, Play, Plus } from './icons.tsx';
 
 const HOLD_MS = 350; // hold a strip this long (without moving) to pick it up
 const WOBBLE = 10;
 const EDGE = 44; // px from the edge of the timeline where dragging starts to scroll it
-const ROW = 40;
+const ROW = 38;
 const GAP = 4;
 const RULER = 22;
 const SNAP_PX = 8;
+const FINE_HOLD = 450;
+const FINE = 0.1;
+const MIN_PPS = 6;
+const MAX_PPS = 300;
 
-interface Drag {
+interface Move {
   index: number;
   at: number;
   track: number;
+  /** top of the strip in timeline pixels: follows the finger smoothly, the lane is only chosen on release */
+  top: number;
+}
+interface Trim {
+  index: number;
+  at: number;
+  start: number;
+  end: number;
+  fine: boolean;
 }
 
 const isAudio = (m: MediaInfo | undefined) => m?.kind === 'audio';
 
-/** the lane numbers shown, top to bottom: one empty lane above the highest clip, lane 0, and the sound lane(s) */
-function lanesFor(clips: Clip[], extra: number | null): number[] {
+/**
+ * The lanes shown, top to bottom. Picture and video lanes count up from lane 0, sound lanes down from
+ * -1. Two empty lanes are open beyond the last used one on each side, so a clip cannot get lost far away.
+ */
+export function lanesFor(clips: Clip[]): number[] {
   let hi = 0;
-  let lo = -1;
-  for (const c of clips) (hi = Math.max(hi, c.track)), (lo = Math.min(lo, c.track));
-  if (extra !== null) (hi = Math.max(hi, extra)), (lo = Math.min(lo, extra));
+  let lo = 0;
+  for (const c of clips) {
+    if (c.track >= 0) hi = Math.max(hi, c.track);
+    else lo = Math.min(lo, c.track);
+  }
   const out: number[] = [];
-  for (let t = hi + 1; t >= lo; t--) out.push(t);
+  for (let t = hi + 2; t >= lo - 2; t--) out.push(t);
   return out;
 }
 
 /**
- * The timeline: lanes of strips against a time ruler. Lanes higher up are drawn on top of the ones
- * below; sound clips sit on the lanes under lane 0. Tap a strip to select it. Hold a strip until it
- * lifts, then drag it along the time axis or up and down between lanes (it snaps to other clips, the
- * position marker and the start). Drag the ruler to move the position marker.
+ * The timeline. The yellow line is fixed; the timeline scrolls under it, and the position is wherever
+ * the line is. Lanes higher up are drawn on top of the ones below; sound lives on the lanes under lane
+ * 1. Tap a strip to select it (tap it again for its options). Hold a strip until it lifts, then drag it
+ * in time or between lanes. A selected strip has handles on both ends: drag them to trim. Pinch to zoom.
  */
 export function Timeline() {
   const clips = useStore((s) => s.project.clips);
@@ -49,42 +67,99 @@ export function Timeline() {
   const playing = useStore((s) => s.playing);
   const progress = useStore((s) => s.proxyProgress);
   const [pps, setPps] = useState(36); // pixels per second
-  const [drag, setDrag] = useState<Drag | null>(null);
+  const [move, setMove] = useState<Move | null>(null);
+  const [trim, setTrim] = useState<Trim | null>(null);
+  const [viewW, setViewW] = useState(360);
   const scroller = useRef<HTMLDivElement>(null);
-  const st = useRef<{ id: number; i: number; x0: number; y0: number; x: number; y: number; at0: number; track0: number; scroll0: number; timer: number; active: boolean; moved: boolean; raf: number } | null>(null);
+  const st = useRef<{ id: number; i: number; x0: number; y0: number; x: number; y: number; at0: number; track0: number; scroll0: number; scrollTop0: number; timer: number; active: boolean; raf: number } | null>(null);
   const swallow = useRef(false);
-  const live = useRef({ clips, pps, lanes: [] as number[], playhead });
 
-  const lanes = lanesFor(clips, drag?.track ?? null);
-  live.current = { clips, pps, lanes, playhead };
+  const lanes = lanesFor(clips);
   const total = totalOf(clips);
-  const viewW = scroller.current?.clientWidth ?? 360;
-  const width = Math.max(total + 8, viewW / pps) * pps + 40;
+  const padL = Math.round(viewW / 3);
+  const width = padL + total * pps + viewW;
+  const height = RULER + lanes.length * (ROW + GAP) + 6;
+  const live = useRef({ clips, pps, lanes, playhead, media, padL, height });
+  live.current = { clips, pps, lanes, playhead, media, padL, height };
+  const rowTop = (row: number) => RULER + row * (ROW + GAP);
 
-  // keep the position marker in view while playing
-  useEffect(() => {
-    const el = scroller.current;
-    if (!el || !playing) return;
-    const x = playhead * pps;
-    if (x < el.scrollLeft + 16 || x > el.scrollLeft + el.clientWidth - 24) el.scrollLeft = Math.max(0, x - el.clientWidth * 0.3);
-  }, [playhead, playing, pps]);
-
-  // while a strip is picked up the timeline must not scroll under the finger: only a non-passive touchmove can stop that
+  // the size of the viewport decides where the yellow line sits
   useEffect(() => {
     const el = scroller.current;
     if (!el) return;
-    const block = (e: TouchEvent) => {
-      if (st.current?.active) e.preventDefault();
-    };
-    el.addEventListener('touchmove', block, { passive: false });
-    return () => el.removeEventListener('touchmove', block);
+    const ro = new ResizeObserver(() => setViewW(el.clientWidth || 360));
+    ro.observe(el);
+    setViewW(el.clientWidth || 360);
+    return () => ro.disconnect();
   }, []);
 
-  /** time of the nearest snap point to `t` (strip start or end), or t itself */
+  // the position moved by itself (playing, selecting a clip, zooming): scroll the timeline under the line
+  useEffect(() => {
+    const el = scroller.current;
+    if (!el) return;
+    const want = playhead * pps;
+    if (Math.abs(el.scrollLeft - want) > 1.5) el.scrollLeft = want;
+  }, [playhead, pps, viewW, total]);
+
+  // the person scrolled: the position follows (one preview refresh per frame at most)
+  const seekFrame = useRef(0);
+  const onScroll = () => {
+    const el = scroller.current;
+    if (!el) return;
+    const t = Math.max(0, Math.min(totalOf(live.current.clips), el.scrollLeft / live.current.pps));
+    if (Math.abs(t - live.current.playhead) * live.current.pps < 1.5) return;
+    if (getState().playing) engine.pause();
+    set({ playhead: t });
+    if (!seekFrame.current)
+      seekFrame.current = requestAnimationFrame(() => {
+        seekFrame.current = 0;
+        void engine.showAt(getState().playhead);
+      });
+  };
+
+  // touch: pinch to zoom, and no scrolling while a strip is picked up
+  useEffect(() => {
+    const el = scroller.current;
+    if (!el) return;
+    let pinch: { d0: number; pps0: number } | null = null;
+    const dist = (e: TouchEvent) => Math.hypot(e.touches[0]!.clientX - e.touches[1]!.clientX, e.touches[0]!.clientY - e.touches[1]!.clientY);
+    const start = (e: TouchEvent) => {
+      if (e.touches.length === 2) {
+        pinch = { d0: dist(e), pps0: live.current.pps };
+        if (st.current) {
+          clearTimeout(st.current.timer);
+          st.current = null;
+        }
+      }
+    };
+    const mv = (e: TouchEvent) => {
+      if (pinch && e.touches.length === 2) {
+        e.preventDefault();
+        setPps(Math.max(MIN_PPS, Math.min(MAX_PPS, (pinch.pps0 * dist(e)) / pinch.d0)));
+      } else if (st.current?.active || trimRef.current) e.preventDefault();
+    };
+    const end = (e: TouchEvent) => {
+      if (e.touches.length < 2) pinch = null;
+    };
+    el.addEventListener('touchstart', start, { passive: true });
+    el.addEventListener('touchmove', mv, { passive: false });
+    el.addEventListener('touchend', end, { passive: true });
+    el.addEventListener('touchcancel', end, { passive: true });
+    return () => {
+      el.removeEventListener('touchstart', start);
+      el.removeEventListener('touchmove', mv);
+      el.removeEventListener('touchend', end);
+      el.removeEventListener('touchcancel', end);
+    };
+  }, []);
+
+  // ---------- moving a strip ----------
+
+  /** nearest snap point for a strip starting at `at` that is `dur` long */
   const snap = (index: number, at: number, dur: number): number => {
-    const { clips: cs, pps: k } = live.current;
+    const { clips: cs, pps: k, playhead: ph } = live.current;
     const limit = SNAP_PX / k;
-    const points = [0, live.current.playhead];
+    const points = [0, ph];
     cs.forEach((c, i) => {
       if (i !== index) points.push(c.at, clipEnd(c));
     });
@@ -99,31 +174,35 @@ export function Timeline() {
     return Math.max(0, best);
   };
 
-  const update = () => {
+  const frame = () => {
     const s = st.current;
     const el = scroller.current;
     if (!s || !s.active || !el) return;
-    const { clips: cs, pps: k, lanes: ln } = live.current;
+    const { clips: cs, pps: k, lanes: ln, media: md, height: h } = live.current;
     const clip = cs[s.i];
     if (!clip) return;
     const r = el.getBoundingClientRect();
-    let v = 0;
-    if (s.x < r.left + EDGE) v = -Math.ceil(((r.left + EDGE - s.x) / EDGE) * 14);
-    else if (s.x > r.right - EDGE) v = Math.ceil(((s.x - (r.right - EDGE)) / EDGE) * 14);
-    if (v) el.scrollLeft += v;
+    let vx = 0;
+    if (s.x < r.left + EDGE) vx = -Math.ceil(((r.left + EDGE - s.x) / EDGE) * 14);
+    else if (s.x > r.right - EDGE) vx = Math.ceil(((s.x - (r.right - EDGE)) / EDGE) * 14);
+    if (vx) el.scrollLeft += vx;
+    let vy = 0;
+    if (s.y < r.top + RULER + 14) vy = -Math.ceil(((r.top + RULER + 14 - s.y) / 30) * 8);
+    else if (s.y > r.bottom - 24) vy = Math.ceil(((s.y - (r.bottom - 24)) / 24) * 8);
+    if (vy) el.scrollTop += vy;
     const raw = s.at0 + (s.x - s.x0 + (el.scrollLeft - s.scroll0)) / k;
     const at = snap(s.i, raw, clipDuration(clip));
-    // lanes are listed top to bottom; moving down by a row goes one lane down
-    const from = ln.indexOf(s.track0);
-    let row = from + Math.round((s.y - s.y0) / (ROW + GAP));
+    const baseRow = ln.indexOf(s.track0);
+    const top = Math.max(RULER, Math.min(h - ROW - 4, RULER + baseRow * (ROW + GAP) + (s.y - s.y0) + (el.scrollTop - s.scrollTop0)));
+    let row = Math.round((top - RULER) / (ROW + GAP));
     row = Math.max(0, Math.min(ln.length - 1, row));
     let track = ln[row]!;
-    // pictures and videos live on lane 0 and above, sound on the lanes below
-    const audio = isAudio(media[clip.mediaId]);
-    if (audio && track >= 0) track = -1;
-    if (!audio && track < 0) track = 0;
-    setDrag({ index: s.i, at, track });
-    s.raf = requestAnimationFrame(update);
+    // pictures and videos live on the lanes from 0 up, sound on the lanes below
+    if (isAudio(md[clip.mediaId])) {
+      if (track >= 0) track = ln.filter((t) => t < 0)[0] ?? -1;
+    } else if (track < 0) track = 0;
+    setMove({ index: s.i, at, track, top });
+    s.raf = requestAnimationFrame(frame);
   };
 
   const finish = (commit: boolean) => {
@@ -135,12 +214,12 @@ export function Timeline() {
     if (s.active) {
       swallow.current = true;
       setTimeout(() => (swallow.current = false), 0);
-      setDrag((d) => {
+      setMove((d) => {
         if (commit && d) {
           const c = live.current.clips[d.index];
           if (c && (d.at !== c.at || d.track !== c.track)) moveClipTo(d.index, d.at, d.track);
-          // picked up and put back where it was: the person probably wants to do something with the clip
-          else if (c) set({ tool: 'clip' });
+          // picked up and put back where it was: show the options of the clip
+          else if (c) set({ popup: true });
         }
         return null;
       });
@@ -153,11 +232,12 @@ export function Timeline() {
     const clip = clips[i];
     if (!el || !clip) return;
     const target = e.currentTarget as HTMLElement;
-    const s = { id: e.pointerId, i, x0: e.clientX, y0: e.clientY, x: e.clientX, y: e.clientY, at0: clip.at, track0: clip.track, scroll0: el.scrollLeft, timer: 0, active: false, moved: false, raf: 0 };
+    const s = { id: e.pointerId, i, x0: e.clientX, y0: e.clientY, x: e.clientX, y: e.clientY, at0: clip.at, track0: clip.track, scroll0: el.scrollLeft, scrollTop0: el.scrollTop, timer: 0, active: false, raf: 0 };
     st.current = s;
     s.timer = window.setTimeout(() => {
       s.active = true;
       s.scroll0 = el.scrollLeft;
+      s.scrollTop0 = el.scrollTop;
       s.x0 = s.x;
       s.y0 = s.y;
       engine.pause();
@@ -172,11 +252,12 @@ export function Timeline() {
       } catch {
         /* not supported */
       }
-      setDrag({ index: i, at: clip.at, track: clip.track });
-      s.raf = requestAnimationFrame(update);
+      const row = live.current.lanes.indexOf(clip.track);
+      setMove({ index: i, at: clip.at, track: clip.track, top: rowTop(row) });
+      s.raf = requestAnimationFrame(frame);
     }, HOLD_MS);
   };
-  const move = (e: PointerEvent) => {
+  const onMove = (e: PointerEvent) => {
     const s = st.current;
     if (!s || e.pointerId !== s.id) return;
     s.x = e.clientX;
@@ -191,102 +272,189 @@ export function Timeline() {
     if (s && e.pointerId === s.id) finish(e.type === 'pointerup');
   };
 
-  // ---- the ruler: drag to move the position marker ----
-  const scrubbing = useRef(false);
-  const seekTo = (clientX: number) => {
-    const el = scroller.current;
-    if (!el) return;
-    const r = el.getBoundingClientRect();
-    const t = Math.max(0, Math.min(total, (clientX - r.left + el.scrollLeft) / pps));
-    set({ playhead: t });
-    void engine.showAt(t);
+  // ---------- trimming with the handles of the selected strip ----------
+
+  const trimRef = useRef<{
+    id: number;
+    i: number;
+    side: 'left' | 'right';
+    x0: number;
+    xf: number;
+    last: number;
+    armX: number;
+    base: { at: number; start: number; end: number };
+    carried: number;
+    fine: boolean;
+    timer: number;
+    cur: Trim;
+  } | null>(null);
+
+  const solveTrim = (t: NonNullable<typeof trimRef.current>, dx: number): Trim => {
+    const clip = live.current.clips[t.i]!;
+    const m = live.current.media[clip.mediaId];
+    const dur = m?.duration ?? clip.end;
+    const k = live.current.pps;
+    let dt = dx / k; // timeline seconds
+    const b = t.base;
+    if (t.side === 'left') {
+      dt = Math.max(dt, -b.at, -b.start / clip.speed);
+      dt = Math.min(dt, (b.end - MIN_CLIP - b.start) / clip.speed);
+      return { index: t.i, at: b.at + dt, start: b.start + dt * clip.speed, end: b.end, fine: t.fine };
+    }
+    dt = Math.max(dt, (b.start + MIN_CLIP - b.end) / clip.speed);
+    dt = Math.min(dt, (dur - b.end) / clip.speed);
+    return { index: t.i, at: b.at, start: b.start, end: b.end + dt * clip.speed, fine: t.fine };
+  };
+  const armTrim = (t: NonNullable<typeof trimRef.current>) => {
+    clearTimeout(t.timer);
+    t.timer = window.setTimeout(() => {
+      if (trimRef.current !== t || t.fine) return;
+      t.fine = true;
+      t.xf = t.last;
+      t.carried = t.last - t.x0;
+      t.cur = { ...t.cur, fine: true };
+      setTrim(t.cur);
+      try {
+        navigator.vibrate?.(8);
+      } catch {
+        /* not supported */
+      }
+    }, FINE_HOLD);
+  };
+  const trimDown = (i: number, side: 'left' | 'right') => (e: PointerEvent) => {
+    e.stopPropagation();
+    e.preventDefault();
+    const clip = clips[i];
+    if (!clip) return;
+    engine.pause();
+    try {
+      (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    } catch {
+      /* the pointer is gone */
+    }
+    const t = { id: e.pointerId, i, side, x0: e.clientX, xf: e.clientX, last: e.clientX, armX: e.clientX, base: { at: clip.at, start: clip.start, end: clip.end }, carried: 0, fine: false, timer: 0, cur: { index: i, at: clip.at, start: clip.start, end: clip.end, fine: false } };
+    trimRef.current = t;
+    setTrim(t.cur);
+    armTrim(t);
+  };
+  const trimMove = (e: PointerEvent) => {
+    const t = trimRef.current;
+    if (!t || e.pointerId !== t.id) return;
+    t.last = e.clientX;
+    if (!t.fine && Math.abs(e.clientX - t.armX) > 10) {
+      t.armX = e.clientX;
+      armTrim(t); // moving restarts the hold: holding still anywhere gives fine control from there
+    }
+    const dx = t.fine ? t.carried + (e.clientX - t.xf) * FINE : e.clientX - t.x0;
+    t.cur = solveTrim(t, dx);
+    setTrim(t.cur);
+    engine.scrubSource(t.i, t.side === 'left' ? t.cur.start : Math.max(t.cur.start, t.cur.end - 0.05), false);
+  };
+  const trimUp = (e: PointerEvent) => {
+    const t = trimRef.current;
+    if (!t || e.pointerId !== t.id) return;
+    clearTimeout(t.timer);
+    trimRef.current = null;
+    setTrim(null);
+    const c = t.cur;
+    if (e.type === 'pointerup' && (c.at !== t.base.at || c.start !== t.base.start || c.end !== t.base.end)) updateClip(t.i, { at: Math.round(c.at * 100) / 100, start: c.start, end: c.end });
+    void engine.showAt(getState().playhead);
   };
 
-  const step = [0.5, 1, 2, 5, 10, 15, 30, 60, 120].find((s) => s * pps >= 56) ?? 120;
+  const step = [0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300].find((s) => s * pps >= 56) ?? 300;
   const ticks: number[] = [];
-  for (let t = 0; t <= width / pps; t += step) ticks.push(t);
-  const height = RULER + lanes.length * (ROW + GAP) + 4;
+  for (let t = 0; t <= total + viewW / pps; t += step) ticks.push(t);
 
   return (
-    <div class={`tl ${drag ? 'dragging' : ''}`}>
+    <div class={`tl ${move ? 'dragging' : ''}`}>
       <div class="tl-bar">
-        <PickLabel class="tl-add" label="Add videos, pictures or sound">
-          <Plus /> <span>Add</span>
-        </PickLabel>
-        <span class="tl-hint" />
-        <button class="tl-zoom" aria-label="Zoom out the timeline" onClick={() => setPps((v) => Math.max(8, v / 1.5))}>
-          −
-        </button>
-        <button class="tl-zoom" aria-label="Zoom in the timeline" onClick={() => setPps((v) => Math.min(240, v * 1.5))}>
-          +
-        </button>
-      </div>
-      <div class="tl-scroll" ref={scroller}>
-        <div class="tl-inner" style={{ width: `${width}px`, height: `${height}px` }}>
-          <div
-            class="tl-ruler"
-            style={{ height: `${RULER}px` }}
-            onPointerDown={(e) => {
-              scrubbing.current = true;
-              engine.pause();
-              (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-              seekTo(e.clientX);
-            }}
-            onPointerMove={(e) => scrubbing.current && seekTo(e.clientX)}
-            onPointerUp={() => (scrubbing.current = false)}
-            onPointerCancel={() => (scrubbing.current = false)}
-          >
-            {ticks.map((t) => (
-              <span key={t} class="tl-tick num" style={{ left: `${t * pps}px` }}>
-                {fmtTime(t, 0)}
-              </span>
-            ))}
-          </div>
-          {lanes.map((track, row) => (
-            <div key={track} class={`tl-lane ${track < 0 ? 'sound' : ''} ${drag?.track === track ? 'target' : ''}`} style={{ top: `${RULER + row * (ROW + GAP)}px`, height: `${ROW}px` }}>
-              <span class="tl-lane-name">{track < 0 ? '♪' : `V${track + 1}`}</span>
-            </div>
-          ))}
-          {clips.map((c, i) => {
-            const m = media[c.mediaId];
-            const dragging = drag?.index === i;
-            const at = dragging ? drag!.at : c.at;
-            const track = dragging ? drag!.track : c.track;
-            const row = lanes.indexOf(track);
-            if (row < 0) return null;
-            const url = thumbUrl(c.mediaId);
-            const p = progress[c.mediaId];
-            const audio = isAudio(m);
-            return (
-              <button
-                key={c.id}
-                role="option"
-                aria-selected={i === selected}
-                class={`strip-clip ${i === selected ? 'on' : ''} ${dragging ? 'lifted' : ''} ${audio ? 'audio' : ''}`}
-                style={{ left: `${at * pps}px`, top: `${RULER + row * (ROW + GAP)}px`, width: `${Math.max(14, clipDuration(c) * pps)}px`, height: `${ROW}px` }}
-                onPointerDown={down(i)}
-                onPointerMove={move}
-                onPointerUp={up}
-                onPointerCancel={up}
-                onContextMenu={(e) => e.preventDefault()}
-                onClick={() => {
-                  if (swallow.current) return;
-                  engine.pause();
-                  selectClip(i);
-                }}
-              >
-                {url && <span class="strip-thumb" style={{ backgroundImage: `url("${url}")` }} />}
-                <span class="strip-label num">{c.speed !== 1 ? `${c.speed}× · ` : ''}{audio ? (m?.name ?? '') : fmtTime(clipDuration(c))}</span>
-                {p !== undefined && (
-                  <span class="tile-pie" title="Making a lighter copy for the preview">
-                    <Pie value={p} size={16} />
-                  </span>
-                )}
-              </button>
-            );
-          })}
-          <div class="tl-playhead" style={{ left: `${playhead * pps}px`, height: `${height}px` }} />
+        <div class="tl-left">
+          <PickLabel class="tl-add" label="Add videos, pictures or sound">
+            <Plus /> <span>Add</span>
+          </PickLabel>
+          <button class="tl-text" aria-label="Add text" onClick={() => set({ sheet: 'text', textEdit: null })}>
+            Aa
+          </button>
         </div>
+        <button class="play" onClick={() => (playing ? engine.pause() : void engine.play())} aria-label={playing ? 'Pause' : 'Play'}>
+          {playing ? <Pause /> : <Play />}
+        </button>
+        <span class="time num">
+          {fmtTime(playhead)} <small>/ {fmtTime(total)}</small>
+        </span>
+      </div>
+      <div class="tl-wrap">
+        <div class="tl-scroll" ref={scroller} onScroll={onScroll}>
+          <div class="tl-inner" style={{ width: `${width}px`, height: `${height}px` }}>
+            <div class="tl-ruler" style={{ height: `${RULER}px` }}>
+              {ticks.map((t) => (
+                <span key={t} class="tl-tick num" style={{ left: `${padL + t * pps}px` }}>
+                  {fmtTime(t, 0)}
+                </span>
+              ))}
+            </div>
+            {lanes.map((track, row) => (
+              <div key={track} class={`tl-lane ${track < 0 ? 'sound' : ''} ${move?.track === track ? 'target' : ''}`} style={{ top: `${rowTop(row)}px`, height: `${ROW}px` }}>
+                <span class="tl-lane-name">{track < 0 ? `A${-track}` : `V${track + 1}`}</span>
+              </div>
+            ))}
+            {clips.map((c, i) => {
+              const m = media[c.mediaId];
+              const moving = move?.index === i;
+              const tr = trim?.index === i ? trim : null;
+              const at = moving ? move!.at : (tr?.at ?? c.at);
+              const start = tr?.start ?? c.start;
+              const end = tr?.end ?? c.end;
+              const track = moving ? move!.track : c.track;
+              const row = lanes.indexOf(track);
+              if (row < 0) return null;
+              const top = moving ? move!.top : rowTop(row);
+              const url = thumbUrl(c.mediaId);
+              const p = progress[c.mediaId];
+              const audio = isAudio(m);
+              const w = Math.max(14, ((end - start) / c.speed) * pps);
+              const on = i === selected;
+              return (
+                <button
+                  key={c.id}
+                  role="option"
+                  aria-selected={on}
+                  class={`strip-clip ${on ? 'on' : ''} ${moving ? 'lifted' : ''} ${audio ? 'audio' : ''} ${m?.text ? 'texty' : ''} ${tr?.fine ? 'fine' : ''}`}
+                  style={{ left: `${padL + at * pps}px`, top: `${top}px`, width: `${w}px`, height: `${ROW}px` }}
+                  onPointerDown={down(i)}
+                  onPointerMove={onMove}
+                  onPointerUp={up}
+                  onPointerCancel={up}
+                  onContextMenu={(e) => e.preventDefault()}
+                  onClick={() => {
+                    if (swallow.current) return;
+                    engine.pause();
+                    if (on) set({ popup: true });
+                    else selectClip(i);
+                  }}
+                >
+                  {url && !m?.text && <span class="strip-thumb" style={{ backgroundImage: `url("${url}")` }} />}
+                  <span class="strip-label num">
+                    {c.speed !== 1 ? `${c.speed}× · ` : ''}
+                    {audio || m?.text ? (m?.name ?? '') : fmtTime((end - start) / c.speed)}
+                  </span>
+                  {p !== undefined && (
+                    <span class="tile-pie" title="Making a lighter copy for the preview">
+                      <Pie value={p} size={16} />
+                    </span>
+                  )}
+                  {on && !moving && (
+                    <>
+                      <span class="trim-h left" onPointerDown={trimDown(i, 'left')} onPointerMove={trimMove} onPointerUp={trimUp} onPointerCancel={trimUp} onClick={(e) => e.stopPropagation()} />
+                      <span class="trim-h right" onPointerDown={trimDown(i, 'right')} onPointerMove={trimMove} onPointerUp={trimUp} onPointerCancel={trimUp} onClick={(e) => e.stopPropagation()} />
+                    </>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+        <div class="tl-playhead" style={{ left: `${padL}px` }} />
       </div>
     </div>
   );

@@ -1,58 +1,28 @@
-import { useStore } from '../store.ts';
 import { Sheet } from './Sheet.tsx';
 
-const CURRENT: Record<string, { title: string; text: string }> = {
-  trim: {
-    title: 'Trim',
-    text: 'Drag the yellow ends to keep only the part you want. Drag anywhere else on the bar to look around the clip. Hold your finger still for a moment while dragging, then keep sliding: it moves ten times slower, for exact cuts.',
-  },
-  duration: {
-    title: 'Duration',
-    text: 'How long this picture stays on screen. The slider snaps to round numbers. Hold your finger still on the slider for a moment, then slide, to set an exact time.',
-  },
-  clip: {
-    title: 'Clip',
-    text: 'Split cuts the clip in two at the position marker. Duplicate copies it, Turn 90° rotates it, Reset position puts it back in the middle, and Delete removes it (Undo at the top brings it back).',
-  },
-  speed: {
-    title: 'Speed',
-    text: 'Slide to play this clip faster or slower. It snaps to the usual speeds, with 1× in the middle. Hold your finger still for a moment, then slide, to pick any speed in between. "Pitch kept" keeps voices natural; switch it to make voices rise and fall with the speed.',
-  },
-  sound: {
-    title: 'Sound',
-    text: 'Set how loud this clip is. Tap the speaker to mute, and tap again to bring the volume back. All the way left means fully muted. Hold still for a moment, then slide, for small steps.',
-  },
-};
-
-/** The manual. The first section always matches what is selected right now. */
+/** The manual. */
 export function HelpSheet({ onClose }: { onClose: () => void }) {
-  const tool = useStore((s) => s.tool);
-  const hasClips = useStore((s) => s.project.clips.length > 0);
-  const picture = useStore((s) => {
-    const c = s.project.clips[s.selected];
-    return !!c && s.project.media[c.mediaId]?.kind === 'image';
-  });
-  const key = picture && tool !== 'clip' ? 'duration' : tool;
-  const cur = CURRENT[key]!;
   return (
     <Sheet title="How it works" onClose={onClose}>
-      {hasClips && (
-        <section class="help-now">
-          <h3>Selected now: {cur.title}</h3>
-          <p>{cur.text}</p>
-        </section>
-      )}
-      <section>
-        <h3>Place the picture on the canvas</h3>
-        <p>Touch the preview. One finger moves the clip. Two fingers pinch to zoom and twist to turn it. Hold still for a moment and it moves ten times slower, for exact placement. It snaps to the middle, to quarter turns, and to "fits the whole frame" and "fills the frame". Double-tap the preview to snap to the closest tidy placement (a quarter turn, fitting or filling); double-tap again to switch between fit and fill. Shrink it for black bars, enlarge it to fill the frame. The shape of the canvas is set with the button at the top.</p>
-      </section>
       <section>
         <h3>Timeline</h3>
-        <p>Every clip is a strip on a lane. Lanes higher up are drawn on top of the lanes below, so you can layer a small video over a big one. Sound files sit on the ♪ lane. Tap a strip to select it. Press and hold a strip until it lifts, then drag it left or right in time, or up and down to another lane (up to the empty lane on top for a new layer); it snaps to other clips and the position marker. Drag the ruler to move the position marker. Use − and + to zoom.</p>
+        <p>Every clip is a strip on a lane. The yellow line is fixed: scroll the timeline under it to move through the video, and pinch to zoom. Lanes higher up are drawn on top of the lanes below, so you can layer a small video over a big one. Sound sits on the A lanes. Two empty lanes are always open beyond the last one in use.</p>
+      </section>
+      <section>
+        <h3>Strips</h3>
+        <p>Tap a strip to select it. Drag the yellow handles on its ends to trim. Press and hold a strip until it lifts, then drag it in time or to another lane; it snaps to other clips and to the yellow line. Tap the selected strip again (or hold it and let go in place) for its options: speed, volume, split, duplicate, delete. Deleting pulls everything after it forward.</p>
+      </section>
+      <section>
+        <h3>Place the picture on the canvas</h3>
+        <p>Touch the preview. One finger moves the clip. Two fingers pinch to zoom and twist to turn it. Hold still for a moment and it moves ten times slower, for exact placement. It snaps to the middle, the frame edges, quarter turns, and to "fits the whole frame" and "fills the frame". Double-tap the preview to snap to the closest tidy placement; double-tap again to switch between fit and fill.</p>
       </section>
       <section>
         <h3>Fine control</h3>
         <p>Everything you drag has a precision mode, like the iPhone Photos app: hold your finger still anywhere along the drag for a moment and it switches to slow motion from that point. It glows while it is on.</p>
+      </section>
+      <section>
+        <h3>Text and sound</h3>
+        <p>The Aa button adds text, which then behaves like a picture. Sound files (mp3, m4a, wav) go on the A lanes. The handle under the preview can be dragged to give the preview or the timeline more room.</p>
       </section>
       <section>
         <h3>Export</h3>

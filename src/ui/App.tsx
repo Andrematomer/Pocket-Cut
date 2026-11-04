@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import { engine } from '../engine.ts';
 import { canPromptInstall, isAndroid, isIOS, isMobile, isStandalone, onInstallChange, promptInstall } from '../install.ts';
 import { redo, restore, set, undo, useStore } from '../store.ts';
@@ -7,11 +7,12 @@ import { HelpSheet } from './HelpSheet.tsx';
 import { ExportSheet } from './ExportSheet.tsx';
 import { Gear, Help, Plus, Redo, Undo } from './icons.tsx';
 import { FilePicker, PickLabel } from './Picker.tsx';
-import { Preview, Transport } from './Preview.tsx';
+import { Preview } from './Preview.tsx';
+import { ClipPopup } from './ClipPopup.tsx';
+import { TextSheet } from './TextSheet.tsx';
 import { SettingsSheet } from './SettingsSheet.tsx';
 import { Timeline } from './Timeline.tsx';
 import { browserInfo, checkSupport } from '../support.ts';
-import { Tools } from './Tools.tsx';
 
 const support = checkSupport();
 
@@ -24,9 +25,24 @@ export function App() {
   const sheet = useStore((s) => s.sheet);
   const busy = useStore((s) => s.busy);
   const toast = useStore((s) => s.toast);
+  const popup = useStore((s) => s.popup);
+  const [tlH, setTlH] = useState(() => {
+    try {
+      return Number(localStorage.getItem('pocket-cut-nla:tl-height')) || 200;
+    } catch {
+      return 200;
+    }
+  });
 
   useEffect(() => {
     void restore();
+  }, []);
+
+  // the handle under the preview: drag to give the timeline or the preview more room
+  useEffect(() => {
+    const f = (e: Event) => setTlH((e as CustomEvent<number>).detail);
+    window.addEventListener('pc-tl-height', f);
+    return () => window.removeEventListener('pc-tl-height', f);
   }, []);
 
   useEffect(() => {
@@ -34,7 +50,7 @@ export function App() {
   }, [hasClips]);
 
   return (
-    <div class="app">
+    <div class="app" style={{ '--tl-h': `${tlH}px` } as Record<string, string>}>
       <FilePicker />
       <header class="top">
         {!hasClips && <span class="title plain">Pocket Cut</span>}
@@ -75,9 +91,8 @@ export function App() {
       ) : !ready ? null : hasClips ? (
         <main class="editor">
           <Preview />
-          <Transport />
+          <Splitter />
           <Timeline />
-          <Tools />
         </main>
       ) : (
         <Empty />
@@ -86,6 +101,8 @@ export function App() {
       {sheet === 'export' && <ExportSheet onClose={() => set({ sheet: 'none' })} />}
       {sheet === 'help' && <HelpSheet onClose={() => set({ sheet: 'none' })} />}
       {sheet === 'canvas' && <CanvasSheet onClose={() => set({ sheet: 'none' })} />}
+      {sheet === 'text' && <TextSheet onClose={() => set({ sheet: 'none' })} />}
+      {popup && hasClips && <ClipPopup />}
       {sheet === 'settings' && <SettingsSheet onClose={() => set({ sheet: 'none' })} />}
 
       {toast && (
@@ -170,5 +187,40 @@ function InstallHint() {
         )
       )}
     </section>
+  );
+}
+
+/** A grab handle between the preview and the timeline: drag it up or down to trade space between them. */
+function Splitter() {
+  const drag = useRef<{ id: number; y0: number; h0: number } | null>(null);
+  const cur = () => parseFloat(getComputedStyle(document.querySelector('.app')!).getPropertyValue('--tl-h')) || 200;
+  const send = (h: number) => window.dispatchEvent(new CustomEvent('pc-tl-height', { detail: h }));
+  return (
+    <div
+      class="splitter"
+      role="separator"
+      aria-orientation="horizontal"
+      aria-label="Drag to change the size of the preview"
+      onPointerDown={(e) => {
+        drag.current = { id: e.pointerId, y0: e.clientY, h0: cur() };
+        (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+      }}
+      onPointerMove={(e) => {
+        const d = drag.current;
+        if (!d || d.id !== e.pointerId) return;
+        send(Math.round(Math.max(110, Math.min(window.innerHeight * 0.72, d.h0 + (d.y0 - e.clientY)))));
+      }}
+      onPointerUp={() => {
+        drag.current = null;
+        try {
+          localStorage.setItem('pocket-cut-nla:tl-height', String(Math.round(cur())));
+        } catch {
+          /* ignore */
+        }
+      }}
+      onPointerCancel={() => (drag.current = null)}
+    >
+      <i />
+    </div>
   );
 }

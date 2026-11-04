@@ -17,6 +17,9 @@ export interface MediaInfo {
   hasAudio: boolean;
   /** missing = video */
   kind?: 'video' | 'image' | 'audio';
+  /** set when the picture is a piece of text made in the app */
+  text?: string;
+  textColor?: string;
 }
 
 export interface Clip {

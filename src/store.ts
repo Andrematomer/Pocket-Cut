@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { ASPECT_VALUE, IDENTITY_VIEW, nearestAspect, normAngle } from './geometry.ts';
-import { decodeImage, dropAllMedia, isAudioFile, isImageFile, probeAudio, mediaBlob, newId, probeImage, probeVideo, registerMedia, UnsupportedMediaError } from './media.ts';
+import { renderText } from './text.ts';
+import { IMAGE_MAX_SECONDS, decodeImage, dropAllMedia, isAudioFile, isImageFile, probeAudio, mediaBlob, newId, probeImage, probeVideo, registerMedia, UnsupportedMediaError } from './media.ts';
 import { setAwakeMode } from './wake.ts';
 import { onProxyProgress, onProxyWork, queueProxy, requeueAllProxies, setProxyOrder } from './proxy.ts';
 import { clearSaved, loadSaved, requestPersistence, saveMedia, saveProject } from './persist.ts';
@@ -8,7 +9,7 @@ import { clipDuration, clipEnd, endOfTrack, MAX_SPEED, MIN_CLIP, MIN_SPEED, tota
 import { DEFAULT_SETTINGS, emptyProject, type Clip, type ExportSettings, type MediaInfo, type Project } from './types.ts';
 
 export type Tool = 'trim' | 'speed' | 'sound' | 'clip';
-export type Sheet = 'none' | 'export' | 'settings' | 'canvas' | 'help';
+export type Sheet = 'none' | 'export' | 'settings' | 'canvas' | 'help' | 'text';
 
 export interface Toast {
   text: string;
@@ -28,6 +29,10 @@ export interface State {
   ready: boolean;
   /** a small preview copy is being made in the background */
   preparing: boolean;
+  /** the floating window with the selected clip's options */
+  popup: boolean;
+  /** the text clip being edited (index), or null when a new text is being made */
+  textEdit: number | null;
   /** 0..1 per media id while its preview copy is waiting or being made */
   proxyProgress: Record<string, number>;
   /** settings of the app itself (not of one project) */
@@ -68,6 +73,8 @@ let state: State = {
   sheet: 'none',
   ready: false,
   preparing: false,
+  popup: false,
+  textEdit: null,
   proxyProgress: {},
   prefs: loadAppPrefs(),
   canUndo: false,
@@ -267,8 +274,36 @@ export function duplicateClip(index: number): void {
 export function deleteClip(index: number): void {
   const c = state.project.clips[index];
   if (!c) return;
-  // the file stays in memory and storage while undo could still bring the clip back
-  edit((p) => ({ ...p, clips: p.clips.filter((_, i) => i !== index) }));
+  const end = clipEnd(c);
+  const dur = clipDuration(c);
+  // the file stays in memory and storage while undo could still bring the clip back.
+  // Everything that starts after the deleted clip moves forward, so no hole is left.
+  edit((p) => ({
+    ...p,
+    clips: p.clips.filter((_, i) => i !== index).map((x) => (x.at >= end - 1e-6 ? { ...x, at: Math.max(0, Math.round((x.at - dur) * 100) / 100) } : x)),
+  }));
+  set({ popup: false });
+}
+
+/** Makes a text clip (or, with `editIndex`, changes the text of an existing one). */
+export async function addText(text: string, color: string, editIndex: number | null): Promise<void> {
+  const clean = text.trim();
+  if (!clean) return;
+  const r = await renderText(clean, color);
+  const id = newId();
+  registerMedia(id, r.blob, null, { name: clean.slice(0, 24), bitmap: r.bitmap });
+  const info: MediaInfo = { id, name: clean.split('\n')[0]!.slice(0, 24), duration: IMAGE_MAX_SECONDS, width: r.width, height: r.height, hasAudio: false, kind: 'image', text: clean, textColor: color };
+  void saveMedia(id, { blob: r.blob, name: info.name, thumb: null });
+  if (editIndex !== null && state.project.clips[editIndex]) {
+    edit((p) => ({ ...p, media: { ...p.media, [id]: info }, clips: p.clips.map((c, i) => (i === editIndex ? { ...c, mediaId: id } : c)) }));
+    return;
+  }
+  // new text goes on a lane above everything, at the position marker
+  const top = state.project.clips.reduce((m, c) => Math.max(m, c.track), -1) + 1;
+  const clip: Clip = { id: newId(), mediaId: id, start: 0, end: state.prefs.imageSeconds, speed: 1, view: { ...IDENTITY_VIEW, zoom: 0.8 }, volume: 1, keepPitch: true, at: state.playhead, track: top };
+  const index = state.project.clips.length;
+  edit((p) => ({ ...p, media: { ...p.media, [id]: info }, clips: [...p.clips, clip] }));
+  selectClip(index);
 }
 
 /** Cuts the selected clip in two at the position marker. */
@@ -355,7 +390,6 @@ export async function importFiles(files: File[]): Promise<void> {
     // a new project starts with the canvas shape that suits its first picture
     settings: first ? { ...p.settings, aspect: nearestAspect(first.width, first.height) } : p.settings,
   }));
-  set({ tool: 'trim' });
   selectClip(firstNew);
   void requestPersistence();
 }

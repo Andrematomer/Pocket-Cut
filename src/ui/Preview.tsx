@@ -352,32 +352,3 @@ function Gestures({ boxW, boxH }: { boxW: number; boxH: number }) {
     </div>
   );
 }
-
-export function Transport() {
-  const playing = useStore((s) => s.playing);
-  const playhead = useStore((s) => s.playhead);
-  const clips = useStore((s) => s.project.clips);
-  const total = totalOf(clips);
-
-  const toggle = () => {
-    if (playing) engine.pause();
-    else void engine.play();
-  };
-  const scrub = (e: Event) => {
-    const t = Number((e.currentTarget as HTMLInputElement).value);
-    set({ playhead: t });
-    void engine.showAt(t);
-  };
-
-  return (
-    <div class="transport">
-      <button class="play" onClick={toggle} aria-label={playing ? 'Pause' : 'Play'}>
-        {playing ? <Pause /> : <Play />}
-      </button>
-      <input class="scrub" type="range" min={0} max={Math.max(total, 0.01)} step={0.01} value={Math.min(playhead, total)} onInput={scrub} aria-label="Position" />
-      <span class="time num">
-        {fmtTime(playhead)} <small>/ {fmtTime(total)}</small>
-      </span>
-    </div>
-  );
-}
