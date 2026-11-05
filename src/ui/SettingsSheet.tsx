@@ -47,7 +47,7 @@ export function SettingsSheet({ onClose }: { onClose: () => void }) {
             </button>
           ))}
         </div>
-        <p class="hint">Videos are previewed from a small copy so editing stays smooth. Pick a lower number if the preview stutters on an older phone. A new size applies to videos you add from now on, not to the ones already in the project. The exported video always uses the originals.</p>
+        <p class="hint">Videos are previewed from a small copy so editing stays smooth. Pick a lower number if the preview stutters on an older phone. The exported video always uses the originals.</p>
       </section>
 
       <section>

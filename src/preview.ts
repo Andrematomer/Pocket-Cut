@@ -1,7 +1,7 @@
 import { bakedAudio, keyOf } from './bake.ts';
-import { drawFrame } from './geometry.ts';
+import { drawLayer } from './layers.ts';
 import { activeAt, clipEnd, sourceAt, totalOf } from './timeline.ts';
-import type { Clip, Project, View } from './types.ts';
+import type { Clip, Crop, Project, View } from './types.ts';
 
 export interface PreviewDeps {
   getProject(): Project;
@@ -60,6 +60,8 @@ export class PreviewEngine {
   playing = false;
   /** while a finger is moving a picture, this view is drawn instead of the saved one */
   live: { index: number; view: View } | null = null;
+  /** crop being dragged on screen (not yet saved to the clip) */
+  cropLive: { index: number; crop: Crop } | null = null;
 
   private clockT0 = 0;
   private clockTl0 = 0;
@@ -181,9 +183,9 @@ export class PreviewEngine {
     const canvas = this.canvas;
     if (!ctx || !canvas) return;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.fillStyle = '#000';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
     const p = this.deps.getProject();
+    ctx.fillStyle = p.settings.background || '#000';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
     const list = new Set(activeAt(p.clips, this.tl));
     if (this.scrub) list.add(this.scrub.index);
     const order = [...list].sort((a, b) => (p.clips[a]?.track ?? 0) - (p.clips[b]?.track ?? 0) || a - b);
@@ -192,14 +194,15 @@ export class PreviewEngine {
       const media = clip && p.media[clip.mediaId];
       if (!clip || !media || media.kind === 'audio') continue;
       const o = { outW: canvas.width, outH: canvas.height, view: this.live && this.live.index === i ? this.live.view : clip.view, keepBackground: true };
+      const look = { opacity: clip.opacity, grade: clip.grade, crop: this.cropLive && this.cropLive.index === i ? this.cropLive.crop : clip.crop };
       const img = this.deps.getImage(clip.mediaId);
       if (img) {
-        drawFrame(ctx, img, img.width, img.height, o);
+        drawLayer(ctx, img, img.width, img.height, look, o);
         continue;
       }
       const pl = this.players.find((x) => x.clipId === clip.id);
       const v = pl?.video;
-      if (pl && v && pl.ready && v.readyState >= 2 && v.videoWidth) drawFrame(ctx, v, v.videoWidth, v.videoHeight, o);
+      if (pl && v && pl.ready && v.readyState >= 2 && v.videoWidth) drawLayer(ctx, v, v.videoWidth, v.videoHeight, look, o);
     }
   }
 

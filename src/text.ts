@@ -1,10 +1,20 @@
 /** Renders a piece of text into a transparent picture, so it can be placed like any other picture. */
 export const TEXT_COLORS = ['#ffffff', '#f6d04d', '#ff5d5d', '#6ee7a8', '#6db3ff', '#000000'] as const;
 
-export async function renderText(text: string, color: string): Promise<{ blob: Blob; bitmap: ImageBitmap; width: number; height: number }> {
+export const TEXT_FONTS: { key: string; name: string; css: string; weight: number }[] = [
+  { key: 'sans', name: 'Sans', css: 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif', weight: 700 },
+  { key: 'serif', name: 'Serif', css: 'Georgia, "Times New Roman", Times, serif', weight: 700 },
+  { key: 'mono', name: 'Mono', css: 'ui-monospace, "SF Mono", Menlo, Consolas, "Courier New", monospace', weight: 700 },
+  { key: 'impact', name: 'Impact', css: 'Impact, "Haettenschweiler", "Arial Narrow Bold", "Arial Black", sans-serif', weight: 400 },
+  { key: 'round', name: 'Rounded', css: 'ui-rounded, "SF Pro Rounded", "Arial Rounded MT Bold", "Varela Round", Nunito, system-ui, sans-serif', weight: 800 },
+  { key: 'hand', name: 'Handwritten', css: '"Bradley Hand", "Segoe Print", "Comic Sans MS", "Chalkboard SE", cursive', weight: 700 },
+];
+
+export async function renderText(text: string, color: string, fontKey = 'sans'): Promise<{ blob: Blob; bitmap: ImageBitmap; width: number; height: number }> {
   const lines = text.split('\n').map((l) => l.trimEnd());
   while (lines.length > 1 && lines[lines.length - 1] === '') lines.pop();
-  const font = '700 120px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif';
+  const f = TEXT_FONTS.find((x) => x.key === fontKey) ?? TEXT_FONTS[0]!;
+  const font = `${f.weight} 120px ${f.css}`;
   const probe = document.createElement('canvas').getContext('2d')!;
   probe.font = font;
   const widest = Math.max(40, ...lines.map((l) => probe.measureText(l).width));

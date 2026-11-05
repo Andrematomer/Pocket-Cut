@@ -143,3 +143,16 @@ export const Order = () => (
     <path d="M4 8h13M13 4l4 4-4 4M20 16H7M11 12l-4 4 4 4" />
   </I>
 );
+export const Look = () => (
+  <I>
+    <circle cx="12" cy="12" r="8.5" />
+    <path d="M12 3.5v17" />
+    <path d="M12 12h8.5" />
+  </I>
+);
+export const Layers = () => (
+  <I>
+    <path d="M12 3 3 8l9 5 9-5z" />
+    <path d="M3 13l9 5 9-5" />
+  </I>
+);

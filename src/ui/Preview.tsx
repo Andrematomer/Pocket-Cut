@@ -1,9 +1,9 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { engine } from '../engine.ts';
-import { clampView, dragView, fitZoom, outputSize, pinchView, snapEight, snapView, type Pt } from '../geometry.ts';
-import { getState, set, updateClip, useStore } from '../store.ts';
+import { baseScale, clampView, dragView, fitZoom, outputSize, pinchView, snapEight, snapView, type Pt } from '../geometry.ts';
+import { getState, set, setCrop, updateClip, useStore } from '../store.ts';
 import { activeAt, fmtTime, totalOf } from '../timeline.ts';
-import type { View } from '../types.ts';
+import type { Crop, View } from '../types.ts';
 import { Pause, Play } from './icons.tsx';
 import { Pie } from './Pie.tsx';
 
@@ -90,6 +90,7 @@ export function Preview() {
       <div class="frame" style={{ width: `${box.w}px`, height: `${box.h}px` }}>
         <canvas ref={canvas} style={{ width: `${box.w}px`, height: `${box.h}px` }} />
         {box.w > 0 && <Gestures boxW={box.w} boxH={box.h} />}
+        {box.w > 0 && <CropHandles boxW={box.w} boxH={box.h} />}
         {busy && <div class="overlay-note">{busy}</div>}
         {!busy && progress[clip.mediaId] !== undefined && (
           <div class="overlay-note with-pie">
@@ -134,6 +135,7 @@ function Gestures({ boxW, boxH }: { boxW: number; boxH: number }) {
   const tap = useRef<{ t: number; x: number; y: number; moved: boolean; multi: boolean } | null>(null);
   const lastTap = useRef<{ t: number; x: number; y: number } | null>(null);
   const timer = useRef(0);
+  const cropTimer = useRef(0);
   const frame = useRef(0);
   const sizes = useRef({ boxW, boxH });
   sizes.current = { boxW, boxH };
@@ -292,7 +294,7 @@ function Gestures({ boxW, boxH }: { boxW: number; boxH: number }) {
     let v: View;
     if (b.b && raw2) v = pinchView(b.view, W, H, b.a, b.b, a1, f(raw2, b.b));
     else v = dragView(b.view, W, H, a1.x - b.a.x, a1.y - b.a.y);
-    v = clampView(v);
+    v = clampView(v, { sw: c.media.width, sh: c.media.height, W, H });
     if (fine.current) {
       live.current = v;
       engine.live = { index: getState().selected, view: v };
@@ -319,8 +321,14 @@ function Gestures({ boxW, boxH }: { boxW: number; boxH: number }) {
       const lt = lastTap.current;
       if (lt && tp.t - lt.t < 400 && Math.hypot(tp.x - lt.x, tp.y - lt.y) < 40) {
         lastTap.current = null;
+        clearTimeout(cropTimer.current);
         doubleTap();
-      } else lastTap.current = { t: tp.t, x: tp.x, y: tp.y };
+      } else {
+        lastTap.current = { t: tp.t, x: tp.x, y: tp.y };
+        // a single tap shows or hides the crop handles (after the time a second tap would need)
+        clearTimeout(cropTimer.current);
+        cropTimer.current = window.setTimeout(() => set({ cropMode: !getState().cropMode }), 330);
+      }
     }
   };
   /** snaps to the closest of the eight tidy placements (quarter turn x fit/fill); again flips fit/fill */
@@ -328,7 +336,7 @@ function Gestures({ boxW, boxH }: { boxW: number; boxH: number }) {
     const c = current();
     if (!c) return;
     const { boxW: W, boxH: H } = sizes.current;
-    const v = clampView(snapEight(c.clip.view, c.media.width, c.media.height, W, H));
+    const v = clampView(snapEight(c.clip.view, c.media.width, c.media.height, W, H), { sw: c.media.width, sh: c.media.height, W, H });
     updateClip(getState().selected, { view: v });
     const fit = fitZoom(c.media.width, c.media.height, v.rot, W, H);
     showBadge(Math.abs(v.zoom - fit) / fit < 0.02 ? 'Fit' : 'Fill');
@@ -340,7 +348,7 @@ function Gestures({ boxW, boxH }: { boxW: number; boxH: number }) {
     if (!c) return;
     e.preventDefault();
     const z = c.clip.view.zoom * Math.exp(-e.deltaY / 500);
-    const s = snapView(clampView({ ...c.clip.view, zoom: z }), { sw: c.media.width, sh: c.media.height, W: boxW, H: boxH });
+    const s = snapView(clampView({ ...c.clip.view, zoom: z }, { sw: c.media.width, sh: c.media.height, W: boxW, H: boxH }), { sw: c.media.width, sh: c.media.height, W: boxW, H: boxH });
     updateClip(getState().selected, { view: s.view });
   };
 
@@ -350,5 +358,83 @@ function Gestures({ boxW, boxH }: { boxW: number; boxH: number }) {
       <div class="guide h" ref={guideH} />
       <div class="gesture-badge num" ref={badge} />
     </div>
+  );
+}
+
+type Side = 'l' | 't' | 'r' | 'b';
+
+/**
+ * Four capsules on the sides of the picture after a tap on it. Dragging one cuts that side off (the picture
+ * stays where it is, as when alt-dragging a source in OBS). They follow the picture's own turn.
+ */
+function CropHandles({ boxW: W, boxH: H }: { boxW: number; boxH: number }) {
+  const on = useStore((s) => s.cropMode);
+  const clip = useStore((s) => s.project.clips[s.selected]);
+  const media = useStore((s) => (s.project.clips[s.selected] ? s.project.media[s.project.clips[s.selected]!.mediaId] : undefined));
+  const [drag, setDrag] = useState<Crop | null>(null);
+  const st = useRef<{ id: number; side: Side; x0: number; y0: number; base: Crop } | null>(null);
+  if (!on || !clip || !media || media.kind === 'audio') return null;
+  const crop: Crop = drag ?? clip.crop ?? { l: 0, t: 0, r: 0, b: 0 };
+  const sc = baseScale(media.width, media.height, W, H) * clip.view.zoom;
+  const pw = media.width * sc;
+  const ph = media.height * sc;
+  const ang = (clip.view.rot * Math.PI) / 180;
+  const cos = Math.cos(ang);
+  const sin = Math.sin(ang);
+  const cx = W / 2 + clip.view.x * W;
+  const cy = H / 2 + clip.view.y * H;
+  const at = (lx: number, ly: number) => ({ x: cx + lx * cos - ly * sin, y: cy + lx * sin + ly * cos });
+  const clamp = (p: { x: number; y: number }) => ({ x: Math.min(W - 6, Math.max(6, p.x)), y: Math.min(H - 6, Math.max(6, p.y)) });
+  const mid: Record<Side, { x: number; y: number }> = {
+    l: at(-pw / 2 + crop.l * pw, ((crop.t - crop.b) * ph) / 2),
+    r: at(pw / 2 - crop.r * pw, ((crop.t - crop.b) * ph) / 2),
+    t: at(((crop.l - crop.r) * pw) / 2, -ph / 2 + crop.t * ph),
+    b: at(((crop.l - crop.r) * pw) / 2, ph / 2 - crop.b * ph),
+  };
+  const down = (side: Side) => (e: PointerEvent) => {
+    e.stopPropagation();
+    e.preventDefault();
+    engine.pause();
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    st.current = { id: e.pointerId, side, x0: e.clientX, y0: e.clientY, base: { ...crop } };
+  };
+  const solve = (e: PointerEvent): Crop => {
+    const d = st.current!;
+    const dx = e.clientX - d.x0;
+    const dy = e.clientY - d.y0;
+    // the finger's movement along the picture's own axes
+    const lx = dx * cos + dy * sin;
+    const ly = -dx * sin + dy * cos;
+    const c = { ...d.base };
+    const room = 0.95;
+    if (d.side === 'l') c.l = Math.min(room - c.r, Math.max(0, c.l + lx / pw));
+    if (d.side === 'r') c.r = Math.min(room - c.l, Math.max(0, c.r - lx / pw));
+    if (d.side === 't') c.t = Math.min(room - c.b, Math.max(0, c.t + ly / ph));
+    if (d.side === 'b') c.b = Math.min(room - c.t, Math.max(0, c.b - ly / ph));
+    return c;
+  };
+  const move = (e: PointerEvent) => {
+    if (!st.current || st.current.id !== e.pointerId) return;
+    const c = solve(e);
+    setDrag(c);
+    engine.cropLive = { index: getState().selected, crop: c };
+    engine.draw();
+  };
+  const up = (e: PointerEvent) => {
+    const d = st.current;
+    if (!d || d.id !== e.pointerId) return;
+    const c = e.type === 'pointerup' ? solve(e) : d.base;
+    st.current = null;
+    setDrag(null);
+    engine.cropLive = null;
+    setCrop(getState().selected, c);
+  };
+  return (
+    <>
+      {(['l', 't', 'r', 'b'] as Side[]).map((side) => {
+        const p = clamp(mid[side]);
+        return <div key={side} class={`crop-h ${side === 'l' || side === 'r' ? 'v' : 'h'}`} style={{ left: `${p.x}px`, top: `${p.y}px` }} onPointerDown={down(side)} onPointerMove={move} onPointerUp={up} onPointerCancel={up} aria-label={`Crop ${side}`} />;
+      })}
+    </>
   );
 }

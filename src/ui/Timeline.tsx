@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { engine } from '../engine.ts';
 import { thumbUrl } from '../media.ts';
-import { getState, moveClipTo, selectClip, set, updateClip, useStore } from '../store.ts';
-import { MIN_CLIP, clipDuration, clipEnd, fmtTime, totalOf } from '../timeline.ts';
+import { getState, moveClipTo, removeGap, selectClip, set, updateClip, useStore } from '../store.ts';
+import { MIN_CLIP, clipDuration, clipEnd, fmtTime, gapAt, totalOf } from '../timeline.ts';
 import type { Clip, MediaInfo } from '../types.ts';
 import { PickLabel } from './Picker.tsx';
 import { Pie } from './Pie.tsx';
@@ -66,6 +66,8 @@ export function Timeline() {
   const playhead = useStore((s) => s.playhead);
   const playing = useStore((s) => s.playing);
   const progress = useStore((s) => s.proxyProgress);
+  const gap = useStore((s) => s.gap);
+  const gapMenu = useStore((s) => s.gapMenu);
   const [pps, setPps] = useState(36); // pixels per second
   const [move, setMove] = useState<Move | null>(null);
   const [trim, setTrim] = useState<Trim | null>(null);
@@ -219,7 +221,7 @@ export function Timeline() {
           const c = live.current.clips[d.index];
           if (c && (d.at !== c.at || d.track !== c.track)) moveClipTo(d.index, d.at, d.track);
           // picked up and put back where it was: show the options of the clip
-          else if (c) set({ popup: true });
+          else if (c) set({ drawer: getState().tool });
         }
         return null;
       });
@@ -361,6 +363,24 @@ export function Timeline() {
     void engine.showAt(getState().playhead);
   };
 
+  // tapping empty space between two strips picks that gap; tapping the picked gap again offers to remove it
+  const laneTap = (e: MouseEvent, track: number) => {
+    if (swallow.current || e.target !== e.currentTarget) return;
+    const el = scroller.current;
+    if (!el) return;
+    const x = e.clientX - el.getBoundingClientRect().left + el.scrollLeft;
+    const t = (x - padL) / pps;
+    const g = gapAt(clips, track, t);
+    if (!g) {
+      set({ gap: null, gapMenu: false });
+      return;
+    }
+    engine.pause();
+    const same = getState().gap && getState().gap!.track === g.track && Math.abs(getState().gap!.from - g.from) < 1e-6;
+    set({ gap: g, gapMenu: same ? !getState().gapMenu : false, drawer: null });
+  };
+  const gapRow = gap ? lanes.indexOf(gap.track) : -1;
+
   const step = [0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300].find((s) => s * pps >= 56) ?? 300;
   const ticks: number[] = [];
   for (let t = 0; t <= total + viewW / pps; t += step) ticks.push(t);
@@ -394,10 +414,16 @@ export function Timeline() {
               ))}
             </div>
             {lanes.map((track, row) => (
-              <div key={track} class={`tl-lane ${track < 0 ? 'sound' : ''} ${move?.track === track ? 'target' : ''}`} style={{ top: `${rowTop(row)}px`, height: `${ROW}px` }}>
+              <div key={track} class={`tl-lane ${track < 0 ? 'sound' : ''} ${move?.track === track ? 'target' : ''}`} style={{ top: `${rowTop(row)}px`, height: `${ROW}px` }} onClick={(e) => laneTap(e, track)}>
                 <span class="tl-lane-name">{track < 0 ? `A${-track}` : `V${track + 1}`}</span>
               </div>
             ))}
+            {gap && gapRow >= 0 && <div class="tl-gap" style={{ left: `${padL + gap.from * pps}px`, width: `${(gap.to - gap.from) * pps}px`, top: `${rowTop(gapRow)}px`, height: `${ROW}px` }} />}
+            {gap && gapMenu && gapRow >= 0 && (
+              <div class="gap-menu" style={{ left: `${padL + ((gap.from + gap.to) / 2) * pps}px`, top: `${rowTop(gapRow) + ROW + 2}px` }}>
+                <button onClick={() => removeGap()}>Remove gap ({fmtTime(gap.to - gap.from)})</button>
+              </div>
+            )}
             {clips.map((c, i) => {
               const m = media[c.mediaId];
               const moving = move?.index === i;
@@ -429,7 +455,7 @@ export function Timeline() {
                   onClick={() => {
                     if (swallow.current) return;
                     engine.pause();
-                    if (on) set({ popup: true });
+                    if (on) set({ drawer: getState().drawer ? null : getState().tool });
                     else selectClip(i);
                   }}
                 >

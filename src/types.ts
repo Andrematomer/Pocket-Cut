@@ -20,6 +20,21 @@ export interface MediaInfo {
   /** set when the picture is a piece of text made in the app */
   text?: string;
   textColor?: string;
+  textFont?: string;
+}
+
+export interface Grade {
+  brightness: number;
+  contrast: number;
+  saturation: number;
+  warmth: number;
+}
+
+export interface Crop {
+  l: number;
+  t: number;
+  r: number;
+  b: number;
 }
 
 export interface Clip {
@@ -36,6 +51,12 @@ export interface Clip {
   keepPitch: boolean;
   /** when the clip starts on the timeline, seconds */
   at: number;
+  /** 0..1, how see-through the clip is (missing = 1) */
+  opacity?: number;
+  /** color grading, each -1..1 with 0 = unchanged */
+  grade?: Grade;
+  /** the part of each side that is cut off, 0..1 of the picture's size */
+  crop?: Crop;
   /** lane: higher lanes are drawn on top; audio clips live on lane -1 and below */
   track: number;
 }
@@ -54,6 +75,8 @@ export interface ExportSettings {
   splitSeconds: number | null;
   /** true: make all parts the same length (all <= splitSeconds) */
   equalParts: boolean;
+  /** canvas color behind all layers */
+  background: string;
 }
 
 export interface Project {
@@ -73,6 +96,7 @@ export const DEFAULT_SETTINGS: ExportSettings = {
   bitrateMbps: null,
   splitSeconds: null,
   equalParts: false,
+  background: '#000000',
 };
 
 export function emptyProject(): Project {

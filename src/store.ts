@@ -5,10 +5,10 @@ import { IMAGE_MAX_SECONDS, decodeImage, dropAllMedia, isAudioFile, isImageFile,
 import { setAwakeMode } from './wake.ts';
 import { onProxyProgress, onProxyWork, queueProxy, requeueAllProxies, setProxyOrder } from './proxy.ts';
 import { clearSaved, loadSaved, requestPersistence, saveMedia, saveProject } from './persist.ts';
-import { clipDuration, clipEnd, endOfTrack, MAX_SPEED, MIN_CLIP, MIN_SPEED, totalOf } from './timeline.ts';
+import { clipDuration, clipEnd, endOfTrack, MAX_SPEED, MIN_CLIP, MIN_SPEED, removeGap as removeGapFrom, totalOf, type Gap } from './timeline.ts';
 import { DEFAULT_SETTINGS, emptyProject, type Clip, type ExportSettings, type MediaInfo, type Project } from './types.ts';
 
-export type Tool = 'trim' | 'speed' | 'sound' | 'clip';
+export type Tool = 'speed' | 'sound' | 'look' | 'clip';
 export type Sheet = 'none' | 'export' | 'settings' | 'canvas' | 'help' | 'text';
 
 export interface Toast {
@@ -29,8 +29,13 @@ export interface State {
   ready: boolean;
   /** a small preview copy is being made in the background */
   preparing: boolean;
-  /** the floating window with the selected clip's options */
-  popup: boolean;
+  /** the tab drawer that is raised over the timeline, or null when only the tab bar shows */
+  drawer: Tool | null;
+  /** an empty stretch picked on the timeline (yellow box); `gapMenu` shows its "Remove gap" button */
+  gap: Gap | null;
+  gapMenu: boolean;
+  /** the crop handles are shown on the preview */
+  cropMode: boolean;
   /** the text clip being edited (index), or null when a new text is being made */
   textEdit: number | null;
   /** 0..1 per media id while its preview copy is waiting or being made */
@@ -65,7 +70,7 @@ function loadAppPrefs(): AppPrefs {
 let state: State = {
   project: freshProject(),
   selected: 0,
-  tool: 'trim',
+  tool: 'speed',
   playhead: 0,
   playing: false,
   busy: null,
@@ -73,7 +78,10 @@ let state: State = {
   sheet: 'none',
   ready: false,
   preparing: false,
-  popup: false,
+  drawer: null,
+  gap: null,
+  gapMenu: false,
+  cropMode: false,
   textEdit: null,
   proxyProgress: {},
   prefs: loadAppPrefs(),
@@ -261,7 +269,7 @@ export function selectClip(index: number): void {
   const c = state.project.clips[index];
   if (!c) return;
   const inside = state.playhead >= c.at - 1e-6 && state.playhead < clipEnd(c);
-  set({ selected: index, playhead: inside ? state.playhead : c.at });
+  set({ selected: index, playhead: inside ? state.playhead : c.at, gap: null, gapMenu: false, cropMode: state.selected === index ? state.cropMode : false });
 }
 
 export function duplicateClip(index: number): void {
@@ -282,17 +290,43 @@ export function deleteClip(index: number): void {
     ...p,
     clips: p.clips.filter((_, i) => i !== index).map((x) => (x.at >= end - 1e-6 ? { ...x, at: Math.max(0, Math.round((x.at - dur) * 100) / 100) } : x)),
   }));
-  set({ popup: false });
+  set({ drawer: null, cropMode: false });
+}
+
+/** The look the last text was made with: the next new text starts from it. */
+export interface TextStyle {
+  color: string;
+  font: string;
+}
+export function loadTextStyle(): TextStyle {
+  try {
+    const raw = localStorage.getItem('pocket-cut-nla:text-style');
+    if (raw) {
+      const o = JSON.parse(raw) as Partial<TextStyle>;
+      return { color: typeof o.color === 'string' ? o.color : '#ffffff', font: typeof o.font === 'string' ? o.font : 'sans' };
+    }
+  } catch {
+    /* defaults */
+  }
+  return { color: '#ffffff', font: 'sans' };
+}
+function saveTextStyle(t: TextStyle): void {
+  try {
+    localStorage.setItem('pocket-cut-nla:text-style', JSON.stringify(t));
+  } catch {
+    /* ignore */
+  }
 }
 
 /** Makes a text clip (or, with `editIndex`, changes the text of an existing one). */
-export async function addText(text: string, color: string, editIndex: number | null): Promise<void> {
+export async function addText(text: string, color: string, font: string, editIndex: number | null): Promise<void> {
   const clean = text.trim();
   if (!clean) return;
-  const r = await renderText(clean, color);
+  saveTextStyle({ color, font });
+  const r = await renderText(clean, color, font);
   const id = newId();
   registerMedia(id, r.blob, null, { name: clean.slice(0, 24), bitmap: r.bitmap });
-  const info: MediaInfo = { id, name: clean.split('\n')[0]!.slice(0, 24), duration: IMAGE_MAX_SECONDS, width: r.width, height: r.height, hasAudio: false, kind: 'image', text: clean, textColor: color };
+  const info: MediaInfo = { id, name: clean.split('\n')[0]!.slice(0, 24), duration: IMAGE_MAX_SECONDS, width: r.width, height: r.height, hasAudio: false, kind: 'image', text: clean, textColor: color, textFont: font };
   void saveMedia(id, { blob: r.blob, name: info.name, thumb: null });
   if (editIndex !== null && state.project.clips[editIndex]) {
     edit((p) => ({ ...p, media: { ...p.media, [id]: info }, clips: p.clips.map((c, i) => (i === editIndex ? { ...c, mediaId: id } : c)) }));
@@ -451,7 +485,7 @@ export async function discardProject(): Promise<void> {
   dropAllMedia();
   await clearSaved();
   clearHistory();
-  set({ project: freshProject(), selected: 0, playhead: 0, playing: false, sheet: 'none', tool: 'trim' });
+  set({ project: freshProject(), selected: 0, playhead: 0, playing: false, sheet: 'none', tool: 'speed' });
 }
 
 let saveTimer = 0;
@@ -482,3 +516,22 @@ setProxyOrder(() => {
   const sel = ids[state.selected];
   return sel ? [sel, ...ids.filter((i) => i !== sel)] : ids;
 });
+
+// ---------- gaps ----------
+
+/** Closes the picked gap: later clips move earlier, and the ones that would collide hop to the next free lane. */
+export function removeGap(): void {
+  const g = state.gap;
+  if (!g) return;
+  const sel = state.project.clips[state.selected]?.id;
+  edit((p) => ({ ...p, clips: removeGapFrom(p.clips, g) }));
+  const i = state.project.clips.findIndex((c) => c.id === sel);
+  set({ gap: null, gapMenu: false, selected: i >= 0 ? i : 0 });
+}
+
+// ---------- crop ----------
+
+export function setCrop(index: number, crop: Clip['crop']): void {
+  const empty = !crop || (crop.l <= 0 && crop.t <= 0 && crop.r <= 0 && crop.b <= 0);
+  updateClip(index, { crop: empty ? undefined : crop });
+}

@@ -11,9 +11,10 @@ Ever tried to send a video to Discord and been greeted by the **5 MB limit**? Or
 seconds out of a clip and ended up downloading a 2 GB video editor you will never open again? Or
 wanted to post a long video as Stories, only to find it cut off at the wrong second?
 
-Pocket Cut is for those moments. It is a quick-edit tool, not a CapCut or VN clone: **trim, speed up,
-place, join** clips and pictures, shrink them to a size that fits, and **export as several files of a
-fixed length** (for example 60-second parts for Instagram Stories). It stays small on purpose.
+Pocket Cut started as exactly that: a tiny quick-edit tool. This branch drifted far past it. It is now a
+**multi-lane non-linear editor (NLE)** that fits on a phone and weighs next to nothing: stack videos,
+pictures, text and sound on layers, place them freely in time, and export as one file or as several files of a
+fixed length (for example 60-second parts for Instagram Stories).
 
 Runs entirely in the browser. No account, no upload, no watermark, no ads.
 
@@ -22,11 +23,12 @@ Runs entirely in the browser. No account, no upload, no watermark, no ads.
 It works as a normal web page. Installing it as an app is optional: that only adds offline use and
 full-screen mode.
 
-> **Experimental `nla` build.** This branch replaces the one-after-another clip list with a multi-lane timeline (layers of video and pictures, a sound lane, free placement in time). It is published next to the normal app at `/nla/` and keeps its own saved data.
+> **Experimental NLE build (branch `nla`).** This branch replaces the one-after-another clip list with a multi-lane timeline. It is published next to the normal app at `/nla/` and keeps its own saved data. The main app stays the simple clip-sequence editor.
 
 ## Install on your phone (optional)
 
-- **Android (Chrome):** menu → Install app.
+- **Android (Chrome):** the Install button on the welcome screen, or menu → Install app.
+- **Computer (Chrome / Edge):** the install icon in the address bar, or the Install button on the welcome screen.
 - **iPhone / iPad (Safari):** Share → Add to Home Screen. If you use it often, do this rather than keeping a
   normal tab: Safari deletes the stored data of websites you haven't opened for 7 days, but as far as is
   known not that of Home Screen apps.
@@ -37,13 +39,16 @@ After the first visit it works with no connection.
 
 | | |
 |---|---|
-| Trim | Drag the yellow ends of the bar; drag elsewhere on the bar to look around; hold still while dragging for fine control. The scissors button cuts a clip in two. |
+| Timeline | Lanes of strips; the yellow line is fixed and the timeline scrolls under it. Pinch to zoom. Higher lanes draw on top. Hold a strip to lift it, then drag it in time or to another lane; it snaps to its neighbors. Drag the handles of the selected strip to trim; hold still for fine control. |
+| Gaps | Tap empty space between strips to pick the gap, tap again for **Remove gap**: everything after it moves earlier, and anything that would collide hops to the next free lane. |
+| Tabs | Speed, Sound, Look and Clip tabs under the timeline raise a drawer over the lower part of the timeline. |
 | Speed | A snapping slider from 0.25× to 4×. The voice keeps its pitch, or follows the speed if you prefer. |
-| Place | Drag, pinch and twist the clip right on the preview, like an Instagram story: free move, zoom and turn, with snapping to the center, quarter turns, "fits" and "fills". Black bars appear where the picture does not cover the canvas. |
-| Join | Add several videos and pictures. Press and hold a thumbnail to turn, reset, copy or delete it; the Order tab moves it earlier or later. Undo and redo are in the header. A picture shows for 5 s by default (changeable in Settings). |
-| Export | MP4, 480p / 720p / 1080p, 24 / 30 / 60 fps. Choose the canvas shape with the button at the top (9:16, 4:5, 1:1 or 16:9; a new project picks the one closest to its first clip). Your last export settings are remembered. |
-| Quality | Low, Balanced, High, or Custom with a bitrate slider (1 to 20 Mbps) and a size estimate. The number is a target: simple pictures usually come out smaller. |
-| **Split** | Off (default), 15 s, 30 s, 60 s or a custom length. Optionally make all parts the same length. Parts are cut on exact frame boundaries, so nothing is lost or repeated at the seams. |
+| Look | Opacity, brightness, contrast, color and warmth, per clip, for video and pictures (needs WebGL). |
+| Place and crop | Drag, pinch and twist the clip on the preview, with snapping to the center, edges, quarter turns, "fits" and "fills"; up to 90% of it can leave the frame. Tap once for four crop handles. |
+| Text | Several fonts and colors; the next text starts from the last style you used. Text is a picture like any other. |
+| Sound | Several sound lanes (mp3, m4a, wav), volume and mute per clip, and the sound of videos is mixed in. |
+| Canvas | 9:16, 4:5, 1:1, 5:4 or 16:9, and a background color. |
+| Export | MP4, 480p / 720p / 1080p, 24 / 30 / 60 fps, quality presets or a bitrate, optional split into equal or fixed-length parts. Your last export settings are remembered. |
 
 Your last project (with the original videos) is kept on the device until you delete it in the settings.
 

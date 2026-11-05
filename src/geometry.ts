@@ -1,4 +1,4 @@
-import type { AspectChoice, Project, View } from './types.ts';
+import type { AspectChoice, Crop, Project, View } from './types.ts';
 
 export const IDENTITY_VIEW: View = { x: 0, y: 0, zoom: 1, rot: 0 };
 export const MIN_ZOOM = 0.1;
@@ -18,6 +18,15 @@ export interface DrawOptions {
   view: View;
   /** false: draw on top of what is already there (layers) instead of starting from black */
   keepBackground?: boolean;
+  /** color to start from when keepBackground is false (default black) */
+  background?: string;
+  /** 0..1, how opaque the picture is drawn */
+  alpha?: number;
+  /** sides cut off the picture (fractions of its size) */
+  crop?: Crop;
+  /** real pixel size of `src` when it differs from sw x sh (a shrunk copy) */
+  srcW?: number;
+  srcH?: number;
 }
 
 export interface FrameTransform {
@@ -50,17 +59,31 @@ export function drawFrame(ctx: Ctx2D, src: CanvasImageSource, sw: number, sh: nu
   const t = frameTransform(sw, sh, o);
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   if (!o.keepBackground) {
-    ctx.fillStyle = '#000';
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = o.background ?? '#000';
     ctx.fillRect(0, 0, o.outW, o.outH);
   }
   ctx.save();
+  ctx.globalAlpha = o.alpha ?? 1;
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = 'high';
   ctx.translate(t.tx, t.ty);
   ctx.rotate(t.angle);
   ctx.scale(t.scale, t.scale);
-  ctx.drawImage(src, -sw / 2, -sh / 2, sw, sh);
+  const c = o.crop;
+  if (c && (c.l > 0 || c.t > 0 || c.r > 0 || c.b > 0)) {
+    const pw = o.srcW ?? sw;
+    const ph = o.srcH ?? sh;
+    const l = Math.min(0.98, Math.max(0, c.l));
+    const t = Math.min(0.98, Math.max(0, c.t));
+    const r = Math.min(0.98 - l, Math.max(0, c.r));
+    const b = Math.min(0.98 - t, Math.max(0, c.b));
+    ctx.drawImage(src, l * pw, t * ph, (1 - l - r) * pw, (1 - t - b) * ph, -sw / 2 + l * sw, -sh / 2 + t * sh, (1 - l - r) * sw, (1 - t - b) * sh);
+  } else {
+    ctx.drawImage(src, -sw / 2, -sh / 2, sw, sh);
+  }
   ctx.restore();
+  ctx.globalAlpha = 1;
 }
 
 /** Normalizes degrees to (-180, 180]. */
@@ -182,9 +205,26 @@ export function snapView(raw: View, e: SnapEnv): Snap {
   return out;
 }
 
-/** Keeps the picture's center on the canvas, so it can never be dragged out of reach. */
-export function clampView(v: View): View {
-  return { ...v, x: Math.min(0.5, Math.max(-0.5, v.x)), y: Math.min(0.5, Math.max(-0.5, v.y)), zoom: clampZoom(v.zoom) };
+/** How much of the picture (share of its box, per axis) must stay inside the frame: 10% = up to 90% can be out. */
+export const MIN_VISIBLE = 0.1;
+
+/**
+ * Keeps at least a sliver of the picture inside the frame, so it can never be dragged out of reach.
+ * With `env` the limit follows the picture (up to 90% of it may leave); without, the center stays on the canvas.
+ */
+export function clampView(v: View, env?: { sw: number; sh: number; W: number; H: number }): View {
+  const zoom = clampZoom(v.zoom);
+  let mx = 0.5;
+  let my = 0.5;
+  if (env) {
+    const b = turnedBox(env.sw, env.sh, v.rot);
+    const sc = baseScale(env.sw, env.sh, env.W, env.H) * zoom;
+    const hw = (b.w * sc) / 2;
+    const hh = (b.h * sc) / 2;
+    mx = (env.W / 2 + hw * (1 - 2 * MIN_VISIBLE)) / env.W;
+    my = (env.H / 2 + hh * (1 - 2 * MIN_VISIBLE)) / env.H;
+  }
+  return { ...v, x: Math.min(mx, Math.max(-mx, v.x)), y: Math.min(my, Math.max(-my, v.y)), zoom };
 }
 
 /** Picture size after the nearest quarter turn: decides the shape of the "Auto" canvas. */

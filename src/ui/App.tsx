@@ -8,7 +8,7 @@ import { ExportSheet } from './ExportSheet.tsx';
 import { Gear, Help, Plus, Redo, Undo } from './icons.tsx';
 import { FilePicker, PickLabel } from './Picker.tsx';
 import { Preview } from './Preview.tsx';
-import { ClipPopup } from './ClipPopup.tsx';
+import { Drawer, TabBar } from './Drawer.tsx';
 import { TextSheet } from './TextSheet.tsx';
 import { SettingsSheet } from './SettingsSheet.tsx';
 import { Timeline } from './Timeline.tsx';
@@ -25,7 +25,6 @@ export function App() {
   const sheet = useStore((s) => s.sheet);
   const busy = useStore((s) => s.busy);
   const toast = useStore((s) => s.toast);
-  const popup = useStore((s) => s.popup);
   const [tlH, setTlH] = useState(() => {
     try {
       return Number(localStorage.getItem('pocket-cut-nla:tl-height')) || 200;
@@ -93,6 +92,8 @@ export function App() {
           <Preview />
           <Splitter />
           <Timeline />
+          <TabBar />
+          <Drawer />
         </main>
       ) : (
         <Empty />
@@ -102,7 +103,6 @@ export function App() {
       {sheet === 'help' && <HelpSheet onClose={() => set({ sheet: 'none' })} />}
       {sheet === 'canvas' && <CanvasSheet onClose={() => set({ sheet: 'none' })} />}
       {sheet === 'text' && <TextSheet onClose={() => set({ sheet: 'none' })} />}
-      {popup && hasClips && <ClipPopup />}
       {sheet === 'settings' && <SettingsSheet onClose={() => set({ sheet: 'none' })} />}
 
       {toast && (
@@ -132,8 +132,8 @@ function Empty() {
         <i />
         <i />
       </div>
-      <h1>Quick edits for your videos and pictures</h1>
-      <p>Trim, speed up, place and join clips. It all happens on this device, with no upload and no watermark.</p>
+      <h1>A full video editor that fits in your pocket</h1>
+      <p>Stack videos, pictures, text and sound on layers, then trim, crop, grade and time them on a real timeline. Everything happens on this device: no upload, no account, no watermark.</p>
       <PickLabel class="cta">
         <Plus /> Choose videos or pictures
       </PickLabel>
@@ -159,33 +159,37 @@ function Unsupported() {
   );
 }
 
-/** Shown on the welcome screen to people using it in a browser tab on a phone. */
+const isChromium = /Chrome\/|Edg\//.test(navigator.userAgent) && !isMobile;
+
+/** Shown on the welcome screen to people using it in a browser tab (phone, tablet or computer). */
 function InstallHint() {
   const [, tick] = useState(0);
   useEffect(() => onInstallChange(() => tick((n) => n + 1)), []);
-  if (isStandalone || !isMobile) return null;
+  if (isStandalone) return null;
+  const body = isIOS ? (
+    <ol>
+      <li>Open this page in Safari.</li>
+      <li>Tap the Share button.</li>
+      <li>Choose Add to Home Screen.</li>
+    </ol>
+  ) : canPromptInstall() ? (
+    <button class="btn" onClick={() => void promptInstall()}>
+      Install app
+    </button>
+  ) : isAndroid ? (
+    <ol>
+      <li>Open the browser menu (three dots).</li>
+      <li>Tap Install app or Add to Home screen.</li>
+    </ol>
+  ) : isChromium ? (
+    <p>Look for the install icon at the right end of the address bar, or open the browser menu and choose Install.</p>
+  ) : null;
+  if (!body) return null;
   return (
     <section class="install">
       <h2>Install it for the best experience</h2>
       <p>Installed, it opens full screen, works without internet and keeps your project safe.</p>
-      {isIOS ? (
-        <ol>
-          <li>Open this page in Safari.</li>
-          <li>Tap the Share button.</li>
-          <li>Choose Add to Home Screen.</li>
-        </ol>
-      ) : canPromptInstall() ? (
-        <button class="btn" onClick={() => void promptInstall()}>
-          Install app
-        </button>
-      ) : (
-        isAndroid && (
-          <ol>
-            <li>Open the browser menu (three dots).</li>
-            <li>Tap Install app or Add to Home screen.</li>
-          </ol>
-        )
-      )}
+      {body}
     </section>
   );
 }

@@ -1,7 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { IDENTITY_VIEW, baseScale, dragView, fillZoom, fitZoom, frameTransform, nearestAspect, snapEight, normAngle, outputSize, pinchView, quarterTurned, snapView } from '../src/geometry.ts';
-import { activeAt, endOfTrack, planParts, sourceAt, totalOf } from '../src/timeline.ts';
+import { IDENTITY_VIEW, baseScale, clampView, dragView, fillZoom, fitZoom, frameTransform, nearestAspect, snapEight, normAngle, outputSize, pinchView, quarterTurned, snapView } from '../src/geometry.ts';
+import { gradePixel } from '../src/layers.ts';
+import { activeAt, endOfTrack, gapAt, removeGap, planParts, sourceAt, totalOf } from '../src/timeline.ts';
 import { resample, timeStretch } from '../src/stretch.ts';
 import { MAX_MBPS, MIN_MBPS, RATE_STOPS, autoBitrate, estimateBytes, fmtMbps, videoBitrate } from '../src/bitrate.ts';
 import { emptyProject, type Clip } from '../src/types.ts';
@@ -235,4 +236,54 @@ test('snapView: sides of the picture catch on the sides of the frame', () => {
   const s = snapView({ x, y: 0.3, zoom: z, rot: 0 }, env);
   assert.ok(s.edge);
   assert.ok(Math.abs(s.view.x * 360 - (half - 180)) < 1e-9);
+});
+
+const mk = (id: string, at: number, dur: number, track: number): Clip => ({ id, mediaId: 'm', start: 0, end: dur, speed: 1, view: view(), volume: 1, keepPitch: true, at, track });
+
+test('gapAt: finds the empty stretch between two clips of a lane, not on a clip or after the last', () => {
+  const cs = [mk('a', 0, 2, 0), mk('b', 5, 2, 0)];
+  assert.deepEqual(gapAt(cs, 0, 3), { track: 0, from: 2, to: 5 });
+  assert.equal(gapAt(cs, 0, 1), null);
+  assert.equal(gapAt(cs, 0, 8), null);
+  assert.deepEqual(gapAt([mk('c', 4, 1, 0)], 0, 1), { track: 0, from: 0, to: 4 });
+});
+
+test('removeGap: later clips move earlier on every lane, collisions hop to the next free lane', () => {
+  // lane 0 has a 3 s gap (2..5). Lane 1: x (2..6) straddles the gap and stays, y (6..9) would land on 3..6 on top of x
+  const cs = [mk('a', 0, 2, 0), mk('b', 5, 2, 0), mk('x', 2, 4, 1), mk('y', 6, 3, 1)];
+  const out = removeGap(cs, { track: 0, from: 2, to: 5 });
+  const by = (id: string) => out.find((c) => c.id === id)!;
+  assert.equal(by('b').at, 2);
+  assert.equal(by('b').track, 0);
+  assert.equal(by('y').at, 3);
+  assert.equal(by('y').track, 2);
+  assert.equal(by('x').at, 2);
+  assert.equal(by('x').track, 1);
+  // sound lanes hop downwards
+  const au = [mk('v', 3, 1, 0), mk('p', 1, 4, -1), mk('q', 5, 1, -1)];
+  const o2 = removeGap(au, { track: 0, from: 0, to: 3 });
+  assert.equal(o2.find((c) => c.id === 'q')!.at, 2);
+  assert.equal(o2.find((c) => c.id === 'q')!.track, -2);
+  assert.equal(o2.find((c) => c.id === 'p')!.at, 1);
+});
+
+test('clampView: up to 90% of the picture may leave the frame', () => {
+  const env = { sw: 1000, sh: 1000, W: 360, H: 640 };
+  const v = clampView({ x: 5, y: 0, zoom: 1, rot: 0 }, env);
+  const half = 360 / 2; // the picture is 360 wide at zoom 1
+  // its center may sit W/2 + 0.8 * half away: 10% of its width stays in
+  close(v.x * 360, 180 + 0.8 * half);
+  // without an env the center stays on the canvas
+  close(clampView({ x: 5, y: 0, zoom: 1, rot: 0 }).x, 0.5);
+});
+
+test('gradePixel: zero grade is the identity, brightness and saturation behave', () => {
+  const g0 = { brightness: 0, contrast: 0, saturation: 0, warmth: 0 };
+  const px: [number, number, number] = [0.2, 0.5, 0.8];
+  gradePixel(px, g0).forEach((v, i) => close(v, px[i]!, 1e-9));
+  assert.deepEqual(gradePixel([0.5, 0.5, 0.5], { ...g0, saturation: -1 }).map((v) => +v.toFixed(6)), [0.5, 0.5, 0.5]);
+  const gray = gradePixel([1, 0, 0], { ...g0, saturation: -1 });
+  close(gray[0], gray[1]);
+  assert.ok(gradePixel([0.5, 0.5, 0.5], { ...g0, brightness: 0.4 })[0] > 0.6);
+  assert.ok(gradePixel([0.5, 0.5, 0.5], { ...g0, warmth: 0.5 })[0] > gradePixel([0.5, 0.5, 0.5], { ...g0, warmth: 0.5 })[2]);
 });

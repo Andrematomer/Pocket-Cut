@@ -17,7 +17,8 @@ import {
 } from 'mediabunny';
 import { videoBitrate } from './bitrate.ts';
 import { mediaBitmap } from './media.ts';
-import { drawFrame, outputSize } from './geometry.ts';
+import { outputSize } from './geometry.ts';
+import { drawLayer } from './layers.ts';
 import { resample, timeStretch } from './stretch.ts';
 import { awakeForJob } from './wake.ts';
 import { activeAt, clipDuration, planParts, sourceAt, sourceTimeAt, totalOf, type Part } from './timeline.ts';
@@ -270,7 +271,8 @@ export async function exportProject(
           if (signal.aborted) throw abortError();
           const t = (part.startFrame + j) / fps;
           ctx.setTransform(1, 0, 0, 1, 0, 0);
-          ctx.fillStyle = '#000';
+          ctx.globalAlpha = 1;
+          ctx.fillStyle = project.settings.background || '#000';
           ctx.fillRect(0, 0, outW, outH);
           const playing = activeAt(clips, t);
           // a reader whose clip is no longer on screen is done
@@ -285,8 +287,9 @@ export async function exportProject(
             const src = srcs.get(clip.mediaId)!;
             if (project.media[clip.mediaId]?.kind === 'audio') continue;
             const o = { outW, outH, view: clip.view, keepBackground: true };
+            const look = { opacity: clip.opacity, grade: clip.grade, crop: clip.crop };
             if (src.image) {
-              drawFrame(ctx, src.image, src.image.width, src.image.height, o);
+              drawLayer(ctx, src.image, src.image.width, src.image.height, look, o);
               continue;
             }
             const srcT = sourceAt(clip, t);
@@ -296,7 +299,7 @@ export async function exportProject(
               readers.set(clip.id, r);
             }
             const f = await r.at(srcT);
-            if (f) drawFrame(ctx, f.canvas, f.canvas.width, f.canvas.height, o);
+            if (f) drawLayer(ctx, f.canvas, f.canvas.width, f.canvas.height, look, o);
           }
           await vs.add(j / fps, 1 / fps);
           framesDone++;
