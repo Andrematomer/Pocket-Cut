@@ -34,7 +34,7 @@ jobs:
         run: |
           if git ls-remote --exit-code --heads origin nla >/dev/null 2>&1; then
             git worktree add ../nla-src origin/nla
-            (cd ../nla-src && npm ci && npm test && npx vite build --outDir "$GITHUB_WORKSPACE/dist/nla" --emptyOutDir)
+            (cd ../nla-src && npm ci && npm test && npx vite build --outDir "$GITHUB_WORKSPACE/dist/nla" --emptyOutDir && git rev-parse --short HEAD > "$GITHUB_WORKSPACE/dist/nla/build.txt")
           fi
       - uses: actions/upload-pages-artifact@v3
         with:
