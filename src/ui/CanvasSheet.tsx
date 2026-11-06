@@ -1,5 +1,6 @@
 import { setSettings, useStore } from '../store.ts';
 import type { AspectChoice } from '../types.ts';
+import { Hint } from './Hint.tsx';
 import { Sheet } from './Sheet.tsx';
 
 export const ASPECT_LABEL: Record<AspectChoice, string> = { '9:16': '9:16', '4:5': '4:5', '1:1': '1:1', '5:4': '5:4', '16:9': '16:9' };
@@ -20,7 +21,7 @@ export function CanvasSheet({ onClose }: { onClose: () => void }) {
             </button>
           ))}
         </div>
-        <p class="hint">The shape of the exported video. It starts with the shape that suits your first clip. Move, zoom and turn each clip right on the preview to place it.</p>
+        <Hint>The shape of the exported video. It starts with the shape that suits your first clip. Move, zoom and turn each clip right on the preview to place it.</Hint>
       </section>
       <section>
         <h3>Background color</h3>
@@ -29,7 +30,7 @@ export function CanvasSheet({ onClose }: { onClose: () => void }) {
             <input type="color" value={bg} onInput={(e) => setSettings({ background: (e.currentTarget as HTMLInputElement).value })} />
           </label>
         </div>
-        <p class="hint">Tap the swatch to open your system's color picker. The color shows wherever no picture covers the canvas, in the preview and in the export.</p>
+        <Hint>Tap the swatch to open your system's color picker. The color shows wherever no picture covers the canvas, in the preview and in the export.</Hint>
       </section>
       <button class="cta" onClick={onClose}>
         Done

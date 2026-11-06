@@ -11,7 +11,7 @@ import { Pause, Play, Plus, Trash } from './icons.tsx';
 const HOLD_MS = 350; // hold a strip this long (without moving) to pick it up
 const WOBBLE = 10;
 const EDGE = 44; // px from the edge of the timeline where dragging starts to scroll it
-const ROW = 38;
+const ROW0 = 38;
 const GAP = 4;
 const RULER = 22;
 const SNAP_PX = 8;
@@ -75,9 +75,12 @@ export function Timeline() {
   const swallow = useRef(false);
 
   const lanes = lanesFor(clips);
+  const rowScale = useStore((s) => s.prefs.rowScale);
+  const ROW = Math.round(ROW0 * rowScale);
   const total = totalOf(clips);
   const padL = Math.round(viewW / 3);
-  const width = padL + total * pps + viewW;
+  const extent = Math.max(total, move ? move.at + (clips[move.index] ? clipDuration(clips[move.index]!) : 0) : 0);
+  const width = extent * pps + viewW;
   const height = RULER + lanes.length * (ROW + GAP) + 6;
   const live = useRef({ clips, pps, lanes, playhead, media, padL, height });
   live.current = { clips, pps, lanes, playhead, media, padL, height };
@@ -352,7 +355,7 @@ export function Timeline() {
               <div class="add-scrim" onPointerDown={() => setMenu(false)} />
               <div class="add-menu" role="menu">
                 <PickLabel class="add-item" label="Add videos, pictures or sound">
-                  <span onClick={() => setMenu(false)}>Media</span>
+                  <span onClick={() => window.setTimeout(() => setMenu(false), 600)}>Media</span>
                 </PickLabel>
                 <button
                   role="menuitem"
@@ -372,7 +375,7 @@ export function Timeline() {
                     void addSolid('#2f6fed');
                   }}
                 >
-                  Empty
+                  Color
                 </button>
               </div>
             </>
@@ -444,7 +447,7 @@ export function Timeline() {
                     else selectClip(i);
                   }}
                 >
-                  {url && !m?.text && <span class="strip-thumb" style={{ backgroundImage: `url("${url}")` }} />}
+                  {url && !m?.text && <span class="strip-thumb" style={{ backgroundImage: `url("${url}")`, backgroundPosition: `${-(at - c.at) * pps}px center` }} />}
                   <span class="strip-label num">
                     {c.speed !== 1 ? `${c.speed}× · ` : ''}
                     {audio || m?.text || m?.solid ? (m?.name ?? '') : fmtTime((end - start) / c.speed)}

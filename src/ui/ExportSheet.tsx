@@ -8,6 +8,7 @@ import { blobFor, setName, setSettings, useStore } from '../store.ts';
 import { fmtTime, planParts, totalOf } from '../timeline.ts';
 import type { ExportSettings } from '../types.ts';
 import { Check, Download, Share } from './icons.tsx';
+import { Hint } from './Hint.tsx';
 import { Sheet } from './Sheet.tsx';
 import { Slider } from './Slider.tsx';
 
@@ -43,6 +44,7 @@ export function ExportSheet({ onClose }: { onClose: () => void }) {
   const project = useStore((s) => s.project);
   const [phase, setPhase] = useState<Phase>({ name: 'setup' });
   const [custom, setCustom] = useState(false);
+  const [customFps, setCustomFps] = useState(() => ![24, 30, 60].includes(project.settings.fps));
   const [customRate, setCustomRate] = useState(() => project.settings.bitrateMbps !== null);
   const abort = useRef<AbortController | null>(null);
   const [note, setNote] = useState('');
@@ -137,7 +139,26 @@ export function ExportSheet({ onClose }: { onClose: () => void }) {
                 { label: '480p', value: 480 },
               ]}
             />
-            <Chips<ExportSettings['fps']> label="Frame rate" value={s.fps} onPick={(v) => setN({ fps: v })} options={[{ label: '24 fps', value: 24 }, { label: '30 fps', value: 30 }, { label: '60 fps', value: 60 }]} />
+          </section>
+
+          <section>
+            <h3>Frame rate</h3>
+            <div class="chips" role="group" aria-label="Frame rate">
+              {[24, 30, 60].map((n) => (
+                <button key={n} class={`chip num ${!customFps && s.fps === n ? 'on' : ''}`} aria-pressed={!customFps && s.fps === n} onClick={() => (setCustomFps(false), setN({ fps: n }))}>
+                  {n} fps
+                </button>
+              ))}
+              <button class={`chip ${customFps ? 'on' : ''}`} aria-pressed={customFps} onClick={() => setCustomFps(true)}>
+                Custom
+              </button>
+            </div>
+            {customFps && (
+              <div class="rate-slider">
+                <div class="rate-now num">{s.fps} fps</div>
+                <Slider label="Frame rate" value={s.fps} min={1} max={60} step={1} fineStep={1} valueText={`${s.fps} frames per second`} onChange={(v) => setN({ fps: Math.max(1, Math.min(60, Math.round(v))) })} />
+              </div>
+            )}
           </section>
 
           <section>
@@ -165,10 +186,10 @@ export function ExportSheet({ onClose }: { onClose: () => void }) {
                 <Slider label="Video bitrate" value={s.bitrateMbps} min={RATE_STOPS[0]} max={RATE_STOPS[RATE_STOPS.length - 1]!} snaps={RATE_STOPS} snapAlways step={1} fineStep={0.1} valueText={`${s.bitrateMbps} megabits per second`} onChange={(v) => setN({ bitrateMbps: Math.round(v * 10) / 10 })} />
               </div>
             )}
-            <p class="hint num">
+            <Hint num>
               {size.w}×{size.h}, MP4{showSlider ? ` · ${fmtMbps(vbps)}` : ''}
               {longest > 0 && ` · up to about ${fmtBytes(estimateBytes(vbps, longest, withSound))}${parts.length > 1 ? ' per file' : ''}`}
-            </p>
+            </Hint>
           </section>
 
           <button class="cta" onClick={run} disabled={parts.length === 0}>

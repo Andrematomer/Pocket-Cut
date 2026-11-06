@@ -36,7 +36,7 @@ export interface State {
   /** the selected strip shows its trim handles */
   handles: boolean;
   /** the crop handles are shown on the preview */
-  cropMode: boolean;
+  boxMode: boolean;
   /** the text clip being edited (index), or null when a new text is being made */
   textEdit: number | null;
   /** 0..1 per media id while its preview copy is waiting or being made */
@@ -54,9 +54,13 @@ export interface AppPrefs {
   previewLong: number;
   /** keep the screen on: always, only while exporting / making preview copies, or never */
   awake: 'on' | 'work' | 'off';
+  /** what playback does at the end of the timeline */
+  onEnd: 'pause' | 'stop' | 'loop';
+  /** height of the strips on the timeline, 1 = normal */
+  rowScale: number;
 }
 
-export const DEFAULT_PREFS: AppPrefs = { imageSeconds: 5, previewLong: 240, awake: 'work' };
+export const DEFAULT_PREFS: AppPrefs = { imageSeconds: 5, previewLong: 240, awake: 'work', onEnd: 'pause', rowScale: 1 };
 
 function loadAppPrefs(): AppPrefs {
   try {
@@ -82,7 +86,7 @@ let state: State = {
   drawer: null,
   gap: null,
   handles: false,
-  cropMode: false,
+  boxMode: false,
   textEdit: null,
   proxyProgress: {},
   prefs: loadAppPrefs(),
@@ -273,7 +277,7 @@ export function selectClip(index: number): void {
   const c = state.project.clips[index];
   if (!c) return;
   const inside = state.playhead >= c.at - 1e-6 && state.playhead < clipEnd(c);
-  set({ selected: index, playhead: inside ? state.playhead : c.at, gap: null, handles: state.selected === index ? state.handles : false, cropMode: state.selected === index ? state.cropMode : false });
+  set({ selected: index, playhead: inside ? state.playhead : c.at, gap: null, handles: state.selected === index ? state.handles : false, boxMode: state.selected === index ? state.boxMode : false });
 }
 
 export function duplicateClip(index: number): void {
@@ -294,7 +298,7 @@ export function deleteClip(index: number): void {
     ...p,
     clips: p.clips.filter((_, i) => i !== index).map((x) => (x.at >= end - 1e-6 ? { ...x, at: Math.max(0, Math.round((x.at - dur) * 100) / 100) } : x)),
   }));
-  set({ drawer: null, cropMode: false, handles: false });
+  set({ drawer: null, boxMode: false, handles: false });
 }
 
 /** The look the last text was made with: the next new text starts from it. */
@@ -334,7 +338,7 @@ async function textMedia(text: string, st: TextStyle): Promise<MediaInfo> {
   registerMedia(id, r.blob, null, { name: text.slice(0, 24), bitmap: r.bitmap });
   const name = text.split('\n')[0]!.slice(0, 24) || 'Text';
   void saveMedia(id, { blob: r.blob, name, thumb: null });
-  return { id, name, duration: IMAGE_MAX_SECONDS, width: r.width, height: r.height, hasAudio: false, kind: 'image', text, textColor: st.color, textFont: st.font, textOutline: st.outline, textWidth: st.width };
+  return { id, name, duration: IMAGE_MAX_SECONDS, width: r.width, height: r.height, hasAudio: false, kind: 'image', text, textColor: st.color, textFont: st.font, textOutline: st.outline, textWidth: st.width, textScale: r.scale };
 }
 
 /** A new text ("Text", in the last used style) at the position marker, on the first free lane from 0 up. */
@@ -365,20 +369,20 @@ export function editText(index: number, patch: Partial<TextStyle> & { text?: str
     const cur = state.project.clips[now];
     if (!cur) return;
     const out = outputSize(state.project);
-    const keep = baseScale(m.width, m.height, out.w, out.h) / baseScale(info.width, info.height, out.w, out.h);
+    const keep = (baseScale(m.width, m.height, out.w, out.h) * (m.textScale ?? 1)) / (baseScale(info.width, info.height, out.w, out.h) * (info.textScale ?? 1));
     saveTextStyle(st);
     edit((p) => ({ ...p, media: { ...p.media, [info.id]: info }, clips: p.clips.map((x, i) => (i === now ? { ...x, mediaId: info.id, view: { ...x.view, zoom: x.view.zoom * keep } } : x)) }), { key: `text:${c.id}` });
   });
   return chain;
 }
 
-/** A flat color picture ("empty"), the length of a picture, at the position marker. */
+/** A flat color picture ("color"), the length of a picture, at the position marker. */
 export async function addSolid(color: string): Promise<void> {
   const r = await renderSolid(color);
   const id = newId();
-  registerMedia(id, r.blob, null, { name: 'Empty', bitmap: r.bitmap });
-  void saveMedia(id, { blob: r.blob, name: 'Empty', thumb: null });
-  const info: MediaInfo = { id, name: 'Empty', duration: IMAGE_MAX_SECONDS, width: r.width, height: r.height, hasAudio: false, kind: 'image', solid: color };
+  registerMedia(id, r.blob, null, { name: 'Color', bitmap: r.bitmap });
+  void saveMedia(id, { blob: r.blob, name: 'Color', thumb: null });
+  const info: MediaInfo = { id, name: 'Color', duration: IMAGE_MAX_SECONDS, width: r.width, height: r.height, hasAudio: false, kind: 'image', solid: color };
   const dur = state.prefs.imageSeconds;
   const at = state.playhead;
   const track = freeTrack(state.project.clips, at, dur, 0);
@@ -397,8 +401,8 @@ export function setSolidColor(index: number, color: string): Promise<void> {
     if (!c || !m || m.solid === undefined) return;
     const r = await renderSolid(color);
     const id = newId();
-    registerMedia(id, r.blob, null, { name: 'Empty', bitmap: r.bitmap });
-    void saveMedia(id, { blob: r.blob, name: 'Empty', thumb: null });
+    registerMedia(id, r.blob, null, { name: 'Color', bitmap: r.bitmap });
+    void saveMedia(id, { blob: r.blob, name: 'Color', thumb: null });
     const info: MediaInfo = { ...m, id, solid: color };
     const now = state.project.clips.findIndex((x) => x.id === c.id);
     if (now < 0) return;

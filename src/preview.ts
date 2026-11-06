@@ -12,6 +12,8 @@ export interface PreviewDeps {
   getBlob(mediaId: string): Blob | undefined;
   onTime(t: number): void;
   onPlaying(playing: boolean): void;
+  /** what to do when playback reaches the end */
+  getEnd(): 'pause' | 'stop' | 'loop';
 }
 
 const IOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
@@ -454,10 +456,14 @@ export class PreviewEngine {
     const total = totalOf(this.deps.getProject().clips);
     const tl = this.clockTl0 + (performance.now() - this.clockT0) / 1000;
     if (tl >= total) {
-      this.tl = total;
+      const mode = this.deps.getEnd();
+      this.tl = mode === 'pause' ? total : 0;
       this.stopPlaying();
-      this.draw();
-      this.deps.onTime(this.tl);
+      if (mode === 'pause') {
+        this.draw();
+        this.deps.onTime(this.tl);
+      } else if (mode === 'loop') void this.play();
+      else void this.showAt(0);
       return;
     }
     this.tl = tl;

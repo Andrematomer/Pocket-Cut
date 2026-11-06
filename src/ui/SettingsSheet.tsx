@@ -4,7 +4,9 @@ import { storageEstimate } from '../persist.ts';
 import { canPromptInstall, isIOS, isStandalone, promptInstall } from '../install.ts';
 import { discardProject, setPrefs, useStore } from '../store.ts';
 import { browserInfo, checkSupport } from '../support.ts';
+import { Hint } from './Hint.tsx';
 import { Sheet } from './Sheet.tsx';
+import { Slider } from './Slider.tsx';
 
 export function SettingsSheet({ onClose }: { onClose: () => void }) {
   const hasProject = useStore((s) => s.project.clips.length > 0);
@@ -47,7 +49,7 @@ export function SettingsSheet({ onClose }: { onClose: () => void }) {
             </button>
           ))}
         </div>
-        <p class="hint">Videos are previewed from a small copy so editing stays smooth. Pick a lower number if the preview stutters on an older phone. The exported video always uses the originals.</p>
+        <Hint>Videos are previewed from a small copy so editing stays smooth. Pick a lower number if the preview stutters on an older phone. The exported video always uses the originals.</Hint>
       </section>
 
       <section>
@@ -59,15 +61,36 @@ export function SettingsSheet({ onClose }: { onClose: () => void }) {
             </button>
           ))}
         </div>
-        <p class="hint">"While working" keeps the screen awake only while a video is exporting or a preview copy is being made. With "Never", keep the app open and the phone awake yourself during exports.</p>
+        <Hint>"While working" keeps the screen awake only while a video is exporting or a preview copy is being made. With "Never", keep the app open and the phone awake yourself during exports.</Hint>
+      </section>
+
+      <section>
+        <h3>When playback ends</h3>
+        <div class="chips" role="group" aria-label="When playback ends">
+          {([['pause', 'Pause'], ['stop', 'Stop'], ['loop', 'Loop']] as const).map(([v, label]) => (
+            <button key={v} class={`chip ${prefs.onEnd === v ? 'on' : ''}`} aria-pressed={prefs.onEnd === v} onClick={() => setPrefs({ onEnd: v })}>
+              {label}
+            </button>
+          ))}
+        </div>
+        <Hint>Pause stays on the last frame. Stop goes back to the start. Loop plays again from the start.</Hint>
+      </section>
+
+      <section>
+        <h3>Timeline strip height</h3>
+        <div class="rate-slider">
+          <div class="rate-now num">{Math.round(prefs.rowScale * 100)}%</div>
+          <Slider label="Timeline strip height" value={prefs.rowScale} min={0.5} max={2} step={0.05} fineStep={0.01} snaps={[1]} snapPx={14} valueText={`${Math.round(prefs.rowScale * 100)} percent`} onChange={(v) => setPrefs({ rowScale: Math.round(v * 100) / 100 })} />
+        </div>
+        <Hint>Makes the strips on the timeline thinner or taller. Thin strips help when you work with many layers.</Hint>
       </section>
 
       <section>
         <h3>Saved project</h3>
-        <p class="hint">
+        <Hint>
           Your last project (including the original videos) is kept on this device until you delete it. Nothing is ever uploaded.
           {usage && <span class="num"> Using {fmtBytes(usage.used)} of roughly {fmtBytes(usage.quota)} available.</span>}
-        </p>
+        </Hint>
         {!confirm ? (
           <button class="btn danger" disabled={!hasProject} onClick={() => setConfirm(true)}>
             Delete saved project
@@ -105,13 +128,13 @@ export function SettingsSheet({ onClose }: { onClose: () => void }) {
 
       <section>
         <h3>Offline</h3>
-        <p class="hint">{offline ? 'Ready to work without a connection.' : 'Open the app once while online. After that it works offline.'}</p>
+        <Hint>{offline ? 'Ready to work without a connection.' : 'Open the app once while online. After that it works offline.'}</Hint>
         {!isStandalone && canPromptInstall() && (
           <button class="btn" onClick={() => void promptInstall()}>
             Install app
           </button>
         )}
-        {!isStandalone && isIOS && <p class="hint">To install on iPhone or iPad: tap Share, then Add to Home Screen.</p>}
+        {!isStandalone && isIOS && <Hint>To install on iPhone or iPad: tap Share, then Add to Home Screen.</Hint>}
       </section>
     </Sheet>
   );

@@ -24,6 +24,8 @@ export interface MediaInfo {
   /** outline around the text: color and thickness (0 = none) */
   textOutline?: string;
   textWidth?: number;
+  /** how many bitmap pixels one unit of the 120 px font takes (text is drawn larger so it stays sharp when scaled up) */
+  textScale?: number;
   /** set when the picture is a plain color (an "empty" clip) */
   solid?: string;
 }
@@ -72,7 +74,8 @@ export interface ExportSettings {
   aspect: AspectChoice;
   /** length of the shorter output side in pixels */
   resolution: 480 | 720 | 1080;
-  fps: 24 | 30 | 60;
+  /** frames per second, 1 to 60 */
+  fps: number;
   quality: 'small' | 'medium' | 'high';
   /** target video bitrate in Mbps; null = pick from the quality preset */
   bitrateMbps: number | null;

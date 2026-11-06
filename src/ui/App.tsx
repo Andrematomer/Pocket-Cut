@@ -22,6 +22,21 @@ export function App() {
   const canRedo = useStore((s) => s.canRedo);
   const aspect = useStore((s) => s.project.settings.aspect);
   const sheet = useStore((s) => s.sheet);
+  // a closed sheet stays for a moment so it can slide out
+  const [lastSheet, setLastSheet] = useState<typeof sheet>('none');
+  const [leaving, setLeaving] = useState(false);
+  useEffect(() => {
+    if (sheet !== 'none') {
+      setLastSheet(sheet);
+      setLeaving(false);
+      return;
+    }
+    if (lastSheet === 'none') return;
+    setLeaving(true);
+    const id = window.setTimeout(() => (setLastSheet('none'), setLeaving(false)), 190);
+    return () => clearTimeout(id);
+  }, [sheet]);
+  const shownSheet = sheet !== 'none' ? sheet : lastSheet;
   const busy = useStore((s) => s.busy);
   const toast = useStore((s) => s.toast);
   const [tlH, setTlH] = useState(() => {
@@ -98,10 +113,13 @@ export function App() {
         <Empty />
       )}
 
-      {sheet === 'export' && <ExportSheet onClose={() => set({ sheet: 'none' })} />}
-      {sheet === 'help' && <HelpSheet onClose={() => set({ sheet: 'none' })} />}
-      {sheet === 'canvas' && <CanvasSheet onClose={() => set({ sheet: 'none' })} />}
-      {sheet === 'settings' && <SettingsSheet onClose={() => set({ sheet: 'none' })} />}
+      <div class={leaving ? 'sheet-out' : 'sheet-host'}>
+      {shownSheet === 'export' && <ExportSheet onClose={() => set({ sheet: 'none' })} />}
+      {shownSheet === 'help' && <HelpSheet onClose={() => set({ sheet: 'none' })} />}
+      {shownSheet === 'canvas' && <CanvasSheet onClose={() => set({ sheet: 'none' })} />}
+      {shownSheet === 'settings' && <SettingsSheet onClose={() => set({ sheet: 'none' })} />}
+
+      </div>
 
       {toast && (
         <div class="toast" role="status">

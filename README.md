@@ -40,11 +40,11 @@ After the first visit it works with no connection.
 | | |
 |---|---|
 | Timeline | Lanes of strips; the yellow line is fixed and the timeline scrolls under it. Pinch to zoom. Higher lanes draw on top. Hold a strip to lift it, then drag it in time or to another lane; it snaps to its neighbors. Drag the handles of the selected strip to trim; hold still for fine control. |
-| Gaps | Tap empty space between strips to pick the gap, tap again for **Remove gap**: everything after it moves earlier, and anything that would collide hops to the next free lane. |
+| Gaps | Tap empty space between strips to pick the gap (dark red), tap its trash can to remove it: everything after it moves earlier, and anything that would collide hops to the next free lane. |
 | Tabs | Speed, Sound, Look and Clip tabs under the timeline raise a drawer over the lower part of the timeline. |
 | Speed | A snapping slider from 0.25× to 4×. The voice keeps its pitch, or follows the speed if you prefer. |
 | Look | Opacity, brightness, contrast, color and warmth, per clip, for video and pictures (needs WebGL). |
-| Place and crop | Drag, pinch and twist the clip on the preview, with snapping to the center, edges, quarter turns, "fits" and "fills"; up to 90% of it can leave the frame. Tap once for four crop handles. |
+| Place and crop | Drag, pinch and twist the clip on the preview, with snapping to the center, edges, quarter turns, "fits" and "fills"; up to 90% of it can leave the frame. Tap once for a transform box (scale, turn, crop). |
 | Text | Several fonts and colors; the next text starts from the last style you used. Text is a picture like any other. |
 | Sound | Several sound lanes (mp3, m4a, wav), volume and mute per clip, and the sound of videos is mixed in. |
 | Canvas | 9:16, 4:5, 1:1, 5:4 or 16:9, and a background color. |

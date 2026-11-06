@@ -10,5 +10,6 @@ export const engine = new PreviewEngine({
   getBlob: mediaBlob,
   onTime: (t) => set({ playhead: t }),
   onPlaying: (playing) => set({ playing }),
+  getEnd: () => getState().prefs.onEnd,
 });
 

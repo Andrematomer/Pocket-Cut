@@ -1685,8 +1685,6 @@ label.cta {
 .tl-gap {
   position: absolute;
   z-index: 3;
-  display: grid;
-  place-items: center;
   border: 2px solid #8a4747;
   background: rgba(110, 48, 48, 0.55);
   border-radius: 6px;
@@ -1694,6 +1692,10 @@ label.cta {
 }
 .gap-trash {
   pointer-events: auto;
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
   width: 40px;
   height: 36px;
   display: grid;
@@ -1706,38 +1708,40 @@ label.cta {
 }
 /* trim handles: a wide invisible grab area that reaches past both ends of the strip */
 .trim-h {
-  width: 36px;
+  width: 58px;
+  top: -14px;
+  bottom: -14px;
   background: transparent;
 }
 .trim-h::before {
   content: '';
   position: absolute;
-  top: 0;
-  bottom: 0;
+  top: 14px;
+  bottom: 14px;
   width: 14px;
   background: var(--accent);
 }
 .trim-h.left {
-  left: -22px;
+  left: -40px;
   border-radius: 0;
 }
 .trim-h.left::before {
-  right: 0;
+  right: 4px;
   border-radius: 5px 0 0 5px;
 }
 .trim-h.left::after {
-  left: 29px;
+  left: 47px;
 }
 .trim-h.right {
-  right: -22px;
+  right: -40px;
   border-radius: 0;
 }
 .trim-h.right::before {
-  left: 0;
+  left: 4px;
   border-radius: 0 5px 5px 0;
 }
 .trim-h.right::after {
-  left: 7px;
+  left: 11px;
 }
 .strip-clip.on {
   overflow: visible;
@@ -1818,7 +1822,8 @@ label.cta {
 }
 .drawer {
   bottom: var(--tabbar-h);
-  height: min(300px, 44%);
+  height: auto;
+  max-height: calc(100% - 110px);
 }
 .drawer-scrim {
   bottom: var(--tabbar-h);
@@ -1829,4 +1834,190 @@ label.cta {
 .tab {
   min-width: 0;
   padding: 6px 2px 4px;
+}
+
+.sheet-body > * {
+  flex-shrink: 0;
+}
+
+.drawer.out {
+  animation: drawer-down 0.17s ease-in forwards;
+  pointer-events: none;
+}
+@keyframes drawer-down {
+  to {
+    transform: translateY(28px);
+    opacity: 0;
+  }
+}
+.color-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.swatch.custom {
+  width: 52px;
+  height: 52px;
+  border-radius: 14px;
+}
+
+/* sheets: choices are segmented buttons, explanations fold away */
+.sheet .chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  padding: 3px;
+  background: var(--raised);
+  border-radius: 14px;
+}
+.sheet .chips .chip {
+  flex: 1 1 0;
+  min-width: max-content;
+  border-radius: 11px;
+  background: transparent;
+  padding: 0 12px;
+}
+.sheet .chips .chip.on {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+.sheet .chips .swatch {
+  flex: none;
+}
+.more-btn {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+  padding: 2px 0;
+}
+.more .hint {
+  margin: 6px 0 0;
+}
+.sheet-host,
+.sheet-out {
+  display: contents;
+}
+.sheet-out .scrim {
+  animation: scrim-out 0.19s ease-in forwards;
+  pointer-events: none;
+}
+.sheet-out .sheet {
+  animation: sheet-out 0.19s ease-in forwards;
+}
+@keyframes scrim-out {
+  to {
+    opacity: 0;
+  }
+}
+@keyframes sheet-out {
+  to {
+    transform: translateY(32px);
+    opacity: 0;
+  }
+}
+.fold {
+  border-bottom: 1px solid var(--line);
+  padding: 2px 0;
+}
+.fold summary {
+  list-style: none;
+  cursor: pointer;
+  padding: 12px 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+  display: flex;
+  justify-content: space-between;
+}
+.fold summary::-webkit-details-marker {
+  display: none;
+}
+.fold summary::after {
+  content: '▾';
+  color: var(--muted);
+}
+.fold[open] summary::after {
+  content: '▴';
+}
+.fold p {
+  margin: 0 0 12px;
+}
+
+/* transform box on the preview */
+.frame {
+  overflow: visible;
+}
+.stage {
+  overflow: hidden;
+}
+.tbox {
+  position: absolute;
+  left: 0;
+  top: 0;
+  overflow: visible;
+  pointer-events: none;
+  z-index: 5;
+}
+.tbox polygon {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1.5;
+}
+.tbox line {
+  stroke: var(--accent);
+  stroke-width: 1.5;
+}
+.tbox-h {
+  position: absolute;
+  z-index: 6;
+  touch-action: none;
+}
+.tbox-h::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  background: var(--accent);
+  box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.55);
+}
+.tbox-h.corner {
+  width: 40px;
+  height: 40px;
+  margin: -20px 0 0 -20px;
+}
+.tbox-h.corner::after {
+  width: 13px;
+  height: 13px;
+  border-radius: 3px;
+}
+.tbox-h.rotor {
+  width: 40px;
+  height: 40px;
+  margin: -20px 0 0 -20px;
+}
+.tbox-h.rotor::after {
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+}
+.tbox-h.side.h {
+  width: 64px;
+  height: 36px;
+  margin: -18px 0 0 -32px;
+}
+.tbox-h.side.h::after {
+  width: 40px;
+  height: 6px;
+  border-radius: 6px;
+}
+.tbox-h.side.v {
+  width: 36px;
+  height: 64px;
+  margin: -32px 0 0 -18px;
+}
+.tbox-h.side.v::after {
+  width: 6px;
+  height: 40px;
+  border-radius: 6px;
 }
