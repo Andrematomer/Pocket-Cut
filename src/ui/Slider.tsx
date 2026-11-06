@@ -1,6 +1,6 @@
 import { useRef, useState } from 'preact/hooks';
 
-const HOLD_MS = 450;
+const HOLD_MS = 900; // as long as on the preview: too easy to trigger by accident otherwise
 const JITTER = 10;
 const FINE = 0.1;
 const GRAB = 32; // px: a finger this close to the thumb grabs it instead of jumping the thumb

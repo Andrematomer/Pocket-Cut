@@ -1,10 +1,11 @@
-import { useEffect } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import { engine } from '../engine.ts';
 import { NO_GRADE } from '../layers.ts';
-import { deleteClip, duplicateClip, set, setCrop, setSpeed, splitAtPlayhead, toast, updateClip, useStore, type Tool } from '../store.ts';
+import { deleteClip, duplicateClip, editText, set, setCrop, setSolidColor, setSpeed, splitAtPlayhead, toast, updateClip, useStore, type Tool } from '../store.ts';
+import { TEXT_COLORS, TEXT_FONTS, autoOutline } from '../text.ts';
 import { MAX_SPEED, MIN_SPEED, clipDuration, fmtTime } from '../timeline.ts';
-import type { Grade } from '../types.ts';
-import { Crop, Layers, Look, Mute, Sound, Speed, Split, Copy, Trash } from './icons.tsx';
+import type { Grade, MediaInfo } from '../types.ts';
+import { Copy, Crop, FontIcon, Layers, Look, Mute, OutlineIcon, Sound, Speed, Split, Swatch, TextIcon, Trash } from './icons.tsx';
 import { Slider } from './Slider.tsx';
 
 const SPEEDS = [0.25, 0.5, 0.75, 1, 1.5, 2, 3, 4];
@@ -18,46 +19,107 @@ interface TabDef {
   icon: () => preact.JSX.Element;
 }
 const TABS: TabDef[] = [
+  { key: 'text', name: 'Text', icon: TextIcon },
+  { key: 'color', name: 'Color', icon: Swatch },
+  { key: 'font', name: 'Font', icon: FontIcon },
+  { key: 'outline', name: 'Outline', icon: OutlineIcon },
   { key: 'speed', name: 'Speed', icon: Speed },
   { key: 'sound', name: 'Sound', icon: Sound },
   { key: 'look', name: 'Look', icon: Look },
   { key: 'clip', name: 'Clip', icon: Layers },
 ];
 
-/** which tabs make sense for the selected clip */
-function tabsFor(kind: string | undefined, hasSound: boolean): Tool[] {
-  const out: Tool[] = [];
-  if (kind !== 'image') out.push('speed');
-  if (hasSound) out.push('sound');
-  if (kind !== 'audio') out.push('look');
-  out.push('clip');
-  return out;
+/** which tabs make sense for a clip of this media */
+export function tabsFor(m: MediaInfo | undefined): Tool[] {
+  if (!m) return ['clip'];
+  if (m.text !== undefined) return ['text', 'color', 'font', 'outline', 'look', 'clip'];
+  if (m.solid !== undefined) return ['color', 'look', 'clip'];
+  if (m.kind === 'image') return ['look', 'clip'];
+  if (m.kind === 'audio') return ['speed', 'sound', 'clip'];
+  return m.hasAudio ? ['speed', 'sound', 'look', 'clip'] : ['speed', 'look', 'clip'];
 }
 
 /**
  * The strip of tabs under the timeline. Always visible with icons and names; tapping one raises its
- * drawer over the lower half of the timeline, tapping the open one (or anywhere outside) puts it away.
+ * drawer over the lower part of the timeline, tapping the open one (or anywhere outside) puts it away.
  */
 export function TabBar() {
   const drawer = useStore((s) => s.drawer);
   const clip = useStore((s) => s.project.clips[s.selected]);
   const media = useStore((s) => (s.project.clips[s.selected] ? s.project.media[s.project.clips[s.selected]!.mediaId] : undefined));
-  const shown = tabsFor(media?.kind, !!media?.hasAudio);
+  const shown = tabsFor(media);
   return (
     <nav class="tabbar" aria-label="Clip tools">
       {TABS.filter((t) => shown.includes(t.key)).map((t) => (
-        <button
-          key={t.key}
-          class={`tab ${drawer === t.key ? 'on' : ''}`}
-          disabled={!clip}
-          aria-expanded={drawer === t.key}
-          onClick={() => set({ drawer: drawer === t.key ? null : t.key, tool: t.key, gapMenu: false })}
-        >
+        <button key={t.key} class={`tab ${drawer === t.key ? 'on' : ''}`} disabled={!clip} aria-expanded={drawer === t.key} onClick={() => set({ drawer: drawer === t.key ? null : t.key, tool: t.key })}>
           <t.icon />
           <span>{t.name}</span>
         </button>
       ))}
     </nav>
+  );
+}
+
+/** A name that resets its slider when tapped twice (as in DaVinci Resolve). */
+function ResetLabel({ label, onReset }: { label: string; onReset: () => void }) {
+  const last = useRef(0);
+  return (
+    <span
+      class="dlabel"
+      onPointerUp={() => {
+        const now = performance.now();
+        if (now - last.current < 380) {
+          last.current = 0;
+          onReset();
+        } else last.current = now;
+      }}
+    >
+      {label}
+    </span>
+  );
+}
+
+/** Colors to pick from, and the system's own color picker (the round swatch shows the current color). */
+function ColorRow({ value, presets, onPick, label }: { value: string; presets?: readonly string[]; onPick: (c: string) => void; label: string }) {
+  const timer = useRef(0);
+  const [live, setLive] = useState(value);
+  useEffect(() => setLive(value), [value]);
+  const pick = (c: string) => {
+    setLive(c);
+    clearTimeout(timer.current);
+    timer.current = window.setTimeout(() => onPick(c), 120);
+  };
+  return (
+    <div class="chips" role="group" aria-label={label}>
+      {presets?.map((c) => (
+        <button key={c} class={`swatch ${c.toLowerCase() === live.toLowerCase() ? 'on' : ''}`} style={{ background: c }} aria-label={c} aria-pressed={c.toLowerCase() === live.toLowerCase()} onClick={() => pick(c)} />
+      ))}
+      <label class="swatch custom on" style={{ background: live }} aria-label="Pick any color">
+        <input type="color" value={live} onInput={(e) => pick((e.currentTarget as HTMLInputElement).value)} />
+      </label>
+    </div>
+  );
+}
+
+export { ColorRow };
+
+function TextBox({ index, text }: { index: number; text: string }) {
+  const [v, setV] = useState(text);
+  const timer = useRef(0);
+  return (
+    <textarea
+      class="name-field text-field"
+      rows={3}
+      value={v}
+      placeholder="Type here"
+      aria-label="Text"
+      onInput={(e) => {
+        const t = (e.currentTarget as HTMLTextAreaElement).value;
+        setV(t);
+        clearTimeout(timer.current);
+        timer.current = window.setTimeout(() => void editText(index, { text: t.trim() ? t : ' ' }), 300);
+      }}
+    />
   );
 }
 
@@ -78,13 +140,13 @@ export function Drawer() {
   }, []);
 
   // the selection moved to a clip this tab does not suit: show the first tab that does
-  const kind = media?.kind;
-  const ok = tabsFor(kind, !!media?.hasAudio);
+  const ok = tabsFor(media);
   useEffect(() => {
     if (tool && clip && media && !ok.includes(tool)) set({ drawer: ok[0] ?? 'clip' });
   });
 
   if (!tool || !clip || !media || !ok.includes(tool)) return null;
+  const kind = media.kind;
   const dur = clipDuration(clip);
   const pct = Math.round(clip.volume * 100);
   const setVol = (v: number) => updateClip(index, { volume: Math.min(1, Math.max(0, v / 100)) });
@@ -101,17 +163,24 @@ export function Drawer() {
   };
   const opacity = Math.round((clip.opacity ?? 1) * 100);
   const inside = playhead > clip.at + 0.05 && playhead < clip.at + dur - 0.05;
+  const textColor = media.textColor ?? '#ffffff';
+  const outlineColor = media.textOutline ?? autoOutline(textColor);
+  const outlineWidth = media.textWidth ?? 14;
 
-  const gradeSlider = (label: string, key: keyof Grade) => (
-    <Slider key={key} label={label} value={Math.round(grade[key] * 100)} min={-100} max={100} step={1} fineStep={0.5} snaps={[0]} snapPx={12} valueText={`${Math.round(grade[key] * 100)}`} onChange={(v) => setGrade({ [key]: Math.round(v) / 100 })} />
-  );
-  const row = (label: string, value: string, slider: preact.JSX.Element) => (
+  const row = (label: string, value: string, reset: () => void, slider: preact.JSX.Element) => (
     <div class="drow">
-      <span class="dlabel">{label}</span>
+      <ResetLabel label={label} onReset={reset} />
       {slider}
       <span class="dval num">{value}</span>
     </div>
   );
+  const gradeRow = (label: string, key: keyof Grade) =>
+    row(
+      label,
+      `${Math.round(grade[key] * 100)}`,
+      () => setGrade({ [key]: 0 }),
+      <Slider label={label} value={Math.round(grade[key] * 100)} min={-100} max={100} step={1} fineStep={0.5} snaps={[0]} snapPx={12} valueText={`${Math.round(grade[key] * 100)}`} onChange={(v) => setGrade({ [key]: Math.round(v) / 100 })} />,
+    );
 
   return (
     <>
@@ -122,13 +191,53 @@ export function Drawer() {
           <span class="num dim">{fmtTime(dur)}</span>
         </div>
 
+        {tool === 'text' && (
+          <section>
+            <TextBox key={clip.id} index={index} text={media.text ?? ''} />
+          </section>
+        )}
+
+        {tool === 'color' && (
+          <section>
+            {media.solid !== undefined ? (
+              <ColorRow label="Color" value={media.solid} presets={['#000000', '#ffffff', ...TEXT_COLORS.slice(1, 5)]} onPick={(c) => void setSolidColor(index, c)} />
+            ) : (
+              <ColorRow label="Text color" value={textColor} presets={TEXT_COLORS} onPick={(c) => void editText(index, { color: c })} />
+            )}
+          </section>
+        )}
+
+        {tool === 'font' && (
+          <section>
+            <div class="chips" role="group" aria-label="Font">
+              {TEXT_FONTS.map((f) => (
+                <button key={f.key} class={`chip ${f.key === (media.textFont ?? 'sans') ? 'on' : ''}`} style={{ fontFamily: f.css, fontWeight: f.weight }} aria-pressed={f.key === (media.textFont ?? 'sans')} onClick={() => void editText(index, { font: f.key })}>
+                  {f.name}
+                </button>
+              ))}
+            </div>
+          </section>
+        )}
+
+        {tool === 'outline' && (
+          <section>
+            {row('Thickness', `${outlineWidth}`, () => void editText(index, { width: 14 }), <Slider label="Outline thickness" value={outlineWidth} min={0} max={40} step={1} fineStep={0.5} snaps={[0, 14]} snapPx={10} valueText={`${outlineWidth}`} onChange={(v) => void editText(index, { width: Math.round(v) })} />)}
+            <ColorRow label="Outline color" value={outlineColor} presets={['#000000', '#ffffff', ...TEXT_COLORS.slice(1, 5)]} onPick={(c) => void editText(index, { outline: c })} />
+          </section>
+        )}
+
         {tool === 'speed' && (
           <section>
-            {row('Speed', `${clip.speed.toFixed(2).replace(/0$/, '')}×`, <Slider label="Speed" value={clip.speed} min={MIN_SPEED} max={MAX_SPEED} log snaps={SPEEDS} snapPx={12} step={0.05} fineStep={0.01} valueText={`${clip.speed} times`} onChange={(v) => setSpeed(index, v)} />)}
+            {row('Speed', `${clip.speed.toFixed(2).replace(/0$/, '')}×`, () => setSpeed(index, 1), <Slider label="Speed" value={clip.speed} min={MIN_SPEED} max={MAX_SPEED} log snaps={SPEEDS} snapPx={12} step={0.05} fineStep={0.01} valueText={`${clip.speed} times`} onChange={(v) => setSpeed(index, v)} />)}
             {media.hasAudio && (
-              <button class="btn pitch-btn" onClick={() => updateClip(index, { keepPitch: !clip.keepPitch })}>
-                {clip.keepPitch ? 'Pitch kept' : 'Pitch follows speed'}
-              </button>
+              <div class="seg" role="group" aria-label="Pitch">
+                <button class={clip.keepPitch ? 'on' : ''} aria-pressed={clip.keepPitch} onClick={() => updateClip(index, { keepPitch: true })}>
+                  Keep pitch
+                </button>
+                <button class={!clip.keepPitch ? 'on' : ''} aria-pressed={!clip.keepPitch} onClick={() => updateClip(index, { keepPitch: false })}>
+                  Follow speed
+                </button>
+              </div>
             )}
           </section>
         )}
@@ -138,6 +247,7 @@ export function Drawer() {
             <button class={`speaker ${pct === 0 ? 'muted' : ''}`} onClick={toggleMute} aria-label={pct === 0 ? 'Unmute' : 'Mute'} aria-pressed={pct === 0}>
               {pct === 0 ? <Mute /> : <Sound />}
             </button>
+            <ResetLabel label="Volume" onReset={() => setVol(100)} />
             <Slider label="Volume" value={pct} min={0} max={100} step={1} fineStep={0.5} snaps={[0, 100]} snapPx={14} valueText={pct === 0 ? 'muted' : `${pct} percent`} onChange={setVol} />
             <span class="num dval">{pct === 0 ? 'Muted' : `${pct}%`}</span>
           </section>
@@ -145,32 +255,18 @@ export function Drawer() {
 
         {tool === 'look' && (
           <section>
-            {row('Opacity', `${opacity}%`, <Slider label="Opacity" value={opacity} min={0} max={100} step={1} fineStep={0.5} snaps={[100]} snapPx={14} valueText={`${opacity} percent`} onChange={(v) => updateClip(index, { opacity: v >= 99.5 ? undefined : Math.max(0, v) / 100 })} />)}
-            {row('Brightness', `${Math.round(grade.brightness * 100)}`, gradeSlider('Brightness', 'brightness'))}
-            {row('Contrast', `${Math.round(grade.contrast * 100)}`, gradeSlider('Contrast', 'contrast'))}
-            {row('Color', `${Math.round(grade.saturation * 100)}`, gradeSlider('Color', 'saturation'))}
-            {row('Warmth', `${Math.round(grade.warmth * 100)}`, gradeSlider('Warmth', 'warmth'))}
-            <div class="drawer-actions">
-              <button class={`btn ${cropMode ? 'on' : ''}`} onClick={() => set({ cropMode: !cropMode, drawer: null })}>
-                <Crop /> Crop
-              </button>
-              {clip.crop && (
-                <button class="btn" onClick={() => setCrop(index, undefined)}>
-                  Reset crop
-                </button>
-              )}
-              {(clip.grade || clip.opacity !== undefined) && (
-                <button class="btn" onClick={() => updateClip(index, { grade: undefined, opacity: undefined })}>
-                  Reset look
-                </button>
-              )}
-            </div>
+            {row('Opacity', `${opacity}%`, () => updateClip(index, { opacity: undefined }), <Slider label="Opacity" value={opacity} min={0} max={100} step={1} fineStep={0.5} snaps={[100]} snapPx={14} valueText={`${opacity} percent`} onChange={(v) => updateClip(index, { opacity: v >= 99.5 ? undefined : Math.max(0, v) / 100 })} />)}
+            {gradeRow('Brightness', 'brightness')}
+            {gradeRow('Contrast', 'contrast')}
+            {gradeRow('Color', 'saturation')}
+            {gradeRow('Warmth', 'warmth')}
+            <p class="hint">Tap a name twice to reset that slider.</p>
           </section>
         )}
 
         {tool === 'clip' && (
           <div class="drawer-actions">
-            {inside && (
+            {inside ? (
               <button
                 class="btn"
                 onClick={() => {
@@ -180,16 +276,17 @@ export function Drawer() {
               >
                 <Split /> Split here
               </button>
-            )}
-            {!inside && <p class="hint grow">Scroll the timeline so the yellow line is inside this clip to split it there.</p>}
-            {media.text && (
-              <button class="btn" onClick={() => set({ drawer: null, sheet: 'text', textEdit: index })}>
-                Aa Edit text
-              </button>
+            ) : (
+              <p class="hint grow">Scroll the timeline so the yellow line is inside this clip to split it there.</p>
             )}
             {kind !== 'audio' && (
-              <button class="btn" onClick={() => set({ cropMode: !cropMode, drawer: null })}>
+              <button class={`btn ${cropMode ? 'on' : ''}`} onClick={() => set({ cropMode: !cropMode, drawer: null })}>
                 <Crop /> Crop
+              </button>
+            )}
+            {clip.crop && (
+              <button class="btn" onClick={() => setCrop(index, undefined)}>
+                Reset crop
               </button>
             )}
             <button

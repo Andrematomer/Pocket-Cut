@@ -1,8 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { IDENTITY_VIEW, baseScale, clampView, dragView, fillZoom, fitZoom, frameTransform, nearestAspect, snapEight, normAngle, outputSize, pinchView, quarterTurned, snapView } from '../src/geometry.ts';
+import { IDENTITY_VIEW, baseScale, clampView, snapEightCropped, dragView, fillZoom, fitZoom, frameTransform, nearestAspect, snapEight, normAngle, outputSize, pinchView, quarterTurned, snapView } from '../src/geometry.ts';
 import { gradePixel } from '../src/layers.ts';
-import { activeAt, endOfTrack, gapAt, removeGap, planParts, sourceAt, totalOf } from '../src/timeline.ts';
+import { activeAt, endOfTrack, freeTrack, gapAt, removeGap, planParts, sourceAt, totalOf } from '../src/timeline.ts';
 import { resample, timeStretch } from '../src/stretch.ts';
 import { MAX_MBPS, MIN_MBPS, RATE_STOPS, autoBitrate, estimateBytes, fmtMbps, videoBitrate } from '../src/bitrate.ts';
 import { emptyProject, type Clip } from '../src/types.ts';
@@ -286,4 +286,24 @@ test('gradePixel: zero grade is the identity, brightness and saturation behave',
   close(gray[0], gray[1]);
   assert.ok(gradePixel([0.5, 0.5, 0.5], { ...g0, brightness: 0.4 })[0] > 0.6);
   assert.ok(gradePixel([0.5, 0.5, 0.5], { ...g0, warmth: 0.5 })[0] > gradePixel([0.5, 0.5, 0.5], { ...g0, warmth: 0.5 })[2]);
+});
+
+test('freeTrack: a clip dropped on another one goes to the next free lane, away from 0', () => {
+  const others = [mk('a', 0, 4, 0), mk('b', 0, 4, 1), mk('c', 0, 4, -1)];
+  assert.equal(freeTrack(others, 1, 2, 0), 2);
+  assert.equal(freeTrack(others, 4, 2, 0), 0); // touching is not overlapping
+  assert.equal(freeTrack(others, 1, 2, -1), -2);
+  assert.equal(freeTrack(others, 1, 2, 5), 5);
+});
+
+test('snapEightCropped: fits the part left after a crop and centers it', () => {
+  const W = 360, H = 640;
+  const crop = { l: 0.5, t: 0, r: 0, b: 0 }; // the right half of a 1000x1000 picture stays
+  const v = snapEightCropped({ x: 0, y: 0, zoom: 1, rot: 0 }, crop, 1000, 1000, W, H);
+  // the kept half is 500 x 1000: it fits when its height is 640 -> scale .64, or its width 500*s <= 360
+  const sc = baseScale(1000, 1000, W, H) * v.zoom;
+  assert.ok(Math.abs(500 * sc - 360) < 1e-6 || Math.abs(1000 * sc - 640) < 1e-6);
+  // the middle of the kept half (a quarter of the width right of the picture's middle) is on the canvas middle
+  close(v.x * W + 250 * sc, 0, 1e-6);
+  assert.equal(snapEightCropped({ x: 0, y: 0, zoom: 1, rot: 0 }, undefined, 1000, 1000, W, H).x, snapEight({ x: 0, y: 0, zoom: 1, rot: 0 }, 1000, 1000, W, H).x);
 });

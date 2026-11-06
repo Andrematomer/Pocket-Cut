@@ -126,7 +126,7 @@ export function ExportSheet({ onClose }: { onClose: () => void }) {
           </section>
 
           <section>
-            <h3>Picture</h3>
+            <h3>Resolution</h3>
             <Chips<ExportSettings['resolution']>
               label="Resolution"
               value={s.resolution}

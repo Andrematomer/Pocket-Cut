@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { engine } from '../engine.ts';
-import { baseScale, clampView, dragView, fitZoom, outputSize, pinchView, snapEight, snapView, type Pt } from '../geometry.ts';
+import { baseScale, clampView, dragView, fitZoom, outputSize, pinchView, snapEightCropped, snapView, type Pt } from '../geometry.ts';
 import { getState, set, setCrop, updateClip, useStore } from '../store.ts';
 import { activeAt, fmtTime, totalOf } from '../timeline.ts';
 import type { Crop, View } from '../types.ts';
@@ -336,7 +336,7 @@ function Gestures({ boxW, boxH }: { boxW: number; boxH: number }) {
     const c = current();
     if (!c) return;
     const { boxW: W, boxH: H } = sizes.current;
-    const v = clampView(snapEight(c.clip.view, c.media.width, c.media.height, W, H), { sw: c.media.width, sh: c.media.height, W, H });
+    const v = clampView(snapEightCropped(c.clip.view, c.clip.crop, c.media.width, c.media.height, W, H), { sw: c.media.width, sh: c.media.height, W, H });
     updateClip(getState().selected, { view: v });
     const fit = fitZoom(c.media.width, c.media.height, v.rot, W, H);
     showBadge(Math.abs(v.zoom - fit) / fit < 0.02 ? 'Fit' : 'Fill');

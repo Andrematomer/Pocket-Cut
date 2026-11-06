@@ -156,3 +156,18 @@ export const Layers = () => (
     <path d="M3 13l9 5 9-5" />
   </I>
 );
+const Glyph = ({ children, outline = false }: { children: string; outline?: boolean }) => (
+  <I>
+    <text x="12" y="17" text-anchor="middle" font-size="15" font-weight="800" font-family="system-ui, sans-serif" fill={outline ? 'none' : 'currentColor'} stroke="currentColor" stroke-width={outline ? 1.2 : 0}>
+      {children}
+    </text>
+  </I>
+);
+export const TextIcon = () => <Glyph>T</Glyph>;
+export const FontIcon = () => <Glyph>Aa</Glyph>;
+export const OutlineIcon = () => <Glyph outline>A</Glyph>;
+export const Swatch = () => (
+  <I>
+    <circle cx="12" cy="12" r="8" fill="currentColor" stroke="none" />
+  </I>
+);

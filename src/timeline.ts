@@ -132,3 +132,15 @@ export function removeGap(clips: Clip[], gap: Gap): Clip[] {
   }
   return out;
 }
+
+/**
+ * The track a clip can sit on at its place: the wanted one if nothing is there, otherwise the next one
+ * further out (up from 0, down below 0). `others` must not contain the clip itself.
+ */
+export function freeTrack(others: Clip[], at: number, dur: number, track: number): number {
+  const dir = track >= 0 ? 1 : -1;
+  const busy = (t: number) => others.some((o) => o.track === t && at < clipEnd(o) - 1e-6 && o.at < at + dur - 1e-6);
+  let t = track;
+  for (let i = 0; i < 200 && busy(t); i++) t += dir;
+  return t;
+}

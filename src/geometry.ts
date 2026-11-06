@@ -281,3 +281,32 @@ export function snapEight(v: View, sw: number, sh: number, W: number, H: number)
   }
   return pick.view;
 }
+
+/**
+ * Double-tap snap for a cropped picture: fits or fills the part that is left after the crop, and centers
+ * that part (not the whole picture) on the canvas.
+ */
+export function snapEightCropped(v: View, crop: Crop | undefined, sw: number, sh: number, W: number, H: number): View {
+  const l = crop?.l ?? 0;
+  const t = crop?.t ?? 0;
+  const r = crop?.r ?? 0;
+  const b = crop?.b ?? 0;
+  if (!l && !t && !r && !b) return snapEight(v, sw, sh, W, H);
+  const cw = sw * (1 - l - r);
+  const ch = sh * (1 - t - b);
+  const k = baseScale(cw, ch, W, H) / baseScale(sw, sh, W, H); // zoom of the picture = zoom of the cropped part * k
+  // where the middle of the kept part sits, in canvas units, relative to the picture's middle
+  const shift = (zoom: number, rot: number) => {
+    const sc = baseScale(sw, sh, W, H) * zoom;
+    const lx = ((l - r) / 2) * sw * sc;
+    const ly = ((t - b) / 2) * sh * sc;
+    const a = rot * RAD;
+    return { x: lx * Math.cos(a) - ly * Math.sin(a), y: lx * Math.sin(a) + ly * Math.cos(a) };
+  };
+  const o = shift(v.zoom, v.rot);
+  const cur: View = { x: v.x + o.x / W, y: v.y + o.y / H, zoom: v.zoom / k, rot: v.rot };
+  const s = snapEight(cur, cw, ch, W, H);
+  const zoom = s.zoom * k;
+  const o2 = shift(zoom, s.rot);
+  return { x: s.x - o2.x / W, y: s.y - o2.y / H, zoom, rot: s.rot };
+}

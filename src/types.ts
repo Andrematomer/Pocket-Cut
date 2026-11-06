@@ -21,6 +21,11 @@ export interface MediaInfo {
   text?: string;
   textColor?: string;
   textFont?: string;
+  /** outline around the text: color and thickness (0 = none) */
+  textOutline?: string;
+  textWidth?: number;
+  /** set when the picture is a plain color (an "empty" clip) */
+  solid?: string;
 }
 
 export interface Grade {

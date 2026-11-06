@@ -9,7 +9,6 @@ import { Gear, Help, Plus, Redo, Undo } from './icons.tsx';
 import { FilePicker, PickLabel } from './Picker.tsx';
 import { Preview } from './Preview.tsx';
 import { Drawer, TabBar } from './Drawer.tsx';
-import { TextSheet } from './TextSheet.tsx';
 import { SettingsSheet } from './SettingsSheet.tsx';
 import { Timeline } from './Timeline.tsx';
 import { browserInfo, checkSupport } from '../support.ts';
@@ -102,7 +101,6 @@ export function App() {
       {sheet === 'export' && <ExportSheet onClose={() => set({ sheet: 'none' })} />}
       {sheet === 'help' && <HelpSheet onClose={() => set({ sheet: 'none' })} />}
       {sheet === 'canvas' && <CanvasSheet onClose={() => set({ sheet: 'none' })} />}
-      {sheet === 'text' && <TextSheet onClose={() => set({ sheet: 'none' })} />}
       {sheet === 'settings' && <SettingsSheet onClose={() => set({ sheet: 'none' })} />}
 
       {toast && (

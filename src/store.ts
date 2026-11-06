@@ -1,15 +1,15 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
-import { ASPECT_VALUE, IDENTITY_VIEW, nearestAspect, normAngle } from './geometry.ts';
-import { renderText } from './text.ts';
+import { ASPECT_VALUE, IDENTITY_VIEW, baseScale, fillZoom, nearestAspect, normAngle, outputSize } from './geometry.ts';
+import { autoOutline, renderSolid, renderText } from './text.ts';
 import { IMAGE_MAX_SECONDS, decodeImage, dropAllMedia, isAudioFile, isImageFile, probeAudio, mediaBlob, newId, probeImage, probeVideo, registerMedia, UnsupportedMediaError } from './media.ts';
 import { setAwakeMode } from './wake.ts';
 import { onProxyProgress, onProxyWork, queueProxy, requeueAllProxies, setProxyOrder } from './proxy.ts';
 import { clearSaved, loadSaved, requestPersistence, saveMedia, saveProject } from './persist.ts';
-import { clipDuration, clipEnd, endOfTrack, MAX_SPEED, MIN_CLIP, MIN_SPEED, removeGap as removeGapFrom, totalOf, type Gap } from './timeline.ts';
+import { clipDuration, clipEnd, endOfTrack, freeTrack, MAX_SPEED, MIN_CLIP, MIN_SPEED, removeGap as removeGapFrom, totalOf, type Gap } from './timeline.ts';
 import { DEFAULT_SETTINGS, emptyProject, type Clip, type ExportSettings, type MediaInfo, type Project } from './types.ts';
 
-export type Tool = 'speed' | 'sound' | 'look' | 'clip';
-export type Sheet = 'none' | 'export' | 'settings' | 'canvas' | 'help' | 'text';
+export type Tool = 'speed' | 'sound' | 'look' | 'clip' | 'text' | 'color' | 'font' | 'outline';
+export type Sheet = 'none' | 'export' | 'settings' | 'canvas' | 'help';
 
 export interface Toast {
   text: string;
@@ -31,9 +31,10 @@ export interface State {
   preparing: boolean;
   /** the tab drawer that is raised over the timeline, or null when only the tab bar shows */
   drawer: Tool | null;
-  /** an empty stretch picked on the timeline (yellow box); `gapMenu` shows its "Remove gap" button */
+  /** an empty stretch picked on the timeline (red box with a trash icon) */
   gap: Gap | null;
-  gapMenu: boolean;
+  /** the selected strip shows its trim handles */
+  handles: boolean;
   /** the crop handles are shown on the preview */
   cropMode: boolean;
   /** the text clip being edited (index), or null when a new text is being made */
@@ -80,7 +81,7 @@ let state: State = {
   preparing: false,
   drawer: null,
   gap: null,
-  gapMenu: false,
+  handles: false,
   cropMode: false,
   textEdit: null,
   proxyProgress: {},
@@ -259,7 +260,10 @@ export function setTrim(index: number, start: number, end: number): void {
 export function moveClipTo(index: number, at: number, track: number): void {
   const c = state.project.clips[index];
   if (!c) return;
-  const next = { at: Math.max(0, Math.round(at * 100) / 100), track };
+  const when = Math.max(0, Math.round(at * 100) / 100);
+  // dropped on top of another strip: it goes to the next free lane instead
+  const others = state.project.clips.filter((_, i) => i !== index);
+  const next = { at: when, track: freeTrack(others, when, clipDuration(c), track) };
   if (next.at === c.at && next.track === c.track) return;
   edit((p) => ({ ...p, clips: p.clips.map((x, i) => (i === index ? { ...x, ...next } : x)) }), { key: `move:${index}` });
 }
@@ -269,13 +273,13 @@ export function selectClip(index: number): void {
   const c = state.project.clips[index];
   if (!c) return;
   const inside = state.playhead >= c.at - 1e-6 && state.playhead < clipEnd(c);
-  set({ selected: index, playhead: inside ? state.playhead : c.at, gap: null, gapMenu: false, cropMode: state.selected === index ? state.cropMode : false });
+  set({ selected: index, playhead: inside ? state.playhead : c.at, gap: null, handles: state.selected === index ? state.handles : false, cropMode: state.selected === index ? state.cropMode : false });
 }
 
 export function duplicateClip(index: number): void {
   const c = state.project.clips[index];
   if (!c) return;
-  edit((p) => ({ ...p, clips: [...p.clips, { ...c, id: newId(), at: clipEnd(c) }] }));
+  edit((p) => ({ ...p, clips: [...p.clips, { ...c, id: newId(), at: clipEnd(c), track: freeTrack(p.clips, clipEnd(c), clipDuration(c), c.track) }] }));
   set({ selected: state.project.clips.length - 1 });
 }
 
@@ -290,25 +294,28 @@ export function deleteClip(index: number): void {
     ...p,
     clips: p.clips.filter((_, i) => i !== index).map((x) => (x.at >= end - 1e-6 ? { ...x, at: Math.max(0, Math.round((x.at - dur) * 100) / 100) } : x)),
   }));
-  set({ drawer: null, cropMode: false });
+  set({ drawer: null, cropMode: false, handles: false });
 }
 
 /** The look the last text was made with: the next new text starts from it. */
 export interface TextStyle {
   color: string;
   font: string;
+  outline: string;
+  width: number;
 }
 export function loadTextStyle(): TextStyle {
+  const d: TextStyle = { color: '#ffffff', font: 'sans', outline: '#000000', width: 14 };
   try {
     const raw = localStorage.getItem('pocket-cut-nla:text-style');
     if (raw) {
       const o = JSON.parse(raw) as Partial<TextStyle>;
-      return { color: typeof o.color === 'string' ? o.color : '#ffffff', font: typeof o.font === 'string' ? o.font : 'sans' };
+      return { color: typeof o.color === 'string' ? o.color : d.color, font: typeof o.font === 'string' ? o.font : d.font, outline: typeof o.outline === 'string' ? o.outline : d.outline, width: typeof o.width === 'number' ? o.width : d.width };
     }
   } catch {
     /* defaults */
   }
-  return { color: '#ffffff', font: 'sans' };
+  return d;
 }
 function saveTextStyle(t: TextStyle): void {
   try {
@@ -318,26 +325,86 @@ function saveTextStyle(t: TextStyle): void {
   }
 }
 
-/** Makes a text clip (or, with `editIndex`, changes the text of an existing one). */
-export async function addText(text: string, color: string, font: string, editIndex: number | null): Promise<void> {
-  const clean = text.trim();
-  if (!clean) return;
-  saveTextStyle({ color, font });
-  const r = await renderText(clean, color, font);
+/** keeps text and color changes in order, since rendering takes a moment */
+let chain: Promise<void> = Promise.resolve();
+
+async function textMedia(text: string, st: TextStyle): Promise<MediaInfo> {
+  const r = await renderText(text, st.color, st.font, st.outline, st.width);
   const id = newId();
-  registerMedia(id, r.blob, null, { name: clean.slice(0, 24), bitmap: r.bitmap });
-  const info: MediaInfo = { id, name: clean.split('\n')[0]!.slice(0, 24), duration: IMAGE_MAX_SECONDS, width: r.width, height: r.height, hasAudio: false, kind: 'image', text: clean, textColor: color, textFont: font };
-  void saveMedia(id, { blob: r.blob, name: info.name, thumb: null });
-  if (editIndex !== null && state.project.clips[editIndex]) {
-    edit((p) => ({ ...p, media: { ...p.media, [id]: info }, clips: p.clips.map((c, i) => (i === editIndex ? { ...c, mediaId: id } : c)) }));
-    return;
-  }
-  // new text goes on a lane above everything, at the position marker
-  const top = state.project.clips.reduce((m, c) => Math.max(m, c.track), -1) + 1;
-  const clip: Clip = { id: newId(), mediaId: id, start: 0, end: state.prefs.imageSeconds, speed: 1, view: { ...IDENTITY_VIEW, zoom: 0.8 }, volume: 1, keepPitch: true, at: state.playhead, track: top };
+  registerMedia(id, r.blob, null, { name: text.slice(0, 24), bitmap: r.bitmap });
+  const name = text.split('\n')[0]!.slice(0, 24) || 'Text';
+  void saveMedia(id, { blob: r.blob, name, thumb: null });
+  return { id, name, duration: IMAGE_MAX_SECONDS, width: r.width, height: r.height, hasAudio: false, kind: 'image', text, textColor: st.color, textFont: st.font, textOutline: st.outline, textWidth: st.width };
+}
+
+/** A new text ("Text", in the last used style) at the position marker, on the first free lane from 0 up. */
+export async function addTextClip(): Promise<void> {
+  const st = loadTextStyle();
+  const info = await textMedia('Text', st);
+  const dur = state.prefs.imageSeconds;
+  const at = state.playhead;
+  const track = freeTrack(state.project.clips, at, dur, 0);
+  const clip: Clip = { id: newId(), mediaId: info.id, start: 0, end: dur, speed: 1, view: { ...IDENTITY_VIEW, zoom: 0.8 }, volume: 1, keepPitch: true, at, track };
+  const index = state.project.clips.length;
+  edit((p) => ({ ...p, media: { ...p.media, [info.id]: info }, clips: [...p.clips, clip] }));
+  selectClip(index);
+  set({ drawer: 'text', tool: 'text' });
+}
+
+/** Changes the text, color, font or outline of a text clip. The picture is drawn again; its size on the canvas stays. */
+export function editText(index: number, patch: Partial<TextStyle> & { text?: string }): Promise<void> {
+  chain = chain.then(async () => {
+    const c = state.project.clips[index];
+    const m = c && state.project.media[c.mediaId];
+    if (!c || !m || m.text === undefined) return;
+    const st: TextStyle = { color: m.textColor ?? '#ffffff', font: m.textFont ?? 'sans', outline: m.textOutline ?? autoOutline(m.textColor ?? '#ffffff'), width: m.textWidth ?? 14, ...patch };
+    // a new text color on a text that still had the automatic outline keeps it automatic
+    if (patch.color && patch.outline === undefined && (m.textOutline ?? autoOutline(m.textColor ?? '#ffffff')) === autoOutline(m.textColor ?? '#ffffff')) st.outline = autoOutline(patch.color);
+    const info = await textMedia(patch.text ?? m.text, st);
+    const now = state.project.clips.findIndex((x) => x.id === c.id);
+    const cur = state.project.clips[now];
+    if (!cur) return;
+    const out = outputSize(state.project);
+    const keep = baseScale(m.width, m.height, out.w, out.h) / baseScale(info.width, info.height, out.w, out.h);
+    saveTextStyle(st);
+    edit((p) => ({ ...p, media: { ...p.media, [info.id]: info }, clips: p.clips.map((x, i) => (i === now ? { ...x, mediaId: info.id, view: { ...x.view, zoom: x.view.zoom * keep } } : x)) }), { key: `text:${c.id}` });
+  });
+  return chain;
+}
+
+/** A flat color picture ("empty"), the length of a picture, at the position marker. */
+export async function addSolid(color: string): Promise<void> {
+  const r = await renderSolid(color);
+  const id = newId();
+  registerMedia(id, r.blob, null, { name: 'Empty', bitmap: r.bitmap });
+  void saveMedia(id, { blob: r.blob, name: 'Empty', thumb: null });
+  const info: MediaInfo = { id, name: 'Empty', duration: IMAGE_MAX_SECONDS, width: r.width, height: r.height, hasAudio: false, kind: 'image', solid: color };
+  const dur = state.prefs.imageSeconds;
+  const at = state.playhead;
+  const track = freeTrack(state.project.clips, at, dur, 0);
+  const out = outputSize(state.project);
+  const clip: Clip = { id: newId(), mediaId: id, start: 0, end: dur, speed: 1, view: { ...IDENTITY_VIEW, zoom: fillZoom(r.width, r.height, 0, out.w, out.h) }, volume: 1, keepPitch: true, at, track };
   const index = state.project.clips.length;
   edit((p) => ({ ...p, media: { ...p.media, [id]: info }, clips: [...p.clips, clip] }));
   selectClip(index);
+  set({ drawer: 'color', tool: 'color' });
+}
+
+export function setSolidColor(index: number, color: string): Promise<void> {
+  chain = chain.then(async () => {
+    const c = state.project.clips[index];
+    const m = c && state.project.media[c.mediaId];
+    if (!c || !m || m.solid === undefined) return;
+    const r = await renderSolid(color);
+    const id = newId();
+    registerMedia(id, r.blob, null, { name: 'Empty', bitmap: r.bitmap });
+    void saveMedia(id, { blob: r.blob, name: 'Empty', thumb: null });
+    const info: MediaInfo = { ...m, id, solid: color };
+    const now = state.project.clips.findIndex((x) => x.id === c.id);
+    if (now < 0) return;
+    edit((p) => ({ ...p, media: { ...p.media, [id]: info }, clips: p.clips.map((x, i) => (i === now ? { ...x, mediaId: id } : x)) }), { key: `solid:${c.id}` });
+  });
+  return chain;
 }
 
 /** Cuts the selected clip in two at the position marker. */
@@ -526,7 +593,7 @@ export function removeGap(): void {
   const sel = state.project.clips[state.selected]?.id;
   edit((p) => ({ ...p, clips: removeGapFrom(p.clips, g) }));
   const i = state.project.clips.findIndex((c) => c.id === sel);
-  set({ gap: null, gapMenu: false, selected: i >= 0 ? i : 0 });
+  set({ gap: null, selected: i >= 0 ? i : 0 });
 }
 
 // ---------- crop ----------

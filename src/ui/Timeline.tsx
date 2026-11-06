@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { engine } from '../engine.ts';
 import { thumbUrl } from '../media.ts';
-import { getState, moveClipTo, removeGap, selectClip, set, updateClip, useStore } from '../store.ts';
+import { addSolid, addTextClip, getState, moveClipTo, removeGap, selectClip, set, updateClip, useStore } from '../store.ts';
 import { MIN_CLIP, clipDuration, clipEnd, fmtTime, gapAt, totalOf } from '../timeline.ts';
 import type { Clip, MediaInfo } from '../types.ts';
 import { PickLabel } from './Picker.tsx';
 import { Pie } from './Pie.tsx';
-import { Pause, Play, Plus } from './icons.tsx';
+import { Pause, Play, Plus, Trash } from './icons.tsx';
 
 const HOLD_MS = 350; // hold a strip this long (without moving) to pick it up
 const WOBBLE = 10;
@@ -15,8 +15,6 @@ const ROW = 38;
 const GAP = 4;
 const RULER = 22;
 const SNAP_PX = 8;
-const FINE_HOLD = 450;
-const FINE = 0.1;
 const MIN_PPS = 6;
 const MAX_PPS = 300;
 
@@ -32,7 +30,6 @@ interface Trim {
   at: number;
   start: number;
   end: number;
-  fine: boolean;
 }
 
 const isAudio = (m: MediaInfo | undefined) => m?.kind === 'audio';
@@ -67,7 +64,8 @@ export function Timeline() {
   const playing = useStore((s) => s.playing);
   const progress = useStore((s) => s.proxyProgress);
   const gap = useStore((s) => s.gap);
-  const gapMenu = useStore((s) => s.gapMenu);
+  const handles = useStore((s) => s.handles);
+  const [menu, setMenu] = useState(false);
   const [pps, setPps] = useState(36); // pixels per second
   const [move, setMove] = useState<Move | null>(null);
   const [trim, setTrim] = useState<Trim | null>(null);
@@ -180,7 +178,7 @@ export function Timeline() {
     const s = st.current;
     const el = scroller.current;
     if (!s || !s.active || !el) return;
-    const { clips: cs, pps: k, lanes: ln, media: md, height: h } = live.current;
+    const { clips: cs, pps: k, lanes: ln, height: h } = live.current;
     const clip = cs[s.i];
     if (!clip) return;
     const r = el.getBoundingClientRect();
@@ -189,8 +187,8 @@ export function Timeline() {
     else if (s.x > r.right - EDGE) vx = Math.ceil(((s.x - (r.right - EDGE)) / EDGE) * 14);
     if (vx) el.scrollLeft += vx;
     let vy = 0;
-    if (s.y < r.top + RULER + 14) vy = -Math.ceil(((r.top + RULER + 14 - s.y) / 30) * 8);
-    else if (s.y > r.bottom - 24) vy = Math.ceil(((s.y - (r.bottom - 24)) / 24) * 8);
+    if (s.y < r.top + RULER + 14) vy = -Math.ceil(Math.min(1, (r.top + RULER + 14 - s.y) / 40) * 2.5);
+    else if (s.y > r.bottom - 24) vy = Math.ceil(Math.min(1, (s.y - (r.bottom - 24)) / 40) * 2.5);
     if (vy) el.scrollTop += vy;
     const raw = s.at0 + (s.x - s.x0 + (el.scrollLeft - s.scroll0)) / k;
     const at = snap(s.i, raw, clipDuration(clip));
@@ -198,11 +196,7 @@ export function Timeline() {
     const top = Math.max(RULER, Math.min(h - ROW - 4, RULER + baseRow * (ROW + GAP) + (s.y - s.y0) + (el.scrollTop - s.scrollTop0)));
     let row = Math.round((top - RULER) / (ROW + GAP));
     row = Math.max(0, Math.min(ln.length - 1, row));
-    let track = ln[row]!;
-    // pictures and videos live on the lanes from 0 up, sound on the lanes below
-    if (isAudio(md[clip.mediaId])) {
-      if (track >= 0) track = ln.filter((t) => t < 0)[0] ?? -1;
-    } else if (track < 0) track = 0;
+    const track = ln[row]!;
     setMove({ index: s.i, at, track, top });
     s.raf = requestAnimationFrame(frame);
   };
@@ -220,8 +214,6 @@ export function Timeline() {
         if (commit && d) {
           const c = live.current.clips[d.index];
           if (c && (d.at !== c.at || d.track !== c.track)) moveClipTo(d.index, d.at, d.track);
-          // picked up and put back where it was: show the options of the clip
-          else if (c) set({ drawer: getState().tool });
         }
         return null;
       });
@@ -276,20 +268,7 @@ export function Timeline() {
 
   // ---------- trimming with the handles of the selected strip ----------
 
-  const trimRef = useRef<{
-    id: number;
-    i: number;
-    side: 'left' | 'right';
-    x0: number;
-    xf: number;
-    last: number;
-    armX: number;
-    base: { at: number; start: number; end: number };
-    carried: number;
-    fine: boolean;
-    timer: number;
-    cur: Trim;
-  } | null>(null);
+  const trimRef = useRef<{ id: number; i: number; side: 'left' | 'right'; x0: number; base: { at: number; start: number; end: number }; cur: Trim } | null>(null);
 
   const solveTrim = (t: NonNullable<typeof trimRef.current>, dx: number): Trim => {
     const clip = live.current.clips[t.i]!;
@@ -301,27 +280,11 @@ export function Timeline() {
     if (t.side === 'left') {
       dt = Math.max(dt, -b.at, -b.start / clip.speed);
       dt = Math.min(dt, (b.end - MIN_CLIP - b.start) / clip.speed);
-      return { index: t.i, at: b.at + dt, start: b.start + dt * clip.speed, end: b.end, fine: t.fine };
+      return { index: t.i, at: b.at + dt, start: b.start + dt * clip.speed, end: b.end };
     }
     dt = Math.max(dt, (b.start + MIN_CLIP - b.end) / clip.speed);
     dt = Math.min(dt, (dur - b.end) / clip.speed);
-    return { index: t.i, at: b.at, start: b.start, end: b.end + dt * clip.speed, fine: t.fine };
-  };
-  const armTrim = (t: NonNullable<typeof trimRef.current>) => {
-    clearTimeout(t.timer);
-    t.timer = window.setTimeout(() => {
-      if (trimRef.current !== t || t.fine) return;
-      t.fine = true;
-      t.xf = t.last;
-      t.carried = t.last - t.x0;
-      t.cur = { ...t.cur, fine: true };
-      setTrim(t.cur);
-      try {
-        navigator.vibrate?.(8);
-      } catch {
-        /* not supported */
-      }
-    }, FINE_HOLD);
+    return { index: t.i, at: b.at, start: b.start, end: b.end + dt * clip.speed };
   };
   const trimDown = (i: number, side: 'left' | 'right') => (e: PointerEvent) => {
     e.stopPropagation();
@@ -334,28 +297,20 @@ export function Timeline() {
     } catch {
       /* the pointer is gone */
     }
-    const t = { id: e.pointerId, i, side, x0: e.clientX, xf: e.clientX, last: e.clientX, armX: e.clientX, base: { at: clip.at, start: clip.start, end: clip.end }, carried: 0, fine: false, timer: 0, cur: { index: i, at: clip.at, start: clip.start, end: clip.end, fine: false } };
+    const t = { id: e.pointerId, i, side, x0: e.clientX, base: { at: clip.at, start: clip.start, end: clip.end }, cur: { index: i, at: clip.at, start: clip.start, end: clip.end } };
     trimRef.current = t;
     setTrim(t.cur);
-    armTrim(t);
   };
   const trimMove = (e: PointerEvent) => {
     const t = trimRef.current;
     if (!t || e.pointerId !== t.id) return;
-    t.last = e.clientX;
-    if (!t.fine && Math.abs(e.clientX - t.armX) > 10) {
-      t.armX = e.clientX;
-      armTrim(t); // moving restarts the hold: holding still anywhere gives fine control from there
-    }
-    const dx = t.fine ? t.carried + (e.clientX - t.xf) * FINE : e.clientX - t.x0;
-    t.cur = solveTrim(t, dx);
+    t.cur = solveTrim(t, e.clientX - t.x0);
     setTrim(t.cur);
     engine.scrubSource(t.i, t.side === 'left' ? t.cur.start : Math.max(t.cur.start, t.cur.end - 0.05), false);
   };
   const trimUp = (e: PointerEvent) => {
     const t = trimRef.current;
     if (!t || e.pointerId !== t.id) return;
-    clearTimeout(t.timer);
     trimRef.current = null;
     setTrim(null);
     const c = t.cur;
@@ -363,21 +318,21 @@ export function Timeline() {
     void engine.showAt(getState().playhead);
   };
 
-  // tapping empty space between two strips picks that gap; tapping the picked gap again offers to remove it
+  // tapping empty space between two strips picks that gap (red box with a trash can)
   const laneTap = (e: MouseEvent, track: number) => {
     if (swallow.current || e.target !== e.currentTarget) return;
+    setMenu(false);
     const el = scroller.current;
     if (!el) return;
     const x = e.clientX - el.getBoundingClientRect().left + el.scrollLeft;
     const t = (x - padL) / pps;
     const g = gapAt(clips, track, t);
     if (!g) {
-      set({ gap: null, gapMenu: false });
+      set({ gap: null });
       return;
     }
     engine.pause();
-    const same = getState().gap && getState().gap!.track === g.track && Math.abs(getState().gap!.from - g.from) < 1e-6;
-    set({ gap: g, gapMenu: same ? !getState().gapMenu : false, drawer: null });
+    set({ gap: g, drawer: null });
   };
   const gapRow = gap ? lanes.indexOf(gap.track) : -1;
 
@@ -389,12 +344,39 @@ export function Timeline() {
     <div class={`tl ${move ? 'dragging' : ''}`}>
       <div class="tl-bar">
         <div class="tl-left">
-          <PickLabel class="tl-add" label="Add videos, pictures or sound">
+          <button class={`tl-add ${menu ? 'on' : ''}`} aria-haspopup="menu" aria-expanded={menu} onClick={() => setMenu(!menu)}>
             <Plus /> <span>Add</span>
-          </PickLabel>
-          <button class="tl-text" aria-label="Add text" onClick={() => set({ sheet: 'text', textEdit: null })}>
-            Aa
           </button>
+          {menu && (
+            <>
+              <div class="add-scrim" onPointerDown={() => setMenu(false)} />
+              <div class="add-menu" role="menu">
+                <PickLabel class="add-item" label="Add videos, pictures or sound">
+                  <span onClick={() => setMenu(false)}>Media</span>
+                </PickLabel>
+                <button
+                  role="menuitem"
+                  onClick={() => {
+                    setMenu(false);
+                    engine.pause();
+                    void addTextClip();
+                  }}
+                >
+                  Text
+                </button>
+                <button
+                  role="menuitem"
+                  onClick={() => {
+                    setMenu(false);
+                    engine.pause();
+                    void addSolid('#2f6fed');
+                  }}
+                >
+                  Empty
+                </button>
+              </div>
+            </>
+          )}
         </div>
         <button class="play" onClick={() => (playing ? engine.pause() : void engine.play())} aria-label={playing ? 'Pause' : 'Play'}>
           {playing ? <Pause /> : <Play />}
@@ -413,15 +395,18 @@ export function Timeline() {
                 </span>
               ))}
             </div>
+            <div class="tl-void" style={{ left: 0, width: `${padL}px` }} />
+            <div class="tl-void" style={{ left: `${padL + total * pps}px`, right: 0 }} />
             {lanes.map((track, row) => (
-              <div key={track} class={`tl-lane ${track < 0 ? 'sound' : ''} ${move?.track === track ? 'target' : ''}`} style={{ top: `${rowTop(row)}px`, height: `${ROW}px` }} onClick={(e) => laneTap(e, track)}>
-                <span class="tl-lane-name">{track < 0 ? `A${-track}` : `V${track + 1}`}</span>
+              <div key={track} class={`tl-lane ${move?.track === track ? 'target' : ''}`} style={{ top: `${rowTop(row)}px`, height: `${ROW}px` }} onClick={(e) => laneTap(e, track)}>
+                <span class="tl-lane-name">{track}</span>
               </div>
             ))}
-            {gap && gapRow >= 0 && <div class="tl-gap" style={{ left: `${padL + gap.from * pps}px`, width: `${(gap.to - gap.from) * pps}px`, top: `${rowTop(gapRow)}px`, height: `${ROW}px` }} />}
-            {gap && gapMenu && gapRow >= 0 && (
-              <div class="gap-menu" style={{ left: `${padL + ((gap.from + gap.to) / 2) * pps}px`, top: `${rowTop(gapRow) + ROW + 2}px` }}>
-                <button onClick={() => removeGap()}>Remove gap ({fmtTime(gap.to - gap.from)})</button>
+            {gap && gapRow >= 0 && (
+              <div class="tl-gap" style={{ left: `${padL + gap.from * pps}px`, width: `${(gap.to - gap.from) * pps}px`, top: `${rowTop(gapRow)}px`, height: `${ROW}px` }}>
+                <button class="gap-trash" aria-label={`Remove the ${fmtTime(gap.to - gap.from)} gap`} onClick={() => removeGap()}>
+                  <Trash />
+                </button>
               </div>
             )}
             {clips.map((c, i) => {
@@ -445,8 +430,8 @@ export function Timeline() {
                   key={c.id}
                   role="option"
                   aria-selected={on}
-                  class={`strip-clip ${on ? 'on' : ''} ${moving ? 'lifted' : ''} ${audio ? 'audio' : ''} ${m?.text ? 'texty' : ''} ${tr?.fine ? 'fine' : ''}`}
-                  style={{ left: `${padL + at * pps}px`, top: `${top}px`, width: `${w}px`, height: `${ROW}px` }}
+                  class={`strip-clip ${on ? 'on' : ''} ${moving ? 'lifted' : ''} ${audio ? 'audio' : ''} ${m?.text ? 'texty' : ''} ${m?.solid ? 'solid' : ''}`}
+                  style={{ left: `${padL + at * pps}px`, top: `${top}px`, width: `${w}px`, height: `${ROW}px`, ...(m?.solid ? { background: m.solid } : {}) }}
                   onPointerDown={down(i)}
                   onPointerMove={onMove}
                   onPointerUp={up}
@@ -455,21 +440,21 @@ export function Timeline() {
                   onClick={() => {
                     if (swallow.current) return;
                     engine.pause();
-                    if (on) set({ drawer: getState().drawer ? null : getState().tool });
+                    if (on) set({ handles: !getState().handles });
                     else selectClip(i);
                   }}
                 >
                   {url && !m?.text && <span class="strip-thumb" style={{ backgroundImage: `url("${url}")` }} />}
                   <span class="strip-label num">
                     {c.speed !== 1 ? `${c.speed}× · ` : ''}
-                    {audio || m?.text ? (m?.name ?? '') : fmtTime((end - start) / c.speed)}
+                    {audio || m?.text || m?.solid ? (m?.name ?? '') : fmtTime((end - start) / c.speed)}
                   </span>
                   {p !== undefined && (
                     <span class="tile-pie" title="Making a lighter copy for the preview">
                       <Pie value={p} size={16} />
                     </span>
                   )}
-                  {on && !moving && (
+                  {on && handles && !moving && (
                     <>
                       <span class="trim-h left" onPointerDown={trimDown(i, 'left')} onPointerMove={trimMove} onPointerUp={trimUp} onPointerCancel={trimUp} onClick={(e) => e.stopPropagation()} />
                       <span class="trim-h right" onPointerDown={trimDown(i, 'right')} onPointerMove={trimMove} onPointerUp={trimUp} onPointerCancel={trimUp} onClick={(e) => e.stopPropagation()} />

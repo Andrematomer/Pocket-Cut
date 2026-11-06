@@ -1604,30 +1604,6 @@ label.cta {
   flex: 1 1 100%;
   margin: 0;
 }
-.gap-menu {
-  position: absolute;
-  z-index: 12;
-  transform: translate(-50%, 0);
-  background: var(--surface);
-  border: 1px solid var(--accent);
-  border-radius: 12px;
-  padding: 4px;
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
-}
-.gap-menu button {
-  padding: 8px 14px;
-  font-weight: 700;
-  color: var(--danger);
-  white-space: nowrap;
-}
-.tl-gap {
-  position: absolute;
-  z-index: 3;
-  border: 2px solid var(--accent);
-  background: rgba(240, 198, 74, 0.14);
-  border-radius: 6px;
-  pointer-events: none;
-}
 .crop-h {
   position: absolute;
   z-index: 6;
@@ -1683,10 +1659,17 @@ label.cta {
   resize: none;
 }
 
+.tl-void {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.38);
+  z-index: 1;
+  pointer-events: none;
+}
 .swatch.custom {
   position: relative;
   display: inline-block;
-  background: conic-gradient(#f55, #fd5, #5f5, #5df, #55f, #f5f, #f55);
   overflow: hidden;
 }
 .swatch.custom input {
@@ -1696,4 +1679,154 @@ label.cta {
   width: 100%;
   height: 100%;
   cursor: pointer;
+}
+
+/* ---- polish round ---- */
+.tl-gap {
+  position: absolute;
+  z-index: 3;
+  display: grid;
+  place-items: center;
+  border: 2px solid #8a4747;
+  background: rgba(110, 48, 48, 0.55);
+  border-radius: 6px;
+  pointer-events: none;
+}
+.gap-trash {
+  pointer-events: auto;
+  width: 40px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  color: #ff6b6b;
+  border-radius: 8px;
+}
+.gap-trash:active {
+  background: rgba(255, 107, 107, 0.2);
+}
+/* trim handles: a wide invisible grab area that reaches past both ends of the strip */
+.trim-h {
+  width: 36px;
+  background: transparent;
+}
+.trim-h::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 14px;
+  background: var(--accent);
+}
+.trim-h.left {
+  left: -22px;
+  border-radius: 0;
+}
+.trim-h.left::before {
+  right: 0;
+  border-radius: 5px 0 0 5px;
+}
+.trim-h.left::after {
+  left: 29px;
+}
+.trim-h.right {
+  right: -22px;
+  border-radius: 0;
+}
+.trim-h.right::before {
+  left: 0;
+  border-radius: 0 5px 5px 0;
+}
+.trim-h.right::after {
+  left: 7px;
+}
+.strip-clip.on {
+  overflow: visible;
+}
+.strip-clip .strip-thumb {
+  border-radius: inherit;
+}
+.strip-clip.solid .strip-label {
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.7);
+}
+.seg {
+  display: flex;
+  margin-top: 8px;
+  background: var(--raised);
+  border-radius: 12px;
+  padding: 3px;
+  gap: 3px;
+}
+.seg button {
+  flex: 1;
+  padding: 10px 6px;
+  border-radius: 9px;
+  font-weight: 600;
+  color: var(--muted);
+}
+.seg button.on {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+.tl-add.on {
+  outline: 2px solid var(--accent);
+}
+.add-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 28;
+}
+.tl-left {
+  position: relative;
+}
+.add-menu {
+  position: absolute;
+  left: 0;
+  bottom: 44px;
+  z-index: 29;
+  display: flex;
+  flex-direction: column;
+  min-width: 150px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 4px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.55);
+}
+.add-menu button,
+.add-menu .add-item {
+  display: block;
+  text-align: left;
+  padding: 12px 14px;
+  border-radius: 10px;
+  font-weight: 600;
+  font-size: 15px;
+}
+.add-menu button:active,
+.add-menu .add-item:active {
+  background: var(--raised);
+}
+.add-item span {
+  display: block;
+}
+/* tabs, drawer and sheets */
+:root {
+  --tabbar-h: calc(56px + var(--safe-b));
+}
+.tabbar {
+  height: var(--tabbar-h);
+  box-sizing: border-box;
+}
+.drawer {
+  bottom: var(--tabbar-h);
+  height: min(300px, 44%);
+}
+.drawer-scrim {
+  bottom: var(--tabbar-h);
+}
+.scrim {
+  z-index: 40;
+}
+.tab {
+  min-width: 0;
+  padding: 6px 2px 4px;
 }
