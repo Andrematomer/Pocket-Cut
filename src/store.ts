@@ -3,6 +3,7 @@ import { ASPECT_VALUE, IDENTITY_VIEW, baseScale, fillZoom, nearestAspect, normAn
 import { autoOutline, renderSolid, renderText } from './text.ts';
 import { IMAGE_MAX_SECONDS, decodeImage, dropAllMedia, isAudioFile, isImageFile, probeAudio, mediaBlob, newId, probeImage, probeVideo, registerMedia, UnsupportedMediaError } from './media.ts';
 import { setAwakeMode } from './wake.ts';
+import { computePeaks } from './wave.ts';
 import { onProxyProgress, onProxyWork, queueProxy, requeueAllProxies, setProxyOrder } from './proxy.ts';
 import { clearSaved, loadSaved, requestPersistence, saveMedia, saveProject } from './persist.ts';
 import { clipDuration, clipEnd, endOfTrack, freeTrack, MAX_SPEED, MIN_CLIP, MIN_SPEED, removeGap as removeGapFrom, totalOf, type Gap } from './timeline.ts';
@@ -39,6 +40,10 @@ export interface State {
   boxMode: boolean;
   /** the text clip being edited (index), or null when a new text is being made */
   textEdit: number | null;
+  /** 0..1 per sound key while a clip's sound is being prepared for the preview */
+  bakeProgress: Record<string, number>;
+  /** loudness outlines of audio files, by media id */
+  waves: Record<string, Uint8Array>;
   /** 0..1 per media id while its preview copy is waiting or being made */
   proxyProgress: Record<string, number>;
   /** settings of the app itself (not of one project) */
@@ -55,12 +60,14 @@ export interface AppPrefs {
   /** keep the screen on: always, only while exporting / making preview copies, or never */
   awake: 'on' | 'work' | 'off';
   /** what playback does at the end of the timeline */
-  onEnd: 'pause' | 'stop' | 'loop';
-  /** height of the strips on the timeline, 1 = normal */
+  onEnd: 'pause' | 'stop' | 'loop' | 'return';
+  /** height of the strips on the timeline, 1 = normal (used when rowAuto is off) */
   rowScale: number;
+  /** strips are sized so every shown lane fits */
+  rowAuto: boolean;
 }
 
-export const DEFAULT_PREFS: AppPrefs = { imageSeconds: 5, previewLong: 240, awake: 'work', onEnd: 'pause', rowScale: 1 };
+export const DEFAULT_PREFS: AppPrefs = { imageSeconds: 5, previewLong: 240, awake: 'work', onEnd: 'pause', rowScale: 1, rowAuto: true };
 
 function loadAppPrefs(): AppPrefs {
   try {
@@ -89,6 +96,8 @@ let state: State = {
   boxMode: false,
   textEdit: null,
   proxyProgress: {},
+  bakeProgress: {},
+  waves: {},
   prefs: loadAppPrefs(),
   canUndo: false,
   canRedo: false,
@@ -338,7 +347,7 @@ async function textMedia(text: string, st: TextStyle): Promise<MediaInfo> {
   registerMedia(id, r.blob, null, { name: text.slice(0, 24), bitmap: r.bitmap });
   const name = text.split('\n')[0]!.slice(0, 24) || 'Text';
   void saveMedia(id, { blob: r.blob, name, thumb: null });
-  return { id, name, duration: IMAGE_MAX_SECONDS, width: r.width, height: r.height, hasAudio: false, kind: 'image', text, textColor: st.color, textFont: st.font, textOutline: st.outline, textWidth: st.width, textScale: r.scale };
+  return { id, name, duration: IMAGE_MAX_SECONDS, width: r.width, height: r.height, hasAudio: false, kind: 'image', text, textColor: st.color, textFont: st.font, textOutline: st.outline, textWidth: st.width, textScale: r.scale, textBox: r.box };
 }
 
 /** A new text ("Text", in the last used style) at the position marker, on the first free lane from 0 up. */
@@ -371,7 +380,7 @@ export function editText(index: number, patch: Partial<TextStyle> & { text?: str
     const out = outputSize(state.project);
     const keep = (baseScale(m.width, m.height, out.w, out.h) * (m.textScale ?? 1)) / (baseScale(info.width, info.height, out.w, out.h) * (info.textScale ?? 1));
     saveTextStyle(st);
-    edit((p) => ({ ...p, media: { ...p.media, [info.id]: info }, clips: p.clips.map((x, i) => (i === now ? { ...x, mediaId: info.id, view: { ...x.view, zoom: x.view.zoom * keep } } : x)) }), { key: `text:${c.id}` });
+    edit((p) => ({ ...p, media: { ...p.media, [info.id]: info }, clips: p.clips.map((x, i) => (i === now ? { ...x, mediaId: info.id, crop: undefined, view: { ...x.view, zoom: x.view.zoom * keep } } : x)) }), { key: `text:${c.id}` });
   });
   return chain;
 }
@@ -496,6 +505,7 @@ export async function importFiles(files: File[]): Promise<void> {
     settings: first ? { ...p.settings, aspect: nearestAspect(first.width, first.height) } : p.settings,
   }));
   selectClip(firstNew);
+  added.forEach((c) => ensureWave(c.mediaId));
   void requestPersistence();
 }
 
@@ -547,6 +557,7 @@ export async function restore(): Promise<void> {
     } else settings.aspect = saved.project.settings.aspect;
     clearHistory();
     set({ project: { ...saved.project, clips, settings }, selected: 0, ready: true });
+    for (const id of Object.keys(saved.project.media)) ensureWave(id);
   } else {
     set({ ready: true });
   }
@@ -605,4 +616,30 @@ export function removeGap(): void {
 export function setCrop(index: number, crop: Clip['crop']): void {
   const empty = !crop || (crop.l <= 0 && crop.t <= 0 && crop.r <= 0 && crop.b <= 0);
   updateClip(index, { crop: empty ? undefined : crop });
+}
+
+/** Puts the picture back where it starts: centered, whole picture visible, no crop. */
+export function resetTransform(index: number): void {
+  const c = state.project.clips[index];
+  const m = c && state.project.media[c.mediaId];
+  if (!c || !m) return;
+  const out = outputSize(state.project);
+  const zoom = m.solid !== undefined ? fillZoom(m.width, m.height, 0, out.w, out.h) : m.text !== undefined ? 0.8 : 1;
+  updateClip(index, { view: { ...IDENTITY_VIEW, zoom }, crop: undefined });
+}
+
+// ---------- waveforms ----------
+
+const waving = new Set<string>();
+/** Makes the loudness outline of a sound file in the background (once per file). */
+export function ensureWave(id: string): void {
+  const m = state.project.media[id];
+  if (!m || m.kind !== 'audio' || state.waves[id] || waving.has(id)) return;
+  const blob = mediaBlob(id);
+  if (!blob) return;
+  waving.add(id);
+  void computePeaks(blob).then((p) => {
+    waving.delete(id);
+    if (p) set({ waves: { ...state.waves, [id]: p } });
+  });
 }

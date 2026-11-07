@@ -71,14 +71,22 @@ export function drawFrame(ctx: Ctx2D, src: CanvasImageSource, sw: number, sh: nu
   ctx.rotate(t.angle);
   ctx.scale(t.scale, t.scale);
   const c = o.crop;
-  if (c && (c.l > 0 || c.t > 0 || c.r > 0 || c.b > 0)) {
+  if (c && (c.l !== 0 || c.t !== 0 || c.r !== 0 || c.b !== 0)) {
     const pw = o.srcW ?? sw;
     const ph = o.srcH ?? sh;
-    const l = Math.min(0.98, Math.max(0, c.l));
-    const t = Math.min(0.98, Math.max(0, c.t));
-    const r = Math.min(0.98 - l, Math.max(0, c.r));
-    const b = Math.min(0.98 - t, Math.max(0, c.b));
-    ctx.drawImage(src, l * pw, t * ph, (1 - l - r) * pw, (1 - t - b) * ph, -sw / 2 + l * sw, -sh / 2 + t * sh, (1 - l - r) * sw, (1 - t - b) * sh);
+    // a crop cuts a side off; a negative one (flat colors only) pushes the side outwards, stretching the picture
+    const k = (v: number) => Math.min(0.98, Math.max(-3, v));
+    let l = k(c.l);
+    let t = k(c.t);
+    let r = k(c.r);
+    let b = k(c.b);
+    if (1 - l - r < 0.02) r = 0.98 - l;
+    if (1 - t - b < 0.02) b = 0.98 - t;
+    const sl = Math.max(0, l);
+    const st = Math.max(0, t);
+    const sr = Math.max(0, r);
+    const sb = Math.max(0, b);
+    ctx.drawImage(src, sl * pw, st * ph, (1 - sl - sr) * pw, (1 - st - sb) * ph, -sw / 2 + l * sw, -sh / 2 + t * sh, (1 - l - r) * sw, (1 - t - b) * sh);
   } else {
     ctx.drawImage(src, -sw / 2, -sh / 2, sw, sh);
   }

@@ -23,7 +23,7 @@ export const autoOutline = (color: string): string => (color.toLowerCase() === '
 /** Longest side, in pixels, that a text picture may have: big enough to stay sharp when scaled up, small enough to be cheap. */
 const TEXT_MAX_SIDE = 3072;
 
-export async function renderText(text: string, color: string, fontKey = 'sans', outline = autoOutline(color), outlineWidth = 14): Promise<{ blob: Blob; bitmap: ImageBitmap; width: number; height: number; scale: number }> {
+export async function renderText(text: string, color: string, fontKey = 'sans', outline = autoOutline(color), outlineWidth = 14): Promise<{ blob: Blob; bitmap: ImageBitmap; width: number; height: number; scale: number; box: { l: number; t: number; r: number; b: number } }> {
   const lines = text.split('\n').map((l) => l.trimEnd());
   while (lines.length > 1 && lines[lines.length - 1] === '') lines.pop();
   const f = TEXT_FONTS.find((x) => x.key === fontKey) ?? TEXT_FONTS[0]!;
@@ -34,6 +34,8 @@ export async function renderText(text: string, color: string, fontKey = 'sans', 
   const lineH = 150;
   const pad = 50 + Math.ceil(outlineWidth / 2);
   // size in font units (120 px font); the picture itself is drawn up to 3 times larger
+  probe.textBaseline = 'middle';
+  probe.textAlign = 'center';
   const uw = Math.ceil(widest + pad * 2);
   const uh = Math.ceil(lines.length * lineH + pad * 2);
   const scale = Math.max(0.5, Math.min(3, TEXT_MAX_SIDE / Math.max(uw, uh)));
@@ -61,7 +63,24 @@ export async function renderText(text: string, color: string, fontKey = 'sans', 
   });
   const blob = await new Promise<Blob>((resolve, reject) => c.toBlob((b) => (b ? resolve(b) : reject(new Error('no picture'))), 'image/png'));
   const bitmap = await createImageBitmap(blob);
-  return { blob, bitmap, width, height, scale: width / uw };
+  // where the ink really is (letters like l and y reach further than a, e, m), outline included
+  let x0 = uw;
+  let x1 = 0;
+  let y0 = uh;
+  let y1 = 0;
+  const half = outlineWidth / 2;
+  lines.forEach((l, i) => {
+    if (!l.trim()) return;
+    const m = probe.measureText(l);
+    const y = pad + lineH * i + lineH / 2;
+    x0 = Math.min(x0, uw / 2 - m.actualBoundingBoxLeft - half);
+    x1 = Math.max(x1, uw / 2 + m.actualBoundingBoxRight + half);
+    y0 = Math.min(y0, y - m.actualBoundingBoxAscent - half);
+    y1 = Math.max(y1, y + m.actualBoundingBoxDescent + half);
+  });
+  const ok = x1 > x0 && y1 > y0;
+  const box = ok ? { l: Math.max(0, x0 / uw), t: Math.max(0, y0 / uh), r: Math.max(0, 1 - x1 / uw), b: Math.max(0, 1 - y1 / uh) } : { l: 0, t: 0, r: 0, b: 0 };
+  return { blob, bitmap, width, height, scale: width / uw, box };
 }
 
 /** A small flat picture of one color (a "color" clip); it is scaled up to cover the canvas. */

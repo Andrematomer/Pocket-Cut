@@ -1,5 +1,6 @@
 import { mediaBitmap, mediaBlob, mediaUrl } from './media.ts';
 import { PreviewEngine } from './preview.ts';
+import { onBakeChange, progress } from './bake.ts';
 import { getState, set } from './store.ts';
 
 /** The single preview player shared by the whole UI. */
@@ -13,3 +14,5 @@ export const engine = new PreviewEngine({
   getEnd: () => getState().prefs.onEnd,
 });
 
+
+onBakeChange(() => set({ bakeProgress: Object.fromEntries(progress) }));

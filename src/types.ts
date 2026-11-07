@@ -26,6 +26,8 @@ export interface MediaInfo {
   textWidth?: number;
   /** how many bitmap pixels one unit of the 120 px font takes (text is drawn larger so it stays sharp when scaled up) */
   textScale?: number;
+  /** where the ink of the text is inside its picture (fractions from each side), so the transform box can hug it */
+  textBox?: { l: number; t: number; r: number; b: number };
   /** set when the picture is a plain color (an "empty" clip) */
   solid?: string;
 }

@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
+import { keyOf } from '../bake.ts';
 import { engine } from '../engine.ts';
 import { thumbUrl } from '../media.ts';
 import { addSolid, addTextClip, getState, moveClipTo, removeGap, selectClip, set, updateClip, useStore } from '../store.ts';
+import { PEAKS_PER_SEC } from '../wave.ts';
 import { MIN_CLIP, clipDuration, clipEnd, fmtTime, gapAt, totalOf } from '../timeline.ts';
 import type { Clip, MediaInfo } from '../types.ts';
 import { PickLabel } from './Picker.tsx';
@@ -36,7 +38,7 @@ const isAudio = (m: MediaInfo | undefined) => m?.kind === 'audio';
 
 /**
  * The lanes shown, top to bottom. Picture and video lanes count up from lane 0, sound lanes down from
- * -1. Two empty lanes are open beyond the last used one on each side, so a clip cannot get lost far away.
+ * -1. One empty lane is open beyond the last used one on each side, so a clip cannot get lost far away.
  */
 export function lanesFor(clips: Clip[]): number[] {
   let hi = 0;
@@ -46,7 +48,7 @@ export function lanesFor(clips: Clip[]): number[] {
     else lo = Math.min(lo, c.track);
   }
   const out: number[] = [];
-  for (let t = hi + 2; t >= lo - 2; t--) out.push(t);
+  for (let t = hi + 1; t >= lo - 1; t--) out.push(t);
   return out;
 }
 
@@ -65,6 +67,8 @@ export function Timeline() {
   const progress = useStore((s) => s.proxyProgress);
   const gap = useStore((s) => s.gap);
   const handles = useStore((s) => s.handles);
+  const waves = useStore((s) => s.waves);
+  const bakes = useStore((s) => s.bakeProgress);
   const [menu, setMenu] = useState(false);
   const [pps, setPps] = useState(36); // pixels per second
   const [move, setMove] = useState<Move | null>(null);
@@ -74,8 +78,13 @@ export function Timeline() {
   const st = useRef<{ id: number; i: number; x0: number; y0: number; x: number; y: number; at0: number; track0: number; scroll0: number; scrollTop0: number; timer: number; active: boolean; raf: number } | null>(null);
   const swallow = useRef(false);
 
+  const prefRow = useStore((s) => s.prefs.rowScale);
+  const rowAuto = useStore((s) => s.prefs.rowAuto);
+  const [viewH, setViewH] = useState(200);
   const lanes = lanesFor(clips);
-  const rowScale = useStore((s) => s.prefs.rowScale);
+  // auto: every lane that is shown fits the height of the timeline (between half and double the normal height)
+  const autoScale = Math.min(2, Math.max(0.5, ((viewH - RULER - 6) / lanes.length - GAP) / ROW0));
+  const rowScale = rowAuto ? autoScale : prefRow;
   const ROW = Math.round(ROW0 * rowScale);
   const total = totalOf(clips);
   const padL = Math.round(viewW / 3);
@@ -90,9 +99,10 @@ export function Timeline() {
   useEffect(() => {
     const el = scroller.current;
     if (!el) return;
-    const ro = new ResizeObserver(() => setViewW(el.clientWidth || 360));
+    const ro = new ResizeObserver(() => (setViewW(el.clientWidth || 360), setViewH(el.clientHeight || 200)));
     ro.observe(el);
     setViewW(el.clientWidth || 360);
+    setViewH(el.clientHeight || 200);
     return () => ro.disconnect();
   }, []);
 
@@ -317,7 +327,9 @@ export function Timeline() {
     trimRef.current = null;
     setTrim(null);
     const c = t.cur;
-    if (e.type === 'pointerup' && (c.at !== t.base.at || c.start !== t.base.start || c.end !== t.base.end)) updateClip(t.i, { at: Math.round(c.at * 100) / 100, start: c.start, end: c.end });
+    // a tap on a handle (no drag) puts the handles away, which is how a very short strip gets them back off
+    if (e.type === 'pointerup' && Math.abs(e.clientX - t.x0) < 6) set({ handles: false });
+    else if (e.type === 'pointerup' && (c.at !== t.base.at || c.start !== t.base.start || c.end !== t.base.end)) updateClip(t.i, { at: Math.round(c.at * 100) / 100, start: c.start, end: c.end });
     void engine.showAt(getState().playhead);
   };
 
@@ -428,12 +440,14 @@ export function Timeline() {
               const audio = isAudio(m);
               const w = Math.max(14, ((end - start) / c.speed) * pps);
               const on = i === selected;
+              const baking = bakes[keyOf(c)];
+              const wave = audio ? waves[c.mediaId] : undefined;
               return (
                 <button
                   key={c.id}
                   role="option"
                   aria-selected={on}
-                  class={`strip-clip ${on ? 'on' : ''} ${moving ? 'lifted' : ''} ${audio ? 'audio' : ''} ${m?.text ? 'texty' : ''} ${m?.solid ? 'solid' : ''}`}
+                  class={`strip-clip ${on ? 'on' : ''} ${moving ? 'lifted' : ''} ${audio ? 'audio' : ''} ${m?.text ? 'texty' : ''} ${m?.solid ? 'solid' : ''} ${baking !== undefined ? 'baking' : ''}`}
                   style={{ left: `${padL + at * pps}px`, top: `${top}px`, width: `${w}px`, height: `${ROW}px`, ...(m?.solid ? { background: m.solid } : {}) }}
                   onPointerDown={down(i)}
                   onPointerMove={onMove}
@@ -447,6 +461,12 @@ export function Timeline() {
                     else selectClip(i);
                   }}
                 >
+                  {wave && <Wave peaks={wave} from={start} to={end} width={w} />}
+                  {baking !== undefined && (
+                    <span class="strip-pie" title="Preparing the sound for the preview">
+                      <Pie value={baking} size={Math.max(14, Math.min(22, ROW - 10))} />
+                    </span>
+                  )}
                   {url && !m?.text && <span class="strip-thumb" style={{ backgroundImage: `url("${url}")`, backgroundPosition: `${-(at - c.at) * pps}px center` }} />}
                   <span class="strip-label num">
                     {c.speed !== 1 ? `${c.speed}× · ` : ''}
@@ -471,5 +491,30 @@ export function Timeline() {
         <div class="tl-playhead" style={{ left: `${padL}px` }} />
       </div>
     </div>
+  );
+}
+
+/** The loudness outline of the part of a sound file that the strip shows. */
+function Wave({ peaks, from, to, width }: { peaks: Uint8Array; from: number; to: number; width: number }) {
+  const a = Math.max(0, Math.floor(from * PEAKS_PER_SEC));
+  const b = Math.min(peaks.length, Math.ceil(to * PEAKS_PER_SEC));
+  const n = b - a;
+  if (n < 2) return null;
+  // no more than about one bar per 1.5 px
+  const group = Math.max(1, Math.floor(n / Math.max(8, width / 1.5)));
+  const top: string[] = [];
+  const bottom: string[] = [];
+  for (let i = 0, x = 0; i < n; i += group, x++) {
+    let v = 0;
+    for (let k = i; k < Math.min(n, i + group); k++) v = Math.max(v, peaks[a + k]!);
+    const h = (v / 255) * 46 + 1;
+    top.push(`${x},${50 - h}`);
+    bottom.unshift(`${x},${50 + h}`);
+  }
+  const cols = top.length;
+  return (
+    <svg class="strip-wave" viewBox={`0 0 ${cols - 1} 100`} preserveAspectRatio="none" aria-hidden="true">
+      <polygon points={[...top, ...bottom].join(' ')} />
+    </svg>
   );
 }

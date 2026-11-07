@@ -4,7 +4,7 @@
  * The similarity search runs on a 4x decimated mono mix, then refines at full rate, which keeps
  * it fast enough for a phone.
  */
-export function timeStretch(input: Float32Array[], sampleRate: number, speed: number): Float32Array[] {
+export function timeStretch(input: Float32Array[], sampleRate: number, speed: number, onProgress?: (done: number) => void): Float32Array[] {
   if (Math.abs(speed - 1) < 1e-3 || input.length === 0) return input;
   const n = input[0]!.length;
   const outLen = Math.max(1, Math.round(n / speed));
@@ -48,6 +48,7 @@ export function timeStretch(input: Float32Array[], sampleRate: number, speed: nu
 
   let prev = 0; // start of the previously used input window
   for (let k = 0, outPos = 0; outPos < outLen; k++, outPos = k * hop) {
+    if (onProgress && (k & 127) === 0) onProgress(outPos / outLen);
     const nominal = Math.round(k * hop * speed);
     let best = nominal;
     if (k > 0) {

@@ -4,7 +4,7 @@ import { storageEstimate } from '../persist.ts';
 import { canPromptInstall, isIOS, isStandalone, promptInstall } from '../install.ts';
 import { discardProject, setPrefs, useStore } from '../store.ts';
 import { browserInfo, checkSupport } from '../support.ts';
-import { Hint } from './Hint.tsx';
+import { Fold } from './Fold.tsx';
 import { Sheet } from './Sheet.tsx';
 import { Slider } from './Slider.tsx';
 
@@ -32,8 +32,7 @@ export function SettingsSheet({ onClose }: { onClose: () => void }) {
         </div>
       </section>
 
-      <section>
-        <h3>Preview quality</h3>
+      <Fold title="Preview quality" hint={<>Videos are previewed from a small copy so editing stays smooth. Pick a lower number if the preview stutters on an older phone. The exported video always uses the originals.</>}>
         <div class="chips" role="group" aria-label="Preview size">
           {[144, 240, 360].map((n) => (
             <button
@@ -49,11 +48,10 @@ export function SettingsSheet({ onClose }: { onClose: () => void }) {
             </button>
           ))}
         </div>
-        <Hint>Videos are previewed from a small copy so editing stays smooth. Pick a lower number if the preview stutters on an older phone. The exported video always uses the originals.</Hint>
-      </section>
+        
+      </Fold>
 
-      <section>
-        <h3>Keep the screen on</h3>
+      <Fold title="Keep the screen on" hint={<>"While working" keeps the screen awake only while a video is exporting or a preview copy is being made. With "Never", keep the app open and the phone awake yourself during exports.</>}>
         <div class="chips" role="group" aria-label="Keep the screen on">
           {([['on', 'Always'], ['work', 'While working'], ['off', 'Never']] as const).map(([v, label]) => (
             <button key={v} class={`chip ${prefs.awake === v ? 'on' : ''}`} aria-pressed={prefs.awake === v} onClick={() => setPrefs({ awake: v })}>
@@ -61,36 +59,42 @@ export function SettingsSheet({ onClose }: { onClose: () => void }) {
             </button>
           ))}
         </div>
-        <Hint>"While working" keeps the screen awake only while a video is exporting or a preview copy is being made. With "Never", keep the app open and the phone awake yourself during exports.</Hint>
-      </section>
+        
+      </Fold>
 
-      <section>
-        <h3>When playback ends</h3>
+      <Fold title="When playback ends" hint={<>Pause stays on the last frame. Stop goes back to the start. Loop plays again from the start. Return goes back to where the yellow line was when you pressed play.</>}>
         <div class="chips" role="group" aria-label="When playback ends">
-          {([['pause', 'Pause'], ['stop', 'Stop'], ['loop', 'Loop']] as const).map(([v, label]) => (
+          {([['pause', 'Pause'], ['stop', 'Stop'], ['loop', 'Loop'], ['return', 'Return']] as const).map(([v, label]) => (
             <button key={v} class={`chip ${prefs.onEnd === v ? 'on' : ''}`} aria-pressed={prefs.onEnd === v} onClick={() => setPrefs({ onEnd: v })}>
               {label}
             </button>
           ))}
         </div>
-        <Hint>Pause stays on the last frame. Stop goes back to the start. Loop plays again from the start.</Hint>
-      </section>
+        
+      </Fold>
 
-      <section>
-        <h3>Timeline strip height</h3>
-        <div class="rate-slider">
-          <div class="rate-now num">{Math.round(prefs.rowScale * 100)}%</div>
-          <Slider label="Timeline strip height" value={prefs.rowScale} min={0.5} max={2} step={0.05} fineStep={0.01} snaps={[1]} snapPx={14} valueText={`${Math.round(prefs.rowScale * 100)} percent`} onChange={(v) => setPrefs({ rowScale: Math.round(v * 100) / 100 })} />
+      <Fold title="Timeline strip height" hint={<>Auto sizes the strips so every shown lane fits the timeline (between 50% and 200%). Manual lets you pick the height yourself.</>}>
+        <div class="chips" role="group" aria-label="Timeline strip height mode">
+          <button class={`chip ${prefs.rowAuto ? 'on' : ''}`} aria-pressed={prefs.rowAuto} onClick={() => setPrefs({ rowAuto: true })}>
+            Auto
+          </button>
+          <button class={`chip ${!prefs.rowAuto ? 'on' : ''}`} aria-pressed={!prefs.rowAuto} onClick={() => setPrefs({ rowAuto: false })}>
+            Manual
+          </button>
         </div>
-        <Hint>Makes the strips on the timeline thinner or taller. Thin strips help when you work with many layers.</Hint>
-      </section>
+        {!prefs.rowAuto && (
+          <div class="rate-slider">
+            <div class="rate-now num">{Math.round(prefs.rowScale * 100)}%</div>
+            <Slider label="Timeline strip height" value={prefs.rowScale} min={0.5} max={2} step={0.05} fineStep={0.01} snaps={[1]} snapPx={14} valueText={`${Math.round(prefs.rowScale * 100)} percent`} onChange={(v) => setPrefs({ rowScale: Math.round(v * 100) / 100 })} />
+          </div>
+        )}
+      </Fold>
 
-      <section>
-        <h3>Saved project</h3>
-        <Hint>
+      <Fold title="Saved project" hint={<>
           Your last project (including the original videos) is kept on this device until you delete it. Nothing is ever uploaded.
           {usage && <span class="num"> Using {fmtBytes(usage.used)} of roughly {fmtBytes(usage.quota)} available.</span>}
-        </Hint>
+        </>}>
+        
         {!confirm ? (
           <button class="btn danger" disabled={!hasProject} onClick={() => setConfirm(true)}>
             Delete saved project
@@ -111,7 +115,7 @@ export function SettingsSheet({ onClose }: { onClose: () => void }) {
             </button>
           </div>
         )}
-      </section>
+      </Fold>
 
       <section>
         <h3>This device</h3>
@@ -126,16 +130,15 @@ export function SettingsSheet({ onClose }: { onClose: () => void }) {
         <p class="hint small-print">{browserInfo()}</p>
       </section>
 
-      <section>
-        <h3>Offline</h3>
-        <Hint>{offline ? 'Ready to work without a connection.' : 'Open the app once while online. After that it works offline.'}</Hint>
+      <Fold title="Offline" hint={<>{offline ? 'Ready to work without a connection.' : 'Open the app once while online. After that it works offline.'}</>}>
+        
         {!isStandalone && canPromptInstall() && (
           <button class="btn" onClick={() => void promptInstall()}>
             Install app
           </button>
         )}
-        {!isStandalone && isIOS && <Hint>To install on iPhone or iPad: tap Share, then Add to Home Screen.</Hint>}
-      </section>
+        {!isStandalone && isIOS && <p class="hint">To install on iPhone or iPad: tap Share, then Add to Home Screen.</p>}
+      </Fold>
     </Sheet>
   );
 }

@@ -13,7 +13,7 @@ export interface PreviewDeps {
   onTime(t: number): void;
   onPlaying(playing: boolean): void;
   /** what to do when playback reaches the end */
-  getEnd(): 'pause' | 'stop' | 'loop';
+  getEnd(): 'pause' | 'stop' | 'loop' | 'return';
 }
 
 const IOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
@@ -64,6 +64,8 @@ export class PreviewEngine {
   live: { index: number; view: View } | null = null;
   /** crop being dragged on screen (not yet saved to the clip) */
   cropLive: { index: number; crop: Crop } | null = null;
+  /** where the position marker was when play was pressed (for the "return" end mode) */
+  private playFrom = 0;
 
   private clockT0 = 0;
   private clockTl0 = 0;
@@ -438,6 +440,7 @@ export class PreviewEngine {
     if (clips.length === 0) return;
     const total = totalOf(clips);
     if (this.tl >= total - 0.05) this.tl = 0;
+    this.playFrom = this.tl;
     await this.showAt(this.tl);
     const tok = ++this.token;
     this.playing = true;
@@ -457,13 +460,13 @@ export class PreviewEngine {
     const tl = this.clockTl0 + (performance.now() - this.clockT0) / 1000;
     if (tl >= total) {
       const mode = this.deps.getEnd();
-      this.tl = mode === 'pause' ? total : 0;
+      this.tl = mode === 'pause' ? total : mode === 'return' ? Math.min(this.playFrom, total) : 0;
       this.stopPlaying();
       if (mode === 'pause') {
         this.draw();
         this.deps.onTime(this.tl);
       } else if (mode === 'loop') void this.play();
-      else void this.showAt(0);
+      else void this.showAt(this.tl);
       return;
     }
     this.tl = tl;

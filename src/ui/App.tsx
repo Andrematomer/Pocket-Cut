@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { engine } from '../engine.ts';
 import { canPromptInstall, isAndroid, isIOS, isMobile, isStandalone, onInstallChange, promptInstall } from '../install.ts';
-import { redo, restore, set, undo, useStore } from '../store.ts';
+import { importFiles, redo, restore, set, undo, useStore } from '../store.ts';
 import { ASPECT_LABEL, CanvasSheet } from './CanvasSheet.tsx';
 import { HelpSheet } from './HelpSheet.tsx';
 import { ExportSheet } from './ExportSheet.tsx';
@@ -49,6 +49,36 @@ export function App() {
 
   useEffect(() => {
     void restore();
+  }, []);
+
+  // drag files from the computer onto the page
+  const [dropping, setDropping] = useState(false);
+  useEffect(() => {
+    const hasFiles = (e: DragEvent) => !!e.dataTransfer && [...e.dataTransfer.types].includes('Files');
+    const over = (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      setDropping(true);
+    };
+    const leave = (e: DragEvent) => {
+      if (!e.relatedTarget) setDropping(false);
+    };
+    const drop = (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      setDropping(false);
+      void importFiles([...(e.dataTransfer?.files ?? [])]);
+    };
+    window.addEventListener('dragenter', over);
+    window.addEventListener('dragover', over);
+    window.addEventListener('dragleave', leave);
+    window.addEventListener('drop', drop);
+    return () => {
+      window.removeEventListener('dragenter', over);
+      window.removeEventListener('dragover', over);
+      window.removeEventListener('dragleave', leave);
+      window.removeEventListener('drop', drop);
+    };
   }, []);
 
   // the handle under the preview: drag to give the timeline or the preview more room
@@ -120,6 +150,8 @@ export function App() {
       {shownSheet === 'settings' && <SettingsSheet onClose={() => set({ sheet: 'none' })} />}
 
       </div>
+
+      {dropping && <div class="drop-hint">Drop to add</div>}
 
       {toast && (
         <div class="toast" role="status">

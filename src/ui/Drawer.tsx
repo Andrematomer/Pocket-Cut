@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { engine } from '../engine.ts';
 import { NO_GRADE } from '../layers.ts';
-import { deleteClip, duplicateClip, editText, set, setSolidColor, setSpeed, splitAtPlayhead, toast, updateClip, useStore, type Tool } from '../store.ts';
+import { deleteClip, duplicateClip, editText, resetTransform, set, setSolidColor, setSpeed, splitAtPlayhead, toast, updateClip, useStore, type Tool } from '../store.ts';
 import { TEXT_FONTS, autoOutline } from '../text.ts';
 import { MAX_SPEED, MIN_SPEED, clipDuration, fmtTime } from '../timeline.ts';
 import type { Grade, MediaInfo } from '../types.ts';
@@ -290,6 +290,11 @@ export function Drawer() {
               </button>
             ) : (
               <p class="hint grow">Scroll the timeline so the yellow line is inside this clip to split it there.</p>
+            )}
+            {media.kind !== 'audio' && (
+              <button class="btn" onClick={() => resetTransform(index)}>
+                Reset transform
+              </button>
             )}
             <button
               class="btn"

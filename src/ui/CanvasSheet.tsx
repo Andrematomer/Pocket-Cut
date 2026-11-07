@@ -1,6 +1,6 @@
 import { setSettings, useStore } from '../store.ts';
 import type { AspectChoice } from '../types.ts';
-import { Hint } from './Hint.tsx';
+import { Fold } from './Fold.tsx';
 import { Sheet } from './Sheet.tsx';
 
 export const ASPECT_LABEL: Record<AspectChoice, string> = { '9:16': '9:16', '4:5': '4:5', '1:1': '1:1', '5:4': '5:4', '16:9': '16:9' };
@@ -12,8 +12,7 @@ export function CanvasSheet({ onClose }: { onClose: () => void }) {
   const bg = useStore((s) => s.project.settings.background);
   return (
     <Sheet title="Canvas" onClose={onClose}>
-      <section>
-        <h3>Shape of the video</h3>
+      <Fold title="Shape of the video" hint={<>The shape of the exported video. It starts with the shape that suits your first clip. Move, zoom and turn each clip right on the preview to place it.</>}>
         <div class="chips" role="group" aria-label="Canvas shape">
           {ASPECTS.map((a) => (
             <button key={a} class={`chip num ${aspect === a ? 'on' : ''}`} aria-pressed={aspect === a} onClick={() => setSettings({ aspect: a })}>
@@ -21,17 +20,13 @@ export function CanvasSheet({ onClose }: { onClose: () => void }) {
             </button>
           ))}
         </div>
-        <Hint>The shape of the exported video. It starts with the shape that suits your first clip. Move, zoom and turn each clip right on the preview to place it.</Hint>
-      </section>
-      <section>
-        <h3>Background color</h3>
-        <div class="chips" role="group" aria-label="Background color">
-          <label class="swatch custom on" style={{ background: bg }} aria-label="Background color">
-            <input type="color" value={bg} onInput={(e) => setSettings({ background: (e.currentTarget as HTMLInputElement).value })} />
-          </label>
-        </div>
-        <Hint>Tap the swatch to open your system's color picker. The color shows wherever no picture covers the canvas, in the preview and in the export.</Hint>
-      </section>
+        
+      </Fold>
+      <Fold title="Background color" hint={<>Tap the swatch to open your system's color picker. The color shows wherever no picture covers the canvas, in the preview and in the export.</>}>
+        <label class="color-block" style={{ background: bg }} aria-label="Background color">
+              <input type="color" value={bg} onInput={(e) => setSettings({ background: (e.currentTarget as HTMLInputElement).value })} />
+        </label>
+      </Fold>
       <button class="cta" onClick={onClose}>
         Done
       </button>

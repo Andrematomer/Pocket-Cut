@@ -8,7 +8,6 @@ import { blobFor, setName, setSettings, useStore } from '../store.ts';
 import { fmtTime, planParts, totalOf } from '../timeline.ts';
 import type { ExportSettings } from '../types.ts';
 import { Check, Download, Share } from './icons.tsx';
-import { Hint } from './Hint.tsx';
 import { Sheet } from './Sheet.tsx';
 import { Slider } from './Slider.tsx';
 
@@ -186,10 +185,10 @@ export function ExportSheet({ onClose }: { onClose: () => void }) {
                 <Slider label="Video bitrate" value={s.bitrateMbps} min={RATE_STOPS[0]} max={RATE_STOPS[RATE_STOPS.length - 1]!} snaps={RATE_STOPS} snapAlways step={1} fineStep={0.1} valueText={`${s.bitrateMbps} megabits per second`} onChange={(v) => setN({ bitrateMbps: Math.round(v * 10) / 10 })} />
               </div>
             )}
-            <Hint num>
+            <p class="hint num">
               {size.w}×{size.h}, MP4{showSlider ? ` · ${fmtMbps(vbps)}` : ''}
               {longest > 0 && ` · up to about ${fmtBytes(estimateBytes(vbps, longest, withSound))}${parts.length > 1 ? ' per file' : ''}`}
-            </Hint>
+            </p>
           </section>
 
           <button class="cta" onClick={run} disabled={parts.length === 0}>

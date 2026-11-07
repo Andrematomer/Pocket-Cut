@@ -31,6 +31,20 @@ class Boundary extends Component<{ children: ComponentChildren }, { error: Error
   }
 }
 
+// every touched button grows for a moment and settles back: a slow response (the iPhone color picker) still feels registered
+window.addEventListener(
+  'pointerdown',
+  (e) => {
+    const b = (e.target as Element | null)?.closest?.('button, [role="button"], label.pick-label, .color-block, .swatch');
+    if (!b || b.closest('.strip-clip, .gap-trash') || (b as HTMLButtonElement).disabled) return;
+    b.classList.remove('tap');
+    void (b as HTMLElement).offsetWidth;
+    b.classList.add('tap');
+  },
+  true,
+);
+document.addEventListener('animationend', (e) => (e.target as Element).classList?.remove('tap'), true);
+
 render(
   <Boundary>
     <App />

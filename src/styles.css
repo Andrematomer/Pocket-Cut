@@ -704,7 +704,7 @@ input[type='range']::-moz-range-thumb {
   position: fixed;
   left: 16px;
   right: 16px;
-  bottom: calc(var(--safe-b) + 16px);
+  bottom: calc(var(--tabbar-h, 56px) + 10px);
   max-width: 520px;
   margin: 0 auto;
   display: flex;
@@ -2020,4 +2020,136 @@ label.cta {
   width: 6px;
   height: 40px;
   border-radius: 6px;
+}
+
+/* the side handles cut the picture, which is not the usual kind of handle: red. Flat colors stretch instead: yellow. */
+.tbox-h.side::after {
+  background: #ff4d4d;
+}
+.tbox-h.side.stretch::after {
+  background: var(--accent);
+}
+
+.fold-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  color: var(--muted);
+  font-size: 15px;
+  font-weight: 600;
+  padding: 2px 0;
+}
+.fold-title.big {
+  color: var(--text);
+  padding: 13px 0;
+  justify-content: space-between;
+}
+.fold-title span {
+  flex: 0 1 auto;
+}
+.fold-title.big span {
+  flex: 1;
+}
+.fold-title i {
+  font-style: normal;
+  font-size: 12px;
+  transition: transform 0.2s ease;
+}
+.fold-title i.open {
+  transform: rotate(180deg);
+}
+.fold-body {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transition: grid-template-rows 0.22s ease, opacity 0.2s ease;
+}
+.fold-body.open {
+  grid-template-rows: 1fr;
+  opacity: 1;
+}
+.fold-body > div {
+  overflow: hidden;
+  min-height: 0;
+}
+.fold-body .hint {
+  margin: 0 0 6px;
+}
+.collapse {
+  border-bottom: 1px solid var(--line);
+}
+.collapse .fold-body p {
+  margin: 0 0 12px;
+}
+.color-block {
+  display: block;
+  position: relative;
+  height: 56px;
+  border-radius: 14px;
+  box-shadow: 0 0 0 1px var(--line);
+  overflow: hidden;
+}
+.color-block input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+/* update notice and other toasts sit above the tab bar and every drawer */
+.toast {
+  z-index: 70;
+}
+/* a button that is touched grows for a moment, so a slow response (iOS color picker) still feels registered */
+.tap {
+  animation: tap-pop 0.3s ease-out;
+}
+@keyframes tap-pop {
+  35% {
+    scale: 1.1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tap {
+    animation: none;
+  }
+}
+.drop-hint {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: grid;
+  place-items: center;
+  background: rgba(10, 14, 18, 0.78);
+  color: var(--accent);
+  font-size: 22px;
+  font-weight: 700;
+  border: 3px dashed var(--accent);
+  pointer-events: none;
+}
+
+.strip-wave {
+  position: absolute;
+  inset: 3px 0;
+  width: 100%;
+  height: calc(100% - 6px);
+  pointer-events: none;
+}
+.strip-wave polygon {
+  fill: rgba(190, 215, 255, 0.55);
+}
+.strip-clip.baking {
+  filter: grayscale(1) brightness(0.8);
+}
+.strip-pie {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 4;
+  pointer-events: none;
+  display: grid;
 }

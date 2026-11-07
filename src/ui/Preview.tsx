@@ -425,7 +425,11 @@ function TransformBox({ boxW: W, boxH: H }: { boxW: number; boxH: number }) {
 
   if (!on || quiet || !clip || !media || media.kind === 'audio') return null;
   const view = drag?.view ?? clip.view;
-  const crop: Crop = drag?.crop ?? clip.crop ?? { l: 0, t: 0, r: 0, b: 0 };
+  // text: the box hugs the letters, so each side starts where the ink starts
+  const inset: Crop = media.textBox ?? { l: 0, t: 0, r: 0, b: 0 };
+  const stored: Crop = drag?.crop ?? clip.crop ?? { l: 0, t: 0, r: 0, b: 0 };
+  const crop: Crop = { l: Math.max(stored.l, inset.l), t: Math.max(stored.t, inset.t), r: Math.max(stored.r, inset.r), b: Math.max(stored.b, inset.b) };
+  const stretch = media.solid !== undefined; // a flat color has nothing to cut: its sides stretch it instead
   const sc = baseScale(media.width, media.height, W, H) * view.zoom;
   const pw = media.width * sc;
   const ph = media.height * sc;
@@ -468,6 +472,7 @@ function TransformBox({ boxW: W, boxH: H }: { boxW: number; boxH: number }) {
       /* the pointer is gone */
     }
     st.current = { id: e.pointerId, h, p0: frameBox(e), view0: clip.view, crop0: crop };
+    void stretch;
   };
 
   const solve = (e: PointerEvent): { view: View; crop: Crop } => {
@@ -521,10 +526,11 @@ function TransformBox({ boxW: W, boxH: H }: { boxW: number; boxH: number }) {
     const ly = -dx * si + dy * co;
     const c = { ...c0 };
     const room = 0.95;
-    if (d.h === 'l') c.l = Math.min(room - c.r, Math.max(0, c.l + lx / w0));
-    if (d.h === 'r') c.r = Math.min(room - c.l, Math.max(0, c.r - lx / w0));
-    if (d.h === 't') c.t = Math.min(room - c.b, Math.max(0, c.t + ly / h0));
-    if (d.h === 'b') c.b = Math.min(room - c.t, Math.max(0, c.b - ly / h0));
+    const lo = (side: keyof Crop) => (stretch ? -3 : inset[side]);
+    if (d.h === 'l') c.l = Math.min(room - c.r, Math.max(lo('l'), c.l + lx / w0));
+    if (d.h === 'r') c.r = Math.min(room - c.l, Math.max(lo('r'), c.r - lx / w0));
+    if (d.h === 't') c.t = Math.min(room - c.b, Math.max(lo('t'), c.t + ly / h0));
+    if (d.h === 'b') c.b = Math.min(room - c.t, Math.max(lo('b'), c.b - ly / h0));
     return { view: v0, crop: c };
   };
 
@@ -545,13 +551,16 @@ function TransformBox({ boxW: W, boxH: H }: { boxW: number; boxH: number }) {
     engine.live = null;
     engine.cropLive = null;
     if (r.view !== d.view0) updateClip(selected, { view: r.view });
-    if (r.crop !== d.crop0) setCrop(selected, r.crop);
+    if (r.crop !== d.crop0) {
+      const z = (v: number, i: number) => (v <= i + 1e-6 ? 0 : v);
+      setCrop(selected, { l: z(r.crop.l, inset.l), t: z(r.crop.t, inset.t), r: z(r.crop.r, inset.r), b: z(r.crop.b, inset.b) });
+    }
     engine.draw();
   };
 
   const poly = [pos.tl, pos.tr, pos.br, pos.bl].map((p) => `${p.x},${p.y}`).join(' ');
   const handle = (h: Handle, cls: string) => (
-    <div key={h} class={`tbox-h ${cls}`} style={{ left: `${pos[h].x}px`, top: `${pos[h].y}px`, transform: cls.includes('side') ? `rotate(${view.rot}deg)` : undefined }} onPointerDown={down(h)} onPointerMove={move} onPointerUp={up} onPointerCancel={up} aria-label={h === 'rot' ? 'Turn' : cls.includes('side') ? `Crop ${h}` : 'Scale'} />
+    <div key={h} class={`tbox-h ${cls}`} style={{ left: `${pos[h].x}px`, top: `${pos[h].y}px`, transform: cls.includes('side') ? `rotate(${view.rot}deg)` : undefined }} onPointerDown={down(h)} onPointerMove={move} onPointerUp={up} onPointerCancel={up} aria-label={h === 'rot' ? 'Turn' : cls.includes('side') ? (stretch ? `Stretch ${h}` : `Crop ${h}`) : 'Scale'} />
   );
   return (
     <>
@@ -559,10 +568,10 @@ function TransformBox({ boxW: W, boxH: H }: { boxW: number; boxH: number }) {
         <polygon points={poly} />
         <line x1={at(xm, y0).x} y1={at(xm, y0).y} x2={pos.rot.x} y2={pos.rot.y} />
       </svg>
-      {handle('t', 'side h')}
-      {handle('b', 'side h')}
-      {handle('l', 'side v')}
-      {handle('r', 'side v')}
+      {handle('t', `side h ${stretch ? 'stretch' : ''}`)}
+      {handle('b', `side h ${stretch ? 'stretch' : ''}`)}
+      {handle('l', `side v ${stretch ? 'stretch' : ''}`)}
+      {handle('r', `side v ${stretch ? 'stretch' : ''}`)}
       {handle('tl', 'corner')}
       {handle('tr', 'corner')}
       {handle('br', 'corner')}
