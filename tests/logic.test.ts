@@ -267,6 +267,16 @@ test('removeGap: later clips move earlier on every lane, collisions hop to the n
   assert.equal(o2.find((c) => c.id === 'p')!.at, 1);
 });
 
+test('removeGap: a later clip that fits its own lane is not pushed away by an earlier hop', () => {
+  // y (6..9) must hop to lane 2 (x blocks lane 1 at 3..6), but z (9..12) fits lane 1 after the move and must stay there
+  const cs = [mk('a', 0, 2, 0), mk('b', 5, 2, 0), mk('x', 2, 4, 1), mk('y', 6, 3, 1), mk('z', 9, 3, 1)];
+  const out = removeGap(cs, { track: 0, from: 2, to: 5 });
+  const by = (id: string) => out.find((c) => c.id === id)!;
+  assert.equal(by('y').track, 2);
+  assert.equal(by('z').track, 1);
+  assert.equal(by('z').at, 6);
+});
+
 test('clampView: up to 90% of the picture may leave the frame', () => {
   const env = { sw: 1000, sh: 1000, W: 360, H: 640 };
   const v = clampView({ x: 5, y: 0, zoom: 1, rot: 0 }, env);

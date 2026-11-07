@@ -1,14 +1,15 @@
-import { useEffect, useRef, useState } from 'preact/hooks';
+import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { keyOf } from '../bake.ts';
 import { engine } from '../engine.ts';
 import { thumbUrl } from '../media.ts';
-import { addSolid, addTextClip, getState, moveClipTo, removeGap, selectClip, set, updateClip, useStore } from '../store.ts';
+import { addSolid, addTextClip, deleteClip, deselect, duplicateClip, getState, moveClipTo, redo, removeGap, selectClip, set, splitAtPlayhead, toast, undo, updateClip, useStore } from '../store.ts';
 import { PEAKS_PER_SEC } from '../wave.ts';
 import { MIN_CLIP, clipDuration, clipEnd, fmtTime, gapAt, totalOf } from '../timeline.ts';
 import type { Clip, MediaInfo } from '../types.ts';
 import { PickLabel } from './Picker.tsx';
 import { Pie } from './Pie.tsx';
-import { Pause, Play, Plus, Trash } from './icons.tsx';
+import { Copy, Pause, Play, Plus, Redo, Split, Trash, Undo } from './icons.tsx';
+import { outputSize } from '../geometry.ts';
 
 const HOLD_MS = 350; // hold a strip this long (without moving) to pick it up
 const WOBBLE = 10;
@@ -32,6 +33,12 @@ interface Trim {
   at: number;
   start: number;
   end: number;
+}
+
+/** the yellow line is inside the clip far enough from both ends to cut there */
+function splitOk(c: Clip, ph: number): boolean {
+  const local = (ph - c.at) * c.speed;
+  return local >= MIN_CLIP && c.end - c.start - local >= MIN_CLIP;
 }
 
 const isAudio = (m: MediaInfo | undefined) => m?.kind === 'audio';
@@ -69,6 +76,9 @@ export function Timeline() {
   const handles = useStore((s) => s.handles);
   const waves = useStore((s) => s.waves);
   const bakes = useStore((s) => s.bakeProgress);
+  const canUndo = useStore((s) => s.canUndo);
+  const canRedo = useStore((s) => s.canRedo);
+  const hasSel = selected >= 0 && !!clips[selected];
   const [menu, setMenu] = useState(false);
   const [pps, setPps] = useState(36); // pixels per second
   const [move, setMove] = useState<Move | null>(null);
@@ -107,7 +117,7 @@ export function Timeline() {
   }, []);
 
   // the position moved by itself (playing, selecting a clip, zooming): scroll the timeline under the line
-  useEffect(() => {
+  useLayoutEffect(() => {
     const el = scroller.current;
     if (!el) return;
     const want = playhead * pps;
@@ -116,9 +126,10 @@ export function Timeline() {
 
   // the person scrolled: the position follows (one preview refresh per frame at most)
   const seekFrame = useRef(0);
+  const pinching = useRef(false);
   const onScroll = () => {
     const el = scroller.current;
-    if (!el) return;
+    if (!el || pinching.current) return;
     const t = Math.max(0, Math.min(totalOf(live.current.clips), el.scrollLeft / live.current.pps));
     if (Math.abs(t - live.current.playhead) * live.current.pps < 1.5) return;
     if (getState().playing) engine.pause();
@@ -139,6 +150,7 @@ export function Timeline() {
     const start = (e: TouchEvent) => {
       if (e.touches.length === 2) {
         pinch = { d0: dist(e), pps0: live.current.pps };
+        pinching.current = true;
         if (st.current) {
           clearTimeout(st.current.timer);
           st.current = null;
@@ -152,7 +164,7 @@ export function Timeline() {
       } else if (st.current?.active || trimRef.current) e.preventDefault();
     };
     const end = (e: TouchEvent) => {
-      if (e.touches.length < 2) pinch = null;
+      if (e.touches.length < 2) (pinch = null, (pinching.current = false));
     };
     el.addEventListener('touchstart', start, { passive: true });
     el.addEventListener('touchmove', mv, { passive: false });
@@ -343,11 +355,50 @@ export function Timeline() {
     const t = (x - padL) / pps;
     const g = gapAt(clips, track, t);
     if (!g) {
-      set({ gap: null });
+      deselect(); // empty lane space: nothing is selected any more
       return;
     }
     engine.pause();
-    set({ gap: g, drawer: null });
+    set({ gap: g, drawer: null, selected: -1, handles: false, boxMode: false });
+  };
+  // ---------- the middle bar is also the handle that trades height between preview and timeline ----------
+  const barDrag = useRef<{ id: number; y0: number; h0: number; lo: number; hi: number } | null>(null);
+  const barDown = (e: PointerEvent) => {
+    if ((e.target as Element).closest('button, label, input, .add-menu')) return; // buttons only tap
+    const app = document.querySelector('.app') as HTMLElement | null;
+    const stage = document.querySelector('.stage') as HTMLElement | null;
+    if (!app || !stage) return;
+    const h0 = parseFloat(getComputedStyle(app).getPropertyValue('--tl-h')) || 200;
+    const cs = getComputedStyle(stage);
+    const px = (v: string) => parseFloat(v) || 0;
+    const o = outputSize(getState().project);
+    const needed = Math.ceil((stage.clientWidth - px(cs.paddingLeft) - px(cs.paddingRight)) / (o.w / o.h)) + px(cs.paddingTop) + px(cs.paddingBottom);
+    const room = stage.clientHeight;
+    // the timeline cannot shrink once the preview already has all the height its width can use
+    const lo = Math.max(90, Math.min(h0, h0 + room - needed));
+    const hi = Math.max(lo, h0 + room - 96); // the preview always keeps a little height, so nothing is pushed off the screen
+    barDrag.current = { id: e.pointerId, y0: e.clientY, h0, lo, hi };
+    try {
+      (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    } catch {
+      /* the pointer is gone */
+    }
+  };
+  const barMove = (e: PointerEvent) => {
+    const d = barDrag.current;
+    if (!d || d.id !== e.pointerId) return;
+    const h = Math.round(Math.max(d.lo, Math.min(d.hi, d.h0 + (d.y0 - e.clientY))));
+    window.dispatchEvent(new CustomEvent('pc-tl-height', { detail: h }));
+  };
+  const barUp = (e: PointerEvent) => {
+    const d = barDrag.current;
+    if (!d || d.id !== e.pointerId) return;
+    barDrag.current = null;
+    try {
+      localStorage.setItem('pocket-cut-nla:tl-height', String(Math.round(parseFloat(getComputedStyle(document.querySelector('.app')!).getPropertyValue('--tl-h')) || 200)));
+    } catch {
+      /* ignore */
+    }
   };
   const gapRow = gap ? lanes.indexOf(gap.track) : -1;
 
@@ -357,7 +408,7 @@ export function Timeline() {
 
   return (
     <div class={`tl ${move ? 'dragging' : ''}`}>
-      <div class="tl-bar">
+      <div class="tl-bar" onPointerDown={barDown} onPointerMove={barMove} onPointerUp={barUp} onPointerCancel={barUp}>
         <div class="tl-left">
           <button class={`tl-add ${menu ? 'on' : ''}`} aria-haspopup="menu" aria-expanded={menu} onClick={() => setMenu(!menu)}>
             <Plus /> <span>Add</span>
@@ -393,16 +444,35 @@ export function Timeline() {
             </>
           )}
         </div>
+        <button class="tl-btn wide" disabled={!hasSel} onClick={() => (engine.pause(), deleteClip(selected))} aria-label="Delete the selected clip">
+          <Trash /> <span>Delete</span>
+        </button>
         <button class="play" onClick={() => (playing ? engine.pause() : void engine.play())} aria-label={playing ? 'Pause' : 'Play'}>
           {playing ? <Pause /> : <Play />}
         </button>
-        <span class="time num">
-          {fmtTime(playhead)} <small>/ {fmtTime(total)}</small>
-        </span>
+        <button class="tl-btn" disabled={!canUndo} onClick={undo} aria-label="Undo">
+          <Undo />
+        </button>
+        <button class="tl-btn" disabled={!canRedo} onClick={redo} aria-label="Redo">
+          <Redo />
+        </button>
+        <button
+          class="tl-btn"
+          disabled={!hasSel}
+          onClick={() => {
+            if (!splitAtPlayhead()) toast('Move the yellow line into this clip, away from its edges, to cut there.');
+          }}
+          aria-label="Split the selected clip at the yellow line"
+        >
+          <Split />
+        </button>
+        <button class="tl-btn" disabled={!hasSel} onClick={() => (engine.pause(), duplicateClip(selected))} aria-label="Duplicate the selected clip">
+          <Copy />
+        </button>
       </div>
       <div class="tl-wrap">
         <div class="tl-scroll" ref={scroller} onScroll={onScroll}>
-          <div class="tl-inner" style={{ width: `${width}px`, height: `${height}px` }}>
+          <div class="tl-inner" style={{ width: `${width}px`, minHeight: `${height}px` }} onClick={(e) => e.target === e.currentTarget && deselect()}>
             <div class="tl-ruler" style={{ height: `${RULER}px` }}>
               {ticks.map((t) => (
                 <span key={t} class="tl-tick num" style={{ left: `${padL + t * pps}px` }}>
@@ -467,7 +537,7 @@ export function Timeline() {
                       <Pie value={baking} size={Math.max(14, Math.min(22, ROW - 10))} />
                     </span>
                   )}
-                  {url && !m?.text && <span class="strip-thumb" style={{ backgroundImage: `url("${url}")`, backgroundPosition: `${-(at - c.at) * pps}px center` }} />}
+                  {url && !m?.text && <span class="strip-thumb" style={{ backgroundImage: `url("${url}")`, backgroundPosition: `${-((tr?.at ?? c.at) - c.at) * pps}px center` }} />}
                   <span class="strip-label num">
                     {c.speed !== 1 ? `${c.speed}× · ` : ''}
                     {audio || m?.text || m?.solid ? (m?.name ?? '') : fmtTime((end - start) / c.speed)}
@@ -476,6 +546,9 @@ export function Timeline() {
                     <span class="tile-pie" title="Making a lighter copy for the preview">
                       <Pie value={p} size={16} />
                     </span>
+                  )}
+                  {on && handles && !moving && !tr && splitOk(c, playhead) && (
+                    <span class="split-line" style={{ left: `${(playhead - c.at) * pps}px` }} onPointerDown={(e) => e.stopPropagation()} onClick={(e) => (e.stopPropagation(), splitAtPlayhead())} aria-label="Split here" />
                   )}
                   {on && handles && !moving && (
                     <>
@@ -488,6 +561,7 @@ export function Timeline() {
             })}
           </div>
         </div>
+        <div class="tl-time num" style={{ left: `${padL}px` }}>{fmtTime(playhead, 2)}</div>
         <div class="tl-playhead" style={{ left: `${padL}px` }} />
       </div>
     </div>

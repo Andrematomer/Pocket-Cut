@@ -4,7 +4,7 @@ import { engine } from '../engine.ts';
 import { RATE_STOPS, estimateBytes, fmtMbps, videoBitrate } from '../bitrate.ts';
 import { fmtBytes, saveBlob, shareFiles } from '../files.ts';
 import { outputSize } from '../geometry.ts';
-import { blobFor, setName, setSettings, useStore } from '../store.ts';
+import { blobFor, getState, reloadMedia, setName, setSettings, useStore } from '../store.ts';
 import { fmtTime, planParts, totalOf } from '../timeline.ts';
 import type { ExportSettings } from '../types.ts';
 import { Check, Download, Share } from './icons.tsx';
@@ -65,7 +65,16 @@ export function ExportSheet({ onClose }: { onClose: () => void }) {
     setNote('');
     setPhase({ name: 'running', progress: { part: 1, parts: parts.length, frame: 0, frames: 1 } });
     try {
-      const result = await exportProject(project, blobFor, (progress) => setPhase({ name: 'running', progress }), ctl.signal);
+      let result: ExportResult;
+      try {
+        result = await exportProject(project, blobFor, (progress) => setPhase({ name: 'running', progress }), ctl.signal);
+      } catch (e) {
+        // Safari: "The object can not be found here" = a stale file handle. Reload the files and try once more.
+        if (e instanceof DOMException && e.name === 'NotFoundError') {
+          await reloadMedia();
+          result = await exportProject(getState().project, blobFor, (progress) => setPhase({ name: 'running', progress }), ctl.signal);
+        } else throw e;
+      }
       setPhase({ name: 'done', result });
     } catch (e) {
       if (e instanceof DOMException && e.name === 'AbortError') setPhase({ name: 'setup' });

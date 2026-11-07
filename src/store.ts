@@ -81,7 +81,7 @@ function loadAppPrefs(): AppPrefs {
 
 let state: State = {
   project: freshProject(),
-  selected: 0,
+  selected: -1,
   tool: 'speed',
   playhead: 0,
   playing: false,
@@ -185,7 +185,7 @@ export function mediaInHistory(): Set<string> {
 function edit(fn: (p: Project) => Project, opts: { key?: string; history?: boolean } = {}): void {
   const before = state.project;
   const project = { ...fn(before), updated: Date.now() };
-  const selected = Math.max(0, Math.min(state.selected, project.clips.length - 1));
+  const selected = Math.min(state.selected, project.clips.length - 1);
   if (opts.history !== false && project.clips !== before.clips) {
     const now = Date.now();
     const merge = opts.key !== undefined && opts.key === lastKey && now - lastAt < 700;
@@ -202,7 +202,7 @@ function edit(fn: (p: Project) => Project, opts: { key?: string; history?: boole
 
 function restoreSnapshot(s: Snapshot): void {
   const project = { ...state.project, clips: s.clips, media: s.media, updated: Date.now() };
-  const selected = Math.max(0, Math.min(state.selected, project.clips.length - 1));
+  const selected = Math.min(state.selected, project.clips.length - 1);
   lastKey = '';
   set({ project, selected, playhead: Math.min(state.playhead, totalOf(project.clips)), ...flags() });
 }
@@ -281,6 +281,11 @@ export function moveClipTo(index: number, at: number, track: number): void {
   edit((p) => ({ ...p, clips: p.clips.map((x, i) => (i === index ? { ...x, ...next } : x)) }), { key: `move:${index}` });
 }
 
+export function deselect(): void {
+  if (state.selected < 0 && !state.gap && !state.drawer) return;
+  set({ selected: -1, gap: null, handles: false, boxMode: false, drawer: null });
+}
+
 /** Selects a clip and brings the position marker into it, so it shows in the preview. */
 export function selectClip(index: number): void {
   const c = state.project.clips[index];
@@ -299,15 +304,11 @@ export function duplicateClip(index: number): void {
 export function deleteClip(index: number): void {
   const c = state.project.clips[index];
   if (!c) return;
-  const end = clipEnd(c);
-  const dur = clipDuration(c);
   // the file stays in memory and storage while undo could still bring the clip back.
-  // Everything that starts after the deleted clip moves forward, so no hole is left.
-  edit((p) => ({
-    ...p,
-    clips: p.clips.filter((_, i) => i !== index).map((x) => (x.at >= end - 1e-6 ? { ...x, at: Math.max(0, Math.round((x.at - dur) * 100) / 100) } : x)),
-  }));
-  set({ drawer: null, boxMode: false, handles: false });
+  // Later clips close up exactly like when a gap is removed, with the same lane hopping.
+  const gap = { track: c.track, from: c.at, to: clipEnd(c) };
+  edit((p) => ({ ...p, clips: removeGapFrom(p.clips.filter((_, i) => i !== index), gap) }));
+  set({ drawer: null, boxMode: false, handles: false, selected: -1, gap: null });
 }
 
 /** The look the last text was made with: the next new text starts from it. */
@@ -522,6 +523,18 @@ function normalizeClip(raw: Clip): Clip {
   };
 }
 
+/** Re-reads the files from storage (a phone can drop its handle on a file while the app sleeps). */
+export async function reloadMedia(): Promise<void> {
+  const saved = await Promise.race([loadSaved(), new Promise<null>((resolve) => setTimeout(() => resolve(null), 3000))]);
+  if (!saved) return;
+  for (const [id, m] of saved.media) {
+    const info = state.project.media[id];
+    if (!info || info.kind === 'image') continue;
+    registerMedia(id, m.blob, m.thumb, { name: m.name, proxy: m.proxy ?? null });
+  }
+  set({ project: { ...state.project } });
+}
+
 export async function restore(): Promise<void> {
   // IndexedDB can hang forever in some Safari modes (for example private browsing). Don't wait for it.
   const saved = await Promise.race([loadSaved(), new Promise<null>((resolve) => setTimeout(() => resolve(null), 3000))]);
@@ -556,7 +569,7 @@ export async function restore(): Promise<void> {
       settings.aspect = m ? nearestAspect(m.width, m.height) : '9:16';
     } else settings.aspect = saved.project.settings.aspect;
     clearHistory();
-    set({ project: { ...saved.project, clips, settings }, selected: 0, ready: true });
+    set({ project: { ...saved.project, clips, settings }, selected: -1, ready: true });
     for (const id of Object.keys(saved.project.media)) ensureWave(id);
   } else {
     set({ ready: true });
@@ -567,7 +580,7 @@ export async function discardProject(): Promise<void> {
   dropAllMedia();
   await clearSaved();
   clearHistory();
-  set({ project: freshProject(), selected: 0, playhead: 0, playing: false, sheet: 'none', tool: 'speed' });
+  set({ project: freshProject(), selected: -1, playhead: 0, playing: false, sheet: 'none', tool: 'speed' });
 }
 
 let saveTimer = 0;
@@ -608,13 +621,13 @@ export function removeGap(): void {
   const sel = state.project.clips[state.selected]?.id;
   edit((p) => ({ ...p, clips: removeGapFrom(p.clips, g) }));
   const i = state.project.clips.findIndex((c) => c.id === sel);
-  set({ gap: null, selected: i >= 0 ? i : 0 });
+  set({ gap: null, selected: i });
 }
 
 // ---------- crop ----------
 
 export function setCrop(index: number, crop: Clip['crop']): void {
-  const empty = !crop || (crop.l <= 0 && crop.t <= 0 && crop.r <= 0 && crop.b <= 0);
+  const empty = !crop || (crop.l === 0 && crop.t === 0 && crop.r === 0 && crop.b === 0);
   updateClip(index, { crop: empty ? undefined : crop });
 }
 

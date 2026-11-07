@@ -123,8 +123,16 @@ export function removeGap(clips: Clip[], gap: Gap): Clip[] {
   moving.sort((a, b) => Math.abs(a.track) - Math.abs(b.track) || a.at - b.at);
   const placed: Clip[] = [...still];
   const free = (c: Clip) => !placed.some((o) => o.track === c.track && c.at < clipEnd(o) - eps && o.at < clipEnd(c) - eps);
+  for (const c of moving) c.at = Math.max(0, Math.round((c.at - len) * 100) / 100);
+  // pass 1: clips that fit on their own lane stay there, so a hop never takes a lane a later clip needs
+  const hop: Clip[] = [];
   for (const c of moving) {
-    c.at = Math.max(0, Math.round((c.at - len) * 100) / 100);
+    const clash = still.some((o) => o.track === c.track && c.at < clipEnd(o) - eps && o.at < clipEnd(c) - eps);
+    if (clash) hop.push(c);
+    else placed.push(c);
+  }
+  // pass 2: only the clashing ones move out to the next free lane
+  for (const c of hop) {
     const dir = c.track >= 0 ? 1 : -1;
     let guard = 0;
     while (!free(c) && guard++ < 64) c.track += dir;

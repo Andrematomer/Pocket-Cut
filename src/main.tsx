@@ -36,10 +36,26 @@ window.addEventListener(
   'pointerdown',
   (e) => {
     const b = (e.target as Element | null)?.closest?.('button, [role="button"], label.pick-label, .color-block, .swatch');
-    if (!b || b.closest('.strip-clip, .gap-trash') || (b as HTMLButtonElement).disabled) return;
+    if (!b || b.closest('.strip-clip, .gap-trash, .fold-title, .seg, .chips') || (b as HTMLButtonElement).disabled) return;
     b.classList.remove('tap');
     void (b as HTMLElement).offsetWidth;
     b.classList.add('tap');
+  },
+  true,
+);
+// segmented values and chips: the yellow jumps to the new value first, then that yellow button pops
+window.addEventListener(
+  'click',
+  (e) => {
+    const b = (e.target as Element | null)?.closest?.('.seg button, .chips .chip') as HTMLElement | null;
+    if (!b || (b as HTMLButtonElement).disabled) return;
+    requestAnimationFrame(() =>
+      requestAnimationFrame(() => {
+        b.classList.remove('tap');
+        void b.offsetWidth;
+        b.classList.add('tap');
+      }),
+    );
   },
   true,
 );

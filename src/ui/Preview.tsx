@@ -21,11 +21,9 @@ export function Preview() {
   const media = clip && project.media[clip.mediaId];
 
   // the preview always has the shape of the exported video, so the picture can be placed on it directly
-  let aspect = 9 / 16;
-  if (clip && media) {
-    const o = outputSize(project);
-    aspect = o.w / o.h;
-  }
+  const o = outputSize(project);
+  const aspect = o.w / o.h;
+  const has = project.clips.length > 0;
 
   useLayoutEffect(() => {
     const el = wrap.current;
@@ -42,7 +40,7 @@ export function Preview() {
     ro.observe(el);
     measure();
     return () => ro.disconnect();
-  }, [!!clip]);
+  }, [has]);
 
   useEffect(() => {
     if (avail.w === 0) return;
@@ -63,7 +61,7 @@ export function Preview() {
     c.width = Math.max(2, Math.round(box.w * dpr));
     c.height = Math.max(2, Math.round(box.h * dpr));
     engine.attach(c);
-  }, [box.w, box.h, !!clip]);
+  }, [box.w, box.h, has]);
 
   useEffect(() => () => engine.attach(null), []);
 
@@ -83,19 +81,19 @@ export function Preview() {
     void engine.showAt(Math.min(getState().playhead, totalOf(project.clips))).then(() => set({ playhead: engine.tl }));
   }, [idsKey, selected]);
 
-  if (!clip || !media) return <div class="stage" ref={wrap} />;
+  if (!has) return <div class="stage" ref={wrap} />;
 
   return (
     <div class="stage" ref={wrap}>
       <div class="frame" style={{ width: `${box.w}px`, height: `${box.h}px` }}>
         <canvas ref={canvas} style={{ width: `${box.w}px`, height: `${box.h}px` }} />
         {box.w > 0 && <Gestures boxW={box.w} boxH={box.h} />}
-        {box.w > 0 && <TransformBox boxW={box.w} boxH={box.h} />}
+        {box.w > 0 && clip && media && <TransformBox boxW={box.w} boxH={box.h} />}
         {busy && <div class="overlay-note">{busy}</div>}
-        {!busy && progress[clip.mediaId] !== undefined && (
+        {!busy && clip && progress[clip.mediaId] !== undefined && (
           <div class="overlay-note with-pie">
-            <Pie value={progress[clip.mediaId]!} size={16} />
-            <span>Making a lighter copy for smooth preview… {Math.round(progress[clip.mediaId]! * 100)}%</span>
+            <Pie value={progress[clip!.mediaId]!} size={16} />
+            <span>Making a lighter copy for smooth preview… {Math.round(progress[clip!.mediaId]! * 100)}%</span>
           </div>
         )}
       </div>
@@ -388,6 +386,7 @@ function TransformBox({ boxW: W, boxH: H }: { boxW: number; boxH: number }) {
     setDrag(null);
     engine.live = null;
     engine.cropLive = null;
+    engine.ghost = false;
     engine.draw();
   };
 
@@ -428,8 +427,8 @@ function TransformBox({ boxW: W, boxH: H }: { boxW: number; boxH: number }) {
   // text: the box hugs the letters, so each side starts where the ink starts
   const inset: Crop = media.textBox ?? { l: 0, t: 0, r: 0, b: 0 };
   const stored: Crop = drag?.crop ?? clip.crop ?? { l: 0, t: 0, r: 0, b: 0 };
-  const crop: Crop = { l: Math.max(stored.l, inset.l), t: Math.max(stored.t, inset.t), r: Math.max(stored.r, inset.r), b: Math.max(stored.b, inset.b) };
   const stretch = media.solid !== undefined; // a flat color has nothing to cut: its sides stretch it instead
+  const crop: Crop = stretch ? stored : { l: Math.max(stored.l, inset.l), t: Math.max(stored.t, inset.t), r: Math.max(stored.r, inset.r), b: Math.max(stored.b, inset.b) };
   const sc = baseScale(media.width, media.height, W, H) * view.zoom;
   const pw = media.width * sc;
   const ph = media.height * sc;
@@ -540,6 +539,7 @@ function TransformBox({ boxW: W, boxH: H }: { boxW: number; boxH: number }) {
     setDrag(r);
     engine.live = { index: selected, view: r.view };
     engine.cropLive = { index: selected, crop: r.crop };
+    engine.ghost = !stretch && st.current.h !== 'rot' && st.current.h.length === 1; // while cutting, the cut-off part shows faintly
     engine.draw();
   };
   const up = (e: PointerEvent) => {
@@ -550,9 +550,10 @@ function TransformBox({ boxW: W, boxH: H }: { boxW: number; boxH: number }) {
     setDrag(null);
     engine.live = null;
     engine.cropLive = null;
+    engine.ghost = false;
     if (r.view !== d.view0) updateClip(selected, { view: r.view });
     if (r.crop !== d.crop0) {
-      const z = (v: number, i: number) => (v <= i + 1e-6 ? 0 : v);
+      const z = (v: number, i: number) => (!stretch && v <= i + 1e-6 ? 0 : Math.abs(v) < 1e-6 ? 0 : v);
       setCrop(selected, { l: z(r.crop.l, inset.l), t: z(r.crop.t, inset.t), r: z(r.crop.r, inset.r), b: z(r.crop.b, inset.b) });
     }
     engine.draw();

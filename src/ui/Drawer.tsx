@@ -1,11 +1,10 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
-import { engine } from '../engine.ts';
 import { NO_GRADE } from '../layers.ts';
-import { deleteClip, duplicateClip, editText, resetTransform, set, setSolidColor, setSpeed, splitAtPlayhead, toast, updateClip, useStore, type Tool } from '../store.ts';
+import { editText, set, setSolidColor, setSpeed, updateClip, useStore, type Tool } from '../store.ts';
 import { TEXT_FONTS, autoOutline } from '../text.ts';
 import { MAX_SPEED, MIN_SPEED, clipDuration, fmtTime } from '../timeline.ts';
 import type { Grade, MediaInfo } from '../types.ts';
-import { Copy, FontIcon, Layers, Look, Mute, OutlineIcon, Sound, Speed, Split, Swatch, TextIcon, Trash } from './icons.tsx';
+import { Download, FontIcon, Gear, Help, Look, Mute, OutlineIcon, Sound, Speed, Swatch, TextIcon } from './icons.tsx';
 import { Slider } from './Slider.tsx';
 
 const SPEEDS = [0.25, 0.5, 0.75, 1, 1.5, 2, 3, 4];
@@ -26,17 +25,16 @@ const TABS: TabDef[] = [
   { key: 'speed', name: 'Speed', icon: Speed },
   { key: 'sound', name: 'Sound', icon: Sound },
   { key: 'look', name: 'Look', icon: Look },
-  { key: 'clip', name: 'Clip', icon: Layers },
 ];
 
 /** which tabs make sense for a clip of this media */
 export function tabsFor(m: MediaInfo | undefined): Tool[] {
-  if (!m) return ['clip'];
-  if (m.text !== undefined) return ['text', 'color', 'font', 'outline', 'look', 'clip'];
-  if (m.solid !== undefined) return ['color', 'look', 'clip'];
-  if (m.kind === 'image') return ['look', 'clip'];
-  if (m.kind === 'audio') return ['speed', 'sound', 'clip'];
-  return m.hasAudio ? ['speed', 'sound', 'look', 'clip'] : ['speed', 'look', 'clip'];
+  if (!m) return [];
+  if (m.text !== undefined) return ['text', 'color', 'font', 'outline', 'look'];
+  if (m.solid !== undefined) return ['color', 'look'];
+  if (m.kind === 'image') return ['look'];
+  if (m.kind === 'audio') return ['speed', 'sound'];
+  return m.hasAudio ? ['speed', 'sound', 'look'] : ['speed', 'look'];
 }
 
 /**
@@ -46,12 +44,36 @@ export function tabsFor(m: MediaInfo | undefined): Tool[] {
 export function TabBar() {
   const drawer = useStore((s) => s.drawer);
   const clip = useStore((s) => s.project.clips[s.selected]);
+  const aspect = useStore((s) => s.project.settings.aspect);
   const media = useStore((s) => (s.project.clips[s.selected] ? s.project.media[s.project.clips[s.selected]!.mediaId] : undefined));
+  if (!clip) {
+    // nothing selected: the tools of the whole project
+    return (
+      <nav class="tabbar" aria-label="Project tools">
+        <button class="tab" onClick={() => set({ sheet: 'help' })}>
+          <Help />
+          <span>Help</span>
+        </button>
+        <button class="tab" onClick={() => set({ sheet: 'canvas' })}>
+          <i class="canvas-ico" aria-hidden="true" />
+          <span>Ratio {aspect}</span>
+        </button>
+        <button class="tab" onClick={() => set({ sheet: 'settings' })}>
+          <Gear />
+          <span>Settings</span>
+        </button>
+        <button class="tab export-tab" onClick={() => set({ sheet: 'export' })}>
+          <Download />
+          <span>Export</span>
+        </button>
+      </nav>
+    );
+  }
   const shown = tabsFor(media);
   return (
     <nav class="tabbar" aria-label="Clip tools">
       {TABS.filter((t) => shown.includes(t.key)).map((t) => (
-        <button key={t.key} class={`tab ${drawer === t.key ? 'on' : ''}`} disabled={!clip} aria-expanded={drawer === t.key} onClick={() => set({ drawer: drawer === t.key ? null : t.key, tool: t.key })}>
+        <button key={t.key} class={`tab ${drawer === t.key ? 'on' : ''}`} aria-expanded={drawer === t.key} onClick={() => set({ drawer: drawer === t.key ? null : t.key, tool: t.key })}>
           <t.icon />
           <span>{t.name}</span>
         </button>
@@ -127,7 +149,6 @@ export function Drawer() {
   const index = useStore((s) => s.selected);
   const clip = useStore((s) => s.project.clips[s.selected]);
   const media = useStore((s) => (s.project.clips[s.selected] ? s.project.media[s.project.clips[s.selected]!.mediaId] : undefined));
-  const playhead = useStore((s) => s.playhead);
   const close = () => set({ drawer: null });
   // the panel stays for a moment after it is closed, so it can slide out
   const [last, setLast] = useState<Tool | null>(null);
@@ -154,7 +175,7 @@ export function Drawer() {
   // the selection moved to a clip this tab does not suit: show the first tab that does
   const ok = tabsFor(media);
   useEffect(() => {
-    if (tool && clip && media && !ok.includes(tool)) set({ drawer: ok[0] ?? 'clip' });
+    if (tool && clip && media && !ok.includes(tool)) set({ drawer: ok[0] ?? null });
   });
 
   if (!shown || !clip || !media || !ok.includes(shown)) return null;
@@ -174,7 +195,6 @@ export function Drawer() {
     updateClip(index, { grade: g.brightness || g.contrast || g.saturation || g.warmth ? g : undefined });
   };
   const opacity = Math.round((clip.opacity ?? 1) * 100);
-  const inside = playhead > clip.at + 0.05 && playhead < clip.at + dur - 0.05;
   const textColor = media.textColor ?? '#ffffff';
   const outlineColor = media.textOutline ?? autoOutline(textColor);
   const outlineWidth = media.textWidth ?? 14;
@@ -274,42 +294,6 @@ export function Drawer() {
             {gradeRow('Warmth', 'warmth')}
             <p class="hint">Tap a name twice to reset that slider.</p>
           </section>
-        )}
-
-        {tab === 'clip' && (
-          <div class="drawer-actions">
-            {inside ? (
-              <button
-                class="btn"
-                onClick={() => {
-                  if (splitAtPlayhead()) close();
-                  else toast('Move the yellow line into this clip, away from its edges, to cut there.');
-                }}
-              >
-                <Split /> Split here
-              </button>
-            ) : (
-              <p class="hint grow">Scroll the timeline so the yellow line is inside this clip to split it there.</p>
-            )}
-            {media.kind !== 'audio' && (
-              <button class="btn" onClick={() => resetTransform(index)}>
-                Reset transform
-              </button>
-            )}
-            <button
-              class="btn"
-              onClick={() => {
-                engine.pause();
-                duplicateClip(index);
-                close();
-              }}
-            >
-              <Copy /> Duplicate
-            </button>
-            <button class="btn danger" onClick={() => deleteClip(index)}>
-              <Trash /> Delete
-            </button>
-          </div>
         )}
       </div>
     </>

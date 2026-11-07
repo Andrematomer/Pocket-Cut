@@ -2153,3 +2153,128 @@ label.cta {
   pointer-events: none;
   display: grid;
 }
+
+/* ---- round 5: no header while editing, middle bar with all actions, split line, timecode ---- */
+.app {
+  overflow: hidden;
+}
+.editor {
+  overflow: hidden;
+  padding-top: calc(var(--safe-t) + 6px);
+}
+.tl-bar {
+  display: flex;
+  grid-template-columns: none;
+  justify-content: space-between;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 10px 6px;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.tl-bar .play {
+  width: 44px;
+  height: 44px;
+  flex: none;
+}
+.tl-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: 38px;
+  height: 38px;
+  border-radius: 19px;
+  background: var(--raised);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+}
+.tl-btn.wide {
+  padding: 0 11px 0 9px;
+}
+.tl-add {
+  height: 38px;
+  padding: 0 11px 0 9px;
+  font-size: 13px;
+}
+@media (max-width: 370px) {
+  .tl-btn.wide span,
+  .tl-add span {
+    display: none;
+  }
+}
+.tl-wrap {
+  margin-top: 18px;
+}
+.tl-time {
+  position: absolute;
+  top: -18px;
+  transform: translateX(-50%);
+  padding: 0 6px;
+  height: 16px;
+  line-height: 16px;
+  border-radius: 8px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+  z-index: 9;
+  pointer-events: none;
+}
+.tl-wrap .tl-playhead::before {
+  top: -3px;
+}
+.split-line {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 26px;
+  margin-left: -13px;
+  z-index: 4;
+  cursor: pointer;
+}
+.split-line::before {
+  content: '';
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  top: 0;
+  bottom: 0;
+  background: #ff4d4d;
+  border-radius: 2px;
+}
+.color-block {
+  display: inline-block;
+  width: 48px;
+  height: 48px;
+  border-radius: 12px;
+}
+/* bigger gap between sections, tight between a title and its controls */
+.sheet-body {
+  gap: 24px;
+}
+.sheet section {
+  gap: 6px;
+}
+.fold-title {
+  padding: 0;
+}
+.fold-body > div > * + * {
+  margin-top: 6px;
+}
+.fold-body.open {
+  margin-top: 4px;
+}
+/* segmented values: the yellow moves first (on release), then the whole yellow button pops */
+.seg button,
+.chips .chip {
+  transition: background-color 0.12s ease, color 0.12s ease;
+}
+/* the lanes area always fills the whole timeline view, so the dark "outside the project" bands reach the bottom too */
+.tl-inner {
+  height: 100%;
+  box-sizing: border-box;
+}

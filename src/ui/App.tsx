@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { engine } from '../engine.ts';
 import { canPromptInstall, isAndroid, isIOS, isMobile, isStandalone, onInstallChange, promptInstall } from '../install.ts';
-import { importFiles, redo, restore, set, undo, useStore } from '../store.ts';
-import { ASPECT_LABEL, CanvasSheet } from './CanvasSheet.tsx';
+import { deselect, importFiles, restore, set, useStore } from '../store.ts';
+import { CanvasSheet } from './CanvasSheet.tsx';
 import { HelpSheet } from './HelpSheet.tsx';
 import { ExportSheet } from './ExportSheet.tsx';
-import { Gear, Help, Plus, Redo, Undo } from './icons.tsx';
+import { Gear, Help, Plus } from './icons.tsx';
 import { FilePicker, PickLabel } from './Picker.tsx';
 import { Preview } from './Preview.tsx';
 import { Drawer, TabBar } from './Drawer.tsx';
@@ -18,9 +18,6 @@ const support = checkSupport();
 export function App() {
   const ready = useStore((s) => s.ready);
   const hasClips = useStore((s) => s.project.clips.length > 0);
-  const canUndo = useStore((s) => s.canUndo);
-  const canRedo = useStore((s) => s.canRedo);
-  const aspect = useStore((s) => s.project.settings.aspect);
   const sheet = useStore((s) => s.sheet);
   // a closed sheet stays for a moment so it can slide out
   const [lastSheet, setLastSheet] = useState<typeof sheet>('none');
@@ -88,6 +85,18 @@ export function App() {
     return () => window.removeEventListener('pc-tl-height', f);
   }, []);
 
+  // a tap on anything that is not a control (empty space around the canvas, the bars, the timeline background) selects nothing
+  useEffect(() => {
+    const tap = (e: MouseEvent) => {
+      const el = e.target as Element | null;
+      if (!el || !el.closest) return;
+      if (el.closest('button, a, input, label, textarea, select, .strip-clip, .frame, .tl-scroll, .tl-bar, .tl-gap, .drawer, .tabbar, .sheet, .toast, .add-menu')) return;
+      deselect();
+    };
+    window.addEventListener('click', tap);
+    return () => window.removeEventListener('click', tap);
+  }, []);
+
   useEffect(() => {
     if (!hasClips) engine.pause();
   }, [hasClips]);
@@ -95,37 +104,17 @@ export function App() {
   return (
     <div class="app" style={{ '--tl-h': `${tlH}px` } as Record<string, string>}>
       <FilePicker />
-      <header class="top">
-        {!hasClips && <span class="title plain">Pocket Cut</span>}
-        <button class="icon" onClick={() => set({ sheet: 'help' })} aria-label="How it works">
-          <Help />
-        </button>
-        {hasClips && (
-          <button class="canvas-btn num" onClick={() => set({ sheet: 'canvas' })} aria-label={`Canvas shape: ${ASPECT_LABEL[aspect]}`}>
-            <i class="canvas-ico" aria-hidden="true" />
-            {ASPECT_LABEL[aspect]}
+      {!hasClips && (
+        <header class="top">
+          <span class="title plain">Pocket Cut</span>
+          <button class="icon" onClick={() => set({ sheet: 'help' })} aria-label="How it works">
+            <Help />
           </button>
-        )}
-        {hasClips && <span class="spacer" />}
-        {hasClips && (
-          <>
-            <button class="icon" disabled={!canUndo} onClick={undo} aria-label="Undo">
-              <Undo />
-            </button>
-            <button class="icon" disabled={!canRedo} onClick={redo} aria-label="Redo">
-              <Redo />
-            </button>
-          </>
-        )}
-        <button class="icon" onClick={() => set({ sheet: 'settings' })} aria-label="Settings">
-          <Gear />
-        </button>
-        {hasClips && (
-          <button class="export" onClick={() => set({ sheet: 'export' })}>
-            Export
+          <button class="icon" onClick={() => set({ sheet: 'settings' })} aria-label="Settings">
+            <Gear />
           </button>
-        )}
-      </header>
+        </header>
+      )}
 
       {busy && !hasClips && <div class="busy">{busy}</div>}
 
@@ -134,7 +123,6 @@ export function App() {
       ) : !ready ? null : hasClips ? (
         <main class="editor">
           <Preview />
-          <Splitter />
           <Timeline />
           <TabBar />
           <Drawer />
@@ -239,40 +227,5 @@ function InstallHint() {
       <p>Installed, it opens full screen, works without internet and keeps your project safe.</p>
       {body}
     </section>
-  );
-}
-
-/** A grab handle between the preview and the timeline: drag it up or down to trade space between them. */
-function Splitter() {
-  const drag = useRef<{ id: number; y0: number; h0: number } | null>(null);
-  const cur = () => parseFloat(getComputedStyle(document.querySelector('.app')!).getPropertyValue('--tl-h')) || 200;
-  const send = (h: number) => window.dispatchEvent(new CustomEvent('pc-tl-height', { detail: h }));
-  return (
-    <div
-      class="splitter"
-      role="separator"
-      aria-orientation="horizontal"
-      aria-label="Drag to change the size of the preview"
-      onPointerDown={(e) => {
-        drag.current = { id: e.pointerId, y0: e.clientY, h0: cur() };
-        (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-      }}
-      onPointerMove={(e) => {
-        const d = drag.current;
-        if (!d || d.id !== e.pointerId) return;
-        send(Math.round(Math.max(110, Math.min(window.innerHeight * 0.72, d.h0 + (d.y0 - e.clientY)))));
-      }}
-      onPointerUp={() => {
-        drag.current = null;
-        try {
-          localStorage.setItem('pocket-cut-nla:tl-height', String(Math.round(cur())));
-        } catch {
-          /* ignore */
-        }
-      }}
-      onPointerCancel={() => (drag.current = null)}
-    >
-      <i />
-    </div>
   );
 }

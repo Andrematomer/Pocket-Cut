@@ -64,6 +64,8 @@ export class PreviewEngine {
   live: { index: number; view: View } | null = null;
   /** crop being dragged on screen (not yet saved to the clip) */
   cropLive: { index: number; crop: Crop } | null = null;
+  /** while cutting, the whole uncropped picture is drawn faintly behind the cut one */
+  ghost = false;
   /** where the position marker was when play was pressed (for the "return" end mode) */
   private playFrom = 0;
 
@@ -199,14 +201,19 @@ export class PreviewEngine {
       if (!clip || !media || media.kind === 'audio') continue;
       const o = { outW: canvas.width, outH: canvas.height, view: this.live && this.live.index === i ? this.live.view : clip.view, keepBackground: true };
       const look = { opacity: clip.opacity, grade: clip.grade, crop: this.cropLive && this.cropLive.index === i ? this.cropLive.crop : clip.crop };
+      const faint = this.ghost && this.cropLive?.index === i ? { ...look, crop: undefined, opacity: (look.opacity ?? 1) * 0.35 } : null;
       const img = this.deps.getImage(clip.mediaId);
       if (img) {
+        if (faint) drawLayer(ctx, img, img.width, img.height, faint, o);
         drawLayer(ctx, img, img.width, img.height, look, o);
         continue;
       }
       const pl = this.players.find((x) => x.clipId === clip.id);
       const v = pl?.video;
-      if (pl && v && pl.ready && v.readyState >= 2 && v.videoWidth) drawLayer(ctx, v, v.videoWidth, v.videoHeight, look, o);
+      if (pl && v && pl.ready && v.readyState >= 2 && v.videoWidth) {
+        if (faint) drawLayer(ctx, v, v.videoWidth, v.videoHeight, faint, o);
+        drawLayer(ctx, v, v.videoWidth, v.videoHeight, look, o);
+      }
     }
   }
 
