@@ -6,7 +6,7 @@ import { setAwakeMode } from './wake.ts';
 import { computePeaks } from './wave.ts';
 import { onProxyProgress, onProxyWork, queueProxy, requeueAllProxies, setProxyOrder } from './proxy.ts';
 import { clearSaved, loadSaved, requestPersistence, saveMedia, saveProject } from './persist.ts';
-import { clipDuration, clipEnd, endOfTrack, freeTrack, MAX_SPEED, MIN_CLIP, MIN_SPEED, removeGap as removeGapFrom, totalOf, type Gap } from './timeline.ts';
+import { activeAt, clipDuration, clipEnd, endOfTrack, freeTrack, settleAt, MAX_SPEED, MIN_CLIP, MIN_SPEED, removeGap as removeGapFrom, totalOf, type Gap } from './timeline.ts';
 import { DEFAULT_SETTINGS, emptyProject, type Clip, type ExportSettings, type MediaInfo, type Project } from './types.ts';
 
 export type Tool = 'speed' | 'sound' | 'look' | 'clip' | 'text' | 'color' | 'font' | 'outline';
@@ -276,7 +276,9 @@ export function moveClipTo(index: number, at: number, track: number): void {
   const when = Math.max(0, Math.round(at * 100) / 100);
   // dropped on top of another strip: it goes to the next free lane instead
   const others = state.project.clips.filter((_, i) => i !== index);
-  const next = { at: when, track: freeTrack(others, when, clipDuration(c), track) };
+  const dur = clipDuration(c);
+  const flush = settleAt(others, at, dur, track);
+  const next = { at: flush ?? when, track: freeTrack(others, flush ?? when, dur, track) };
   if (next.at === c.at && next.track === c.track) return;
   edit((p) => ({ ...p, clips: p.clips.map((x, i) => (i === index ? { ...x, ...next } : x)) }), { key: `move:${index}` });
 }
@@ -388,7 +390,9 @@ export function editText(index: number, patch: Partial<TextStyle> & { text?: str
 
 /** A flat color picture ("color"), the length of a picture, at the position marker. */
 export async function addSolid(color: string): Promise<void> {
-  const r = await renderSolid(color);
+  // a new color clip has the shape of the canvas
+  const o = outputSize(state.project);
+  const r = await renderSolid(color, 64, Math.max(8, Math.round((64 * o.h) / o.w)));
   const id = newId();
   registerMedia(id, r.blob, null, { name: 'Color', bitmap: r.bitmap });
   void saveMedia(id, { blob: r.blob, name: 'Color', thumb: null });
@@ -409,7 +413,7 @@ export function setSolidColor(index: number, color: string): Promise<void> {
     const c = state.project.clips[index];
     const m = c && state.project.media[c.mediaId];
     if (!c || !m || m.solid === undefined) return;
-    const r = await renderSolid(color);
+    const r = await renderSolid(color, m.width, m.height);
     const id = newId();
     registerMedia(id, r.blob, null, { name: 'Color', bitmap: r.bitmap });
     void saveMedia(id, { blob: r.blob, name: 'Color', thumb: null });
@@ -423,7 +427,13 @@ export function setSolidColor(index: number, color: string): Promise<void> {
 
 /** Cuts the selected clip in two at the position marker. */
 export function splitAtPlayhead(): boolean {
-  const { project, playhead, selected } = state;
+  const { project, playhead } = state;
+  let selected = state.selected;
+  if (!project.clips[selected]) {
+    // nothing selected: cut the top-most clip under the yellow line
+    const under = activeAt(project.clips, playhead).filter((i) => project.media[project.clips[i]!.mediaId]);
+    selected = under[under.length - 1] ?? -1;
+  }
   const c = project.clips[selected];
   if (!c) return false;
   const local = playhead - c.at;

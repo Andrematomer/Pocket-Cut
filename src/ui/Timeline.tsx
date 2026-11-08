@@ -4,7 +4,7 @@ import { engine } from '../engine.ts';
 import { thumbUrl } from '../media.ts';
 import { addSolid, addTextClip, deleteClip, deselect, duplicateClip, getState, moveClipTo, redo, removeGap, selectClip, set, splitAtPlayhead, toast, undo, updateClip, useStore } from '../store.ts';
 import { PEAKS_PER_SEC } from '../wave.ts';
-import { MIN_CLIP, clipDuration, clipEnd, fmtTime, gapAt, totalOf } from '../timeline.ts';
+import { MIN_CLIP, activeAt, clipDuration, clipEnd, fmtTime, gapAt, totalOf } from '../timeline.ts';
 import type { Clip, MediaInfo } from '../types.ts';
 import { PickLabel } from './Picker.tsx';
 import { Pie } from './Pie.tsx';
@@ -127,12 +127,20 @@ export function Timeline() {
   // the person scrolled: the position follows (one preview refresh per frame at most)
   const seekFrame = useRef(0);
   const pinching = useRef(false);
+  const [scrollTop, setScrollTop] = useState(0);
   const onScroll = () => {
     const el = scroller.current;
     if (!el || pinching.current) return;
+    setScrollTop(el.scrollTop);
+    const end = totalOf(live.current.clips) * live.current.pps;
+    // the end of the project is a wall: the rubber band of the phone must not carry the picture past it
+    if (el.scrollLeft > end + 0.5 && !st.current?.active) el.scrollLeft = end;
+    else if (el.scrollLeft < 0) el.scrollLeft = 0;
     const t = Math.max(0, Math.min(totalOf(live.current.clips), el.scrollLeft / live.current.pps));
     if (Math.abs(t - live.current.playhead) * live.current.pps < 1.5) return;
     if (getState().playing) engine.pause();
+    // moving around the timeline by hand leaves nothing selected (a strip being dragged or trimmed stays)
+    if (getState().selected >= 0 && !st.current?.active && !trimRef.current) deselect();
     set({ playhead: t });
     if (!seekFrame.current)
       seekFrame.current = requestAnimationFrame(() => {
@@ -146,8 +154,10 @@ export function Timeline() {
     const el = scroller.current;
     if (!el) return;
     let pinch: { d0: number; pps0: number } | null = null;
+    let trail: { t: number; x: number; left: number }[] = [];
     const dist = (e: TouchEvent) => Math.hypot(e.touches[0]!.clientX - e.touches[1]!.clientX, e.touches[0]!.clientY - e.touches[1]!.clientY);
     const start = (e: TouchEvent) => {
+      trail = [];
       if (e.touches.length === 2) {
         pinch = { d0: dist(e), pps0: live.current.pps };
         pinching.current = true;
@@ -162,9 +172,27 @@ export function Timeline() {
         e.preventDefault();
         setPps(Math.max(MIN_PPS, Math.min(MAX_PPS, (pinch.pps0 * dist(e)) / pinch.d0)));
       } else if (st.current?.active || trimRef.current) e.preventDefault();
+      else if (e.touches.length === 1) {
+        const now = performance.now();
+        trail.push({ t: now, x: e.touches[0]!.clientX, left: el.scrollLeft });
+        trail = trail.filter((p) => now - p.t < 120);
+      }
     };
     const end = (e: TouchEvent) => {
       if (e.touches.length < 2) (pinch = null, (pinching.current = false));
+      if (e.touches.length === 0 && trail.length) {
+        // a slow, careful scroll must stop exactly where the finger stopped (no slide from the lift-off)
+        const a = trail[0]!;
+        const b = trail[trail.length - 1]!;
+        const v = b.t > a.t ? Math.abs(b.x - a.x) / (b.t - a.t) : 0;
+        if (v < 0.35 || performance.now() - b.t > 60) {
+          const left = b.left;
+          el.style.overflowX = 'hidden';
+          el.scrollLeft = left;
+          requestAnimationFrame(() => (el.style.overflowX = ''));
+        }
+      }
+      trail = [];
     };
     el.addEventListener('touchstart', start, { passive: true });
     el.addEventListener('touchmove', mv, { passive: false });
@@ -362,7 +390,7 @@ export function Timeline() {
     set({ gap: g, drawer: null, selected: -1, handles: false, boxMode: false });
   };
   // ---------- the middle bar is also the handle that trades height between preview and timeline ----------
-  const barDrag = useRef<{ id: number; y0: number; h0: number; lo: number; hi: number } | null>(null);
+  const barDrag = useRef<{ id: number; y0: number; h0: number; lo: number; hi: number; grip: boolean } | null>(null);
   const barDown = (e: PointerEvent) => {
     if ((e.target as Element).closest('button, label, input, .add-menu')) return; // buttons only tap
     const app = document.querySelector('.app') as HTMLElement | null;
@@ -377,7 +405,7 @@ export function Timeline() {
     // the timeline cannot shrink once the preview already has all the height its width can use
     const lo = Math.max(90, Math.min(h0, h0 + room - needed));
     const hi = Math.max(lo, h0 + room - 96); // the preview always keeps a little height, so nothing is pushed off the screen
-    barDrag.current = { id: e.pointerId, y0: e.clientY, h0, lo, hi };
+    barDrag.current = { id: e.pointerId, y0: e.clientY, h0, lo, hi, grip: !!(e.target as Element).closest('.tl-grip') };
     try {
       (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
     } catch {
@@ -394,12 +422,15 @@ export function Timeline() {
     const d = barDrag.current;
     if (!d || d.id !== e.pointerId) return;
     barDrag.current = null;
+    if (e.type === 'pointerup' && Math.abs(e.clientY - d.y0) < 6 && d.grip) toast('Slide this handle up or down to give the preview or the timeline more room.');
     try {
       localStorage.setItem('pocket-cut-nla:tl-height', String(Math.round(parseFloat(getComputedStyle(document.querySelector('.app')!).getPropertyValue('--tl-h')) || 200)));
     } catch {
       /* ignore */
     }
   };
+  const selClip = hasSel ? clips[selected] : undefined;
+  const selRow = selClip ? lanes.indexOf(selClip.track) : -1;
   const gapRow = gap ? lanes.indexOf(gap.track) : -1;
 
   const step = [0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300].find((s) => s * pps >= 56) ?? 300;
@@ -409,6 +440,9 @@ export function Timeline() {
   return (
     <div class={`tl ${move ? 'dragging' : ''}`}>
       <div class="tl-bar" onPointerDown={barDown} onPointerMove={barMove} onPointerUp={barUp} onPointerCancel={barUp}>
+        <button class="play" onClick={() => (playing ? engine.pause() : void engine.play())} aria-label={playing ? 'Pause' : 'Play'}>
+          {playing ? <Pause /> : <Play />}
+        </button>
         <div class="tl-left">
           <button class={`tl-add ${menu ? 'on' : ''}`} aria-haspopup="menu" aria-expanded={menu} onClick={() => setMenu(!menu)}>
             <Plus /> <span>Add</span>
@@ -444,11 +478,8 @@ export function Timeline() {
             </>
           )}
         </div>
-        <button class="tl-btn wide" disabled={!hasSel} onClick={() => (engine.pause(), deleteClip(selected))} aria-label="Delete the selected clip">
-          <Trash /> <span>Delete</span>
-        </button>
-        <button class="play" onClick={() => (playing ? engine.pause() : void engine.play())} aria-label={playing ? 'Pause' : 'Play'}>
-          {playing ? <Pause /> : <Play />}
+        <button class="tl-btn" disabled={!hasSel} onClick={() => (engine.pause(), deleteClip(selected))} aria-label="Delete the selected clip">
+          <Trash />
         </button>
         <button class="tl-btn" disabled={!canUndo} onClick={undo} aria-label="Undo">
           <Undo />
@@ -458,17 +489,20 @@ export function Timeline() {
         </button>
         <button
           class="tl-btn"
-          disabled={!hasSel}
+          disabled={!hasSel && activeAt(clips, playhead).length === 0}
           onClick={() => {
             if (!splitAtPlayhead()) toast('Move the yellow line into this clip, away from its edges, to cut there.');
           }}
-          aria-label="Split the selected clip at the yellow line"
+          aria-label="Split at the yellow line"
         >
           <Split />
         </button>
         <button class="tl-btn" disabled={!hasSel} onClick={() => (engine.pause(), duplicateClip(selected))} aria-label="Duplicate the selected clip">
           <Copy />
         </button>
+        <div class="tl-grip" role="separator" aria-orientation="horizontal" aria-label="Pane divider: drag up or down to resize the preview and the timeline">
+          <span aria-hidden="true">⇕</span>
+        </div>
       </div>
       <div class="tl-wrap">
         <div class="tl-scroll" ref={scroller} onScroll={onScroll}>
@@ -547,9 +581,6 @@ export function Timeline() {
                       <Pie value={p} size={16} />
                     </span>
                   )}
-                  {on && handles && !moving && !tr && splitOk(c, playhead) && (
-                    <span class="split-line" style={{ left: `${(playhead - c.at) * pps}px` }} onPointerDown={(e) => e.stopPropagation()} onClick={(e) => (e.stopPropagation(), splitAtPlayhead())} aria-label="Split here" />
-                  )}
                   {on && handles && !moving && (
                     <>
                       <span class="trim-h left" onPointerDown={trimDown(i, 'left')} onPointerMove={trimMove} onPointerUp={trimUp} onPointerCancel={trimUp} onClick={(e) => e.stopPropagation()} />
@@ -563,6 +594,11 @@ export function Timeline() {
         </div>
         <div class="tl-time num" style={{ left: `${padL}px` }}>{fmtTime(playhead, 2)}</div>
         <div class="tl-playhead" style={{ left: `${padL}px` }} />
+        {selClip && handles && !move && !trim && splitOk(selClip, playhead) && selRow >= 0 && (
+          <div class="tl-overlay" style={{ top: `${RULER}px` }}>
+            <button class="split-line" style={{ left: `${padL}px`, top: `${rowTop(selRow) - RULER - scrollTop}px`, height: `${ROW}px` }} onClick={() => splitAtPlayhead()} aria-label="Split here" />
+          </div>
+        )}
       </div>
     </div>
   );

@@ -2278,3 +2278,115 @@ label.cta {
   height: 100%;
   box-sizing: border-box;
 }
+
+/* ---- round 6 ---- */
+.tl-wrap {
+  margin-top: 0;
+}
+/* the time of the yellow line sits in the ruler band, like Blender */
+.tl-time {
+  top: 3px;
+  height: 16px;
+  z-index: 9;
+}
+.tl-wrap .tl-playhead::before {
+  display: none;
+}
+.tl-bar {
+  gap: 3px;
+  padding: 2px 8px 6px;
+}
+.tl-btn {
+  min-width: 36px;
+  height: 36px;
+}
+.tl-add,
+.tl-btn.wide {
+  height: 36px;
+  padding: 0 10px 0 8px;
+}
+.tl-bar .play {
+  width: 42px;
+  height: 42px;
+}
+/* not a button: a grip that resizes the panes */
+.tl-grip {
+  flex: none;
+  width: 30px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  margin-left: 2px;
+  border-left: 1px dashed var(--line);
+  color: var(--muted);
+  font-size: 20px;
+  line-height: 1;
+  cursor: row-resize;
+  touch-action: none;
+}
+.tl-overlay {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 10;
+}
+.split-line {
+  position: absolute;
+  width: 28px;
+  margin-left: -14px;
+  pointer-events: auto;
+  background: none;
+  border: 0;
+  padding: 0;
+}
+.split-line::before {
+  content: '';
+  position: absolute;
+  left: 11px;
+  right: 11px;
+  top: 0;
+  bottom: 0;
+  background: #ff4d4d;
+  border-radius: 3px;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35);
+}
+.tl-scroll {
+  overscroll-behavior: none;
+}
+/* tab labels line up whatever the icon is */
+.tab .canvas-ico {
+  width: 13px;
+  height: 18px;
+  margin: 2px 0;
+  flex: none;
+}
+/* a different set of tools: the whole content drops away and comes back */
+.swap {
+  animation: swap 0.24s ease-in-out;
+}
+@keyframes swap {
+  0% {
+    transform: translateY(0);
+    opacity: 1;
+  }
+  42% {
+    transform: translateY(26px);
+    opacity: 0;
+  }
+  58% {
+    transform: translateY(26px);
+    opacity: 0;
+  }
+  100% {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .swap {
+    animation: none;
+  }
+}

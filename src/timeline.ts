@@ -152,3 +152,22 @@ export function freeTrack(others: Clip[], at: number, dur: number, track: number
   for (let i = 0; i < 200 && busy(t); i++) t += dir;
   return t;
 }
+
+/**
+ * A strip dropped within a hair of a neighbour's edge (the finger lands between two frames, or the
+ * rounding to hundredths leaves a sliver) sits flush against it instead of overlapping by a sliver.
+ * Returns the exact start, or null when nothing is that close.
+ */
+export function settleAt(others: Clip[], at: number, dur: number, track: number): number | null {
+  const near = 0.012;
+  let best: number | null = null;
+  let d = near;
+  for (const o of others) {
+    if (o.track !== track) continue;
+    for (const cand of [clipEnd(o), o.at - dur]) {
+      const dd = Math.abs(at - cand);
+      if (dd <= d && cand >= 0) (d = dd), (best = cand);
+    }
+  }
+  return best;
+}

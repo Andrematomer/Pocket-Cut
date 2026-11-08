@@ -84,13 +84,13 @@ export async function renderText(text: string, color: string, fontKey = 'sans', 
 }
 
 /** A small flat picture of one color (a "color" clip); it is scaled up to cover the canvas. */
-export async function renderSolid(color: string): Promise<{ blob: Blob; bitmap: ImageBitmap; width: number; height: number }> {
+export async function renderSolid(color: string, width = 64, height = 64): Promise<{ blob: Blob; bitmap: ImageBitmap; width: number; height: number }> {
   const c = document.createElement('canvas');
-  c.width = 64;
-  c.height = 64;
+  c.width = width;
+  c.height = height;
   const g = c.getContext('2d')!;
   g.fillStyle = color;
-  g.fillRect(0, 0, 64, 64);
+  g.fillRect(0, 0, width, height);
   const blob = await new Promise<Blob>((resolve, reject) => c.toBlob((b) => (b ? resolve(b) : reject(new Error('no picture'))), 'image/png'));
-  return { blob, bitmap: await createImageBitmap(blob), width: 64, height: 64 };
+  return { blob, bitmap: await createImageBitmap(blob), width, height };
 }

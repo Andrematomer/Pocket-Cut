@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { IDENTITY_VIEW, baseScale, clampView, snapEightCropped, dragView, fillZoom, fitZoom, frameTransform, nearestAspect, snapEight, normAngle, outputSize, pinchView, quarterTurned, snapView } from '../src/geometry.ts';
 import { gradePixel } from '../src/layers.ts';
-import { activeAt, endOfTrack, freeTrack, gapAt, removeGap, planParts, sourceAt, totalOf } from '../src/timeline.ts';
+import { activeAt, endOfTrack, freeTrack, gapAt, removeGap, settleAt, planParts, sourceAt, totalOf } from '../src/timeline.ts';
 import { resample, timeStretch } from '../src/stretch.ts';
 import { MAX_MBPS, MIN_MBPS, RATE_STOPS, autoBitrate, estimateBytes, fmtMbps, videoBitrate } from '../src/bitrate.ts';
 import { emptyProject, type Clip } from '../src/types.ts';
@@ -316,4 +316,14 @@ test('snapEightCropped: fits the part left after a crop and centers it', () => {
   // the middle of the kept half (a quarter of the width right of the picture's middle) is on the canvas middle
   close(v.x * W + 250 * sc, 0, 1e-6);
   assert.equal(snapEightCropped({ x: 0, y: 0, zoom: 1, rot: 0 }, undefined, 1000, 1000, W, H).x, snapEight({ x: 0, y: 0, zoom: 1, rot: 0 }, 1000, 1000, W, H).x);
+});
+
+test('settleAt: a strip dropped a hair from a neighbour sits flush, so it is not seen as overlapping', () => {
+  const others = [mk('a', 0, 4.333, 0)];
+  const e = 4.333;
+  assert.equal(settleAt(others, e - 0.004, 2, 0), e); // 4 ms inside the neighbour
+  assert.equal(settleAt(others, e + 0.009, 2, 0), e);
+  assert.equal(settleAt(others, e + 0.2, 2, 0), null);
+  assert.equal(settleAt(others, e - 0.004, 2, 1), null); // another lane: nothing to settle against
+  assert.equal(freeTrack(others, settleAt(others, e - 0.004, 2, 0)!, 2, 0), 0);
 });

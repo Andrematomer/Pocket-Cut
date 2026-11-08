@@ -46,10 +46,16 @@ export function TabBar() {
   const clip = useStore((s) => s.project.clips[s.selected]);
   const aspect = useStore((s) => s.project.settings.aspect);
   const media = useStore((s) => (s.project.clips[s.selected] ? s.project.media[s.project.clips[s.selected]!.mediaId] : undefined));
+  const sig = clip ? tabsFor(media).join() : 'project';
+  const prevSig = useRef(sig);
+  const swapped = prevSig.current !== sig;
+  useEffect(() => {
+    prevSig.current = sig;
+  });
   if (!clip) {
     // nothing selected: the tools of the whole project
     return (
-      <nav class="tabbar" aria-label="Project tools">
+      <nav class={`tabbar ${swapped ? 'swap' : ''}`} key="project" aria-label="Project tools">
         <button class="tab" onClick={() => set({ sheet: 'help' })}>
           <Help />
           <span>Help</span>
@@ -71,7 +77,7 @@ export function TabBar() {
   }
   const shown = tabsFor(media);
   return (
-    <nav class="tabbar" aria-label="Clip tools">
+    <nav class={`tabbar ${swapped ? 'swap' : ''}`} key={shown.join()} aria-label="Clip tools">
       {TABS.filter((t) => shown.includes(t.key)).map((t) => (
         <button key={t.key} class={`tab ${drawer === t.key ? 'on' : ''}`} aria-expanded={drawer === t.key} onClick={() => set({ drawer: drawer === t.key ? null : t.key, tool: t.key })}>
           <t.icon />
@@ -165,6 +171,10 @@ export function Drawer() {
     return () => clearTimeout(id);
   }, [tool]);
   const shown = tool ?? last;
+  const prevTab = useRef<Tool | null>(null);
+  useEffect(() => {
+    prevTab.current = tool;
+  });
 
   useEffect(() => {
     const key = (e: KeyboardEvent) => e.key === 'Escape' && close();
@@ -180,6 +190,7 @@ export function Drawer() {
 
   if (!shown || !clip || !media || !ok.includes(shown)) return null;
   const tab = shown;
+  const swappedTab = prevTab.current !== null && prevTab.current !== tab;
   const dur = clipDuration(clip);
   const pct = Math.round(clip.volume * 100);
   const setVol = (v: number) => updateClip(index, { volume: Math.min(1, Math.max(0, v / 100)) });
@@ -218,6 +229,7 @@ export function Drawer() {
     <>
       {tool && <div class="drawer-scrim" onPointerDown={close} />}
       <div class={`drawer ${leaving ? 'out' : ''}`} role="region" aria-label={`${tab} options`}>
+        <div class={swappedTab ? 'swap' : ''} key={tab}>
         <div class="drawer-head">
           <strong>{media.text ? `“${media.name}”` : media.name || 'Clip'}</strong>
           <span class="num dim">{fmtTime(dur)}</span>
@@ -295,6 +307,7 @@ export function Drawer() {
             <p class="hint">Tap a name twice to reset that slider.</p>
           </section>
         )}
+        </div>
       </div>
     </>
   );
