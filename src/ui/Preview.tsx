@@ -1,7 +1,8 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { engine } from '../engine.ts';
 import { baseScale, clampView, clampZoom, dragView, fitZoom, normAngle, outputSize, pinchView, snapEightCropped, snapView, type Pt } from '../geometry.ts';
-import { getState, set, setCrop, updateClip, useStore } from '../store.ts';
+import { getState, selectClip, set, setCrop, updateClip, useStore } from '../store.ts';
+import { localPoint } from '../turn.ts';
 import { activeAt, fmtTime, totalOf } from '../timeline.ts';
 import type { Crop, View } from '../types.ts';
 import { Pause, Play } from './icons.tsx';
@@ -233,8 +234,8 @@ function Gestures({ boxW, boxH }: { boxW: number; boxH: number }) {
   }, []);
 
   const rel = (e: PointerEvent): Pt => {
-    const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    return { x: e.clientX - r.left - sizes.current.boxW / 2, y: e.clientY - r.top - sizes.current.boxH / 2 };
+    const p = localPoint((e.currentTarget as HTMLElement).getBoundingClientRect(), e.clientX, e.clientY);
+    return { x: p.x - sizes.current.boxW / 2, y: p.y - sizes.current.boxH / 2 };
   };
 
   const down = (e: PointerEvent) => {
@@ -244,7 +245,32 @@ function Gestures({ boxW, boxH }: { boxW: number; boxH: number }) {
     // work on the clip that is on screen (playback may have moved on from the selected one)
     const st0 = getState();
     const visible = activeAt(st0.project.clips, st0.playhead);
-    if (!visible.includes(st0.selected)) {
+    // a finger put on the picture picks the top-most strip under it, whatever was selected before
+    if (pts.current.size === 0 && st0.multi.length === 0) {
+      const q = rel(e);
+      const { boxW: W, boxH: H } = sizes.current;
+      for (const i of [...visible].reverse()) {
+        const c = st0.project.clips[i]!;
+        const m = st0.project.media[c.mediaId];
+        if (!m || m.kind === 'audio') continue;
+        const inset = m.textBox ?? { l: 0, t: 0, r: 0, b: 0 };
+        const cr = c.crop ?? { l: 0, t: 0, r: 0, b: 0 };
+        const k = m.solid !== undefined ? cr : { l: Math.max(cr.l, inset.l), t: Math.max(cr.t, inset.t), r: Math.max(cr.r, inset.r), b: Math.max(cr.b, inset.b) };
+        const sc = baseScale(m.width, m.height, W, H) * c.view.zoom;
+        const a = (c.view.rot * Math.PI) / 180;
+        const dx = q.x - c.view.x * W;
+        const dy = q.y - c.view.y * H;
+        const lx = dx * Math.cos(a) + dy * Math.sin(a);
+        const ly = -dx * Math.sin(a) + dy * Math.cos(a);
+        const pw = m.width * sc;
+        const ph = m.height * sc;
+        if (lx >= -pw / 2 + k.l * pw && lx <= pw / 2 - k.r * pw && ly >= -ph / 2 + k.t * ph && ly <= ph / 2 - k.b * ph) {
+          if (i !== st0.selected) selectClip(i, { keepPlayhead: true });
+          break;
+        }
+      }
+    }
+    if (!visible.includes(getState().selected)) {
       const shown = engine.currentIndex();
       if (shown >= 0) set({ selected: shown });
     }
@@ -378,10 +404,17 @@ function TransformBox({ boxW: W, boxH: H }: { boxW: number; boxH: number }) {
   const media = useStore((s) => (s.project.clips[s.selected] ? s.project.media[s.project.clips[s.selected]!.mediaId] : undefined));
   const [drag, setDrag] = useState<{ view: View; crop: Crop } | null>(null);
   const [quiet, setQuiet] = useState(false);
-  const st = useRef<{ id: number; h: Handle; p0: Pt; view0: View; crop0: Crop } | null>(null);
+  const st = useRef<{ id: number; h: Handle; p0: Pt; view0: View; crop0: Crop; last: Pt; anchor: Pt; fineRaw: Pt; fineEff: Pt; fine: boolean; timer: number; frame: HTMLElement | null } | null>(null);
 
+  const endFine = () => {
+    const d = st.current;
+    if (!d) return;
+    clearTimeout(d.timer);
+    d.frame?.classList.remove('fine');
+  };
   const cancel = () => {
     if (!st.current) return;
+    endFine();
     st.current = null;
     setDrag(null);
     engine.live = null;
@@ -457,8 +490,7 @@ function TransformBox({ boxW: W, boxH: H }: { boxW: number; boxH: number }) {
   };
 
   const frameBox = (e: PointerEvent): Pt => {
-    const r = (e.currentTarget as HTMLElement).parentElement!.getBoundingClientRect();
-    return { x: e.clientX - r.left, y: e.clientY - r.top };
+    return localPoint((e.currentTarget as HTMLElement).parentElement!.getBoundingClientRect(), e.clientX, e.clientY);
   };
   const down = (h: Handle) => (e: PointerEvent) => {
     e.stopPropagation();
@@ -470,13 +502,42 @@ function TransformBox({ boxW: W, boxH: H }: { boxW: number; boxH: number }) {
     } catch {
       /* the pointer is gone */
     }
-    st.current = { id: e.pointerId, h, p0: frameBox(e), view0: clip.view, crop0: crop };
+    const p0 = frameBox(e);
+    const frameEl = (e.currentTarget as HTMLElement).parentElement;
+    const d = { id: e.pointerId, h, p0, view0: clip.view, crop0: crop, last: p0, anchor: p0, fineRaw: p0, fineEff: p0, fine: false, timer: 0, frame: frameEl };
+    st.current = d;
+    // hold still on a handle and it moves ten times slower, for exact work
+    const arm = () => {
+      clearTimeout(d.timer);
+      d.timer = window.setTimeout(() => {
+        if (st.current !== d || d.fine) return;
+        d.fine = true;
+        d.fineRaw = d.last;
+        d.fineEff = d.last;
+        d.frame?.classList.add('fine');
+      }, 700);
+    };
+    (d as { arm?: () => void }).arm = arm;
+    arm();
     void stretch;
+  };
+
+  /** where the finger counts as being: its real place, or (in fine control) a tenth of the way from where it started */
+  const point = (e: PointerEvent): Pt => {
+    const d = st.current!;
+    const raw = frameBox(e);
+    d.last = raw;
+    if (d.fine) return { x: d.fineEff.x + (raw.x - d.fineRaw.x) * 0.1, y: d.fineEff.y + (raw.y - d.fineRaw.y) * 0.1 };
+    if (Math.hypot(raw.x - d.anchor.x, raw.y - d.anchor.y) > 10) {
+      d.anchor = raw;
+      (d as { arm?: () => void }).arm?.();
+    }
+    return raw;
   };
 
   const solve = (e: PointerEvent): { view: View; crop: Crop } => {
     const d = st.current!;
-    const P = frameBox(e);
+    const P = point(e);
     const v0 = d.view0;
     const c0 = d.crop0;
     const s0 = baseScale(media.width, media.height, W, H) * v0.zoom;
@@ -546,6 +607,7 @@ function TransformBox({ boxW: W, boxH: H }: { boxW: number; boxH: number }) {
     const d = st.current;
     if (!d || d.id !== e.pointerId) return;
     const r = e.type === 'pointerup' ? solve(e) : { view: d.view0, crop: d.crop0 };
+    endFine();
     st.current = null;
     setDrag(null);
     engine.live = null;

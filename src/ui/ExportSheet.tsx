@@ -1,10 +1,10 @@
-import { useRef, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import { FriendlyError, exportProject, type ExportProgress, type ExportResult } from '../exporter.ts';
 import { engine } from '../engine.ts';
 import { RATE_STOPS, estimateBytes, fmtMbps, videoBitrate } from '../bitrate.ts';
 import { fmtBytes, saveBlob, shareFiles } from '../files.ts';
 import { outputSize } from '../geometry.ts';
-import { blobFor, getState, reloadMedia, setName, setSettings, useStore } from '../store.ts';
+import { blobFor, getState, reloadMedia, set, setName, setSettings, useStore } from '../store.ts';
 import { fmtTime, planParts, totalOf } from '../timeline.ts';
 import type { ExportSettings } from '../types.ts';
 import { Check, Download, Share } from './icons.tsx';
@@ -60,6 +60,7 @@ export function ExportSheet({ onClose }: { onClose: () => void }) {
 
   const run = async () => {
     engine.pause();
+    set({ exporting: true });
     const ctl = new AbortController();
     abort.current = ctl;
     setNote('');
@@ -75,13 +76,16 @@ export function ExportSheet({ onClose }: { onClose: () => void }) {
           result = await exportProject(getState().project, blobFor, (progress) => setPhase({ name: 'running', progress }), ctl.signal);
         } else throw e;
       }
+      set({ exporting: false });
       setPhase({ name: 'done', result });
     } catch (e) {
+      set({ exporting: false });
       if (e instanceof DOMException && e.name === 'AbortError') setPhase({ name: 'setup' });
       else setPhase({ name: 'error', message: e instanceof FriendlyError ? e.message : `Export failed. ${e instanceof Error ? e.message : ''}`.trim() });
     }
   };
 
+  useEffect(() => () => set({ exporting: false }), []);
   const close = () => {
     if (phase.name === 'running') return;
     onClose();

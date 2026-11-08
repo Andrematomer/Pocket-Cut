@@ -20,6 +20,12 @@ export interface Toast {
 export interface State {
   project: Project;
   selected: number;
+  /** ids of the strips picked together (hold a strip, let go): the tools then change all of them */
+  multi: string[];
+  /** the preview fills the screen: only the few editing buttons stay */
+  focus: boolean;
+  /** an export is running: the sheet cannot be swapped for another */
+  exporting: boolean;
   tool: Tool;
   /** timeline seconds */
   playhead: number;
@@ -82,6 +88,9 @@ function loadAppPrefs(): AppPrefs {
 let state: State = {
   project: freshProject(),
   selected: -1,
+  multi: [],
+  focus: false,
+  exporting: false,
   tool: 'speed',
   playhead: 0,
   playing: false,
@@ -197,14 +206,16 @@ function edit(fn: (p: Project) => Project, opts: { key?: string; history?: boole
     lastKey = opts.key ?? '';
     lastAt = now;
   }
-  set({ project, selected, playhead: Math.min(state.playhead, totalOf(project.clips)), ...flags() });
+  const multi = state.multi.filter((id) => project.clips.some((c) => c.id === id));
+  set({ project, selected, multi: multi.length === state.multi.length ? state.multi : multi, playhead: Math.min(state.playhead, totalOf(project.clips)), ...flags() });
 }
 
 function restoreSnapshot(s: Snapshot): void {
   const project = { ...state.project, clips: s.clips, media: s.media, updated: Date.now() };
   const selected = Math.min(state.selected, project.clips.length - 1);
   lastKey = '';
-  set({ project, selected, playhead: Math.min(state.playhead, totalOf(project.clips)), ...flags() });
+  const multi = state.multi.filter((id) => project.clips.some((c) => c.id === id));
+  set({ project, selected, multi: multi.length === state.multi.length ? state.multi : multi, playhead: Math.min(state.playhead, totalOf(project.clips)), ...flags() });
 }
 
 export function undo(): void {
@@ -240,8 +251,12 @@ export function setPrefs(patch: Partial<AppPrefs>): void {
   if (patch.previewLong !== undefined) requeueAllProxies(state.project.media);
 }
 
+const SHARED: (keyof Clip)[] = ['volume', 'speed', 'keepPitch', 'opacity', 'grade'];
 export function updateClip(index: number, patch: Partial<Clip>): void {
-  edit((p) => ({ ...p, clips: p.clips.map((c, i) => (i === index ? { ...c, ...patch } : c)) }), { key: `${index}:${Object.keys(patch).join()}` });
+  const id = state.project.clips[index]?.id;
+  // with several strips picked, the sound, speed and look settings reach all of them
+  const all = id !== undefined && state.multi.includes(id) && Object.keys(patch).every((k) => SHARED.includes(k as keyof Clip));
+  edit((p) => ({ ...p, clips: p.clips.map((c, i) => (all ? state.multi.includes(c.id) : i === index) ? { ...c, ...patch } : c) }), { key: `${all ? 'multi' : index}:${Object.keys(patch).join()}` });
 }
 
 export function setSpeed(index: number, speed: number): void {
@@ -284,33 +299,70 @@ export function moveClipTo(index: number, at: number, track: number): void {
 }
 
 export function deselect(): void {
-  if (state.selected < 0 && !state.gap && !state.drawer) return;
-  set({ selected: -1, gap: null, handles: false, boxMode: false, drawer: null });
+  if (state.selected < 0 && !state.gap && !state.drawer && state.multi.length === 0) return;
+  set({ selected: -1, multi: [], gap: null, handles: false, boxMode: false, drawer: null });
 }
 
 /** Selects a clip and brings the position marker into it, so it shows in the preview. */
-export function selectClip(index: number): void {
+export function selectClip(index: number, opts: { keepPlayhead?: boolean } = {}): void {
   const c = state.project.clips[index];
   if (!c) return;
   const inside = state.playhead >= c.at - 1e-6 && state.playhead < clipEnd(c);
-  set({ selected: index, playhead: inside ? state.playhead : c.at, gap: null, handles: state.selected === index ? state.handles : false, boxMode: state.selected === index ? state.boxMode : false });
+  set({ selected: index, multi: [], sheet: 'none', playhead: inside || opts.keepPlayhead ? state.playhead : c.at, gap: null, handles: state.selected === index ? state.handles : false, boxMode: state.selected === index ? state.boxMode : false });
+}
+
+/** Starts (or extends) the multi-selection with this strip. */
+export function enterMulti(index: number): void {
+  const c = state.project.clips[index];
+  if (!c) return;
+  set({ selected: index, multi: [c.id], gap: null, drawer: null, sheet: 'none', handles: false, boxMode: false });
+}
+
+/** In multi-selection a tap adds a strip or takes it out again. */
+export function toggleMulti(index: number): void {
+  const c = state.project.clips[index];
+  if (!c) return;
+  const has = state.multi.includes(c.id);
+  const multi = has ? state.multi.filter((x) => x !== c.id) : [...state.multi, c.id];
+  if (multi.length === 0) return deselect();
+  const last = has ? state.project.clips.findIndex((x) => x.id === multi[multi.length - 1]) : index;
+  set({ multi, selected: last });
+}
+
+/** Indices of the strips an action works on: the multi-selection, or the one selected strip. */
+export function targets(): number[] {
+  const { multi, selected, project } = state;
+  if (multi.length > 0) return project.clips.map((c, i) => (multi.includes(c.id) ? i : -1)).filter((i) => i >= 0);
+  return project.clips[selected] ? [selected] : [];
 }
 
 export function duplicateClip(index: number): void {
-  const c = state.project.clips[index];
-  if (!c) return;
-  edit((p) => ({ ...p, clips: [...p.clips, { ...c, id: newId(), at: clipEnd(c), track: freeTrack(p.clips, clipEnd(c), clipDuration(c), c.track) }] }));
-  set({ selected: state.project.clips.length - 1 });
+  const idx = state.multi.length > 0 ? targets() : [index];
+  const picked = idx.map((i) => state.project.clips[i]).filter((c): c is Clip => !!c);
+  if (picked.length === 0) return;
+  edit((p) => {
+    const clips = [...p.clips];
+    for (const c of picked) clips.push({ ...c, id: newId(), at: clipEnd(c), track: freeTrack(clips, clipEnd(c), clipDuration(c), c.track) });
+    return { ...p, clips };
+  });
+  if (picked.length === 1) set({ selected: state.project.clips.length - 1 });
 }
 
+/** Deletes the selected strip, or every strip of the multi-selection. Later strips close up like after removing a gap. */
 export function deleteClip(index: number): void {
-  const c = state.project.clips[index];
-  if (!c) return;
+  const ids = (state.multi.length > 0 ? targets() : [index]).map((i) => state.project.clips[i]?.id).filter((x): x is string => !!x);
+  if (ids.length === 0) return;
   // the file stays in memory and storage while undo could still bring the clip back.
-  // Later clips close up exactly like when a gap is removed, with the same lane hopping.
-  const gap = { track: c.track, from: c.at, to: clipEnd(c) };
-  edit((p) => ({ ...p, clips: removeGapFrom(p.clips.filter((_, i) => i !== index), gap) }));
-  set({ drawer: null, boxMode: false, handles: false, selected: -1, gap: null });
+  edit((p) => {
+    let clips = p.clips;
+    for (const id of ids) {
+      const c = clips.find((x) => x.id === id);
+      if (!c) continue;
+      clips = removeGapFrom(clips.filter((x) => x.id !== id), { track: c.track, from: c.at, to: clipEnd(c) });
+    }
+    return { ...p, clips };
+  });
+  set({ drawer: null, boxMode: false, handles: false, selected: -1, multi: [], gap: null });
 }
 
 /** The look the last text was made with: the next new text starts from it. */
@@ -425,26 +477,36 @@ export function setSolidColor(index: number, color: string): Promise<void> {
   return chain;
 }
 
-/** Cuts the selected clip in two at the position marker. */
+/** Cuts at the position marker: the selected strip(s), or every strip under the marker when nothing is selected. */
 export function splitAtPlayhead(): boolean {
   const { project, playhead } = state;
-  let selected = state.selected;
-  if (!project.clips[selected]) {
-    // nothing selected: cut the top-most clip under the yellow line
-    const under = activeAt(project.clips, playhead).filter((i) => project.media[project.clips[i]!.mediaId]);
-    selected = under[under.length - 1] ?? -1;
+  let ids = targets().map((i) => project.clips[i]!.id);
+  const single = state.multi.length === 0 && ids.length === 1;
+  if (ids.length === 0) ids = activeAt(project.clips, playhead).map((i) => project.clips[i]!.id);
+  const cuts = new Map<string, number>();
+  for (const id of ids) {
+    const c = project.clips.find((x) => x.id === id);
+    if (!c) continue;
+    const local = playhead - c.at;
+    if (local <= 0 || local >= clipDuration(c)) continue;
+    const cut = c.start + local * c.speed;
+    if (cut - c.start < MIN_CLIP || c.end - cut < MIN_CLIP) continue;
+    cuts.set(id, cut);
   }
-  const c = project.clips[selected];
-  if (!c) return false;
-  const local = playhead - c.at;
-  if (local <= 0 || local >= clipDuration(c)) return false;
-  const cut = c.start + local * c.speed;
-  if (cut - c.start < MIN_CLIP || c.end - cut < MIN_CLIP) return false;
+  if (cuts.size === 0) return false;
+  let secondId = '';
   edit((p) => ({
     ...p,
-    clips: [...p.clips.slice(0, selected), { ...c, end: cut }, { ...c, id: newId(), start: cut, at: playhead }, ...p.clips.slice(selected + 1)],
+    clips: p.clips.flatMap((c) => {
+      const cut = cuts.get(c.id);
+      if (cut === undefined) return [c];
+      const second = { ...c, id: newId(), start: cut, at: playhead };
+      if (single) secondId = second.id;
+      return [{ ...c, end: cut }, second];
+    }),
   }));
-  set({ selected: selected + 1 });
+  if (single) set({ selected: state.project.clips.findIndex((c) => c.id === secondId) });
+  else set({ selected: -1, multi: [], handles: false, drawer: null });
   return true;
 }
 
@@ -579,7 +641,7 @@ export async function restore(): Promise<void> {
       settings.aspect = m ? nearestAspect(m.width, m.height) : '9:16';
     } else settings.aspect = saved.project.settings.aspect;
     clearHistory();
-    set({ project: { ...saved.project, clips, settings }, selected: -1, ready: true });
+    set({ project: { ...saved.project, clips, settings }, selected: -1, multi: [], ready: true });
     for (const id of Object.keys(saved.project.media)) ensureWave(id);
   } else {
     set({ ready: true });

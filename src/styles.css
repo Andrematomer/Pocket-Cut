@@ -2390,3 +2390,133 @@ label.cta {
     animation: none;
   }
 }
+
+/* sideways panning of the timeline is handled in code */
+.tl-scroll {
+  touch-action: pan-y;
+}
+.tl.dragging .tl-scroll {
+  touch-action: none;
+}
+
+/* multi-selection glow, snap guide */
+.strip-clip.multi {
+  box-shadow: 0 0 0 2px var(--accent), 0 0 14px 3px rgba(240, 198, 74, 0.75);
+  z-index: 3;
+}
+.snap-guide {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 0;
+  border-left: 2px dashed #ff5fd2;
+  z-index: 6;
+  pointer-events: none;
+}
+/* the preview may take all the height (or none): nothing keeps a minimum that could push the tab bar away */
+.stage {
+  min-height: 0;
+}
+.editor.focus {
+  position: relative;
+}
+.focus-bar {
+  display: flex;
+  justify-content: center;
+  gap: 14px;
+  padding: 8px 12px calc(var(--safe-b) + 10px);
+}
+.focus-bar .tl-btn {
+  width: 48px;
+  height: 48px;
+  border-radius: 24px;
+}
+.focus-bar .exit {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+@media (orientation: landscape) {
+  .editor.focus {
+    flex-direction: row;
+  }
+  .editor.focus .stage {
+    flex: 1;
+  }
+  .focus-bar {
+    flex-direction: column;
+    justify-content: center;
+    padding: 8px calc(var(--safe-r, 0px) + 12px) 8px 8px;
+  }
+}
+.toast {
+  top: calc(var(--safe-t) + 10px) !important;
+  bottom: auto !important;
+}
+
+/* content swap: out (slide down) first, then in (slide up) */
+.swap-out {
+  animation: swap-out 0.12s ease-in forwards;
+}
+.swap-in {
+  animation: swap-in 0.14s ease-out;
+}
+@keyframes swap-out {
+  to {
+    transform: translateY(24px);
+    opacity: 0;
+  }
+}
+@keyframes swap-in {
+  from {
+    transform: translateY(24px);
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .swap-out,
+  .swap-in {
+    animation: none;
+  }
+}
+/* the project tools open over the timeline like every other tool: the tab bar stays below them */
+.scrim {
+  bottom: var(--tabbar-h);
+  background: rgba(5, 8, 10, 0.4);
+}
+.sheet {
+  max-height: calc(100dvh - var(--tabbar-h) - var(--safe-t) - 16px);
+  border-radius: 16px 16px 0 0;
+}
+.sheet-body {
+  padding-bottom: 16px;
+}
+
+/* full preview on a phone locked to portrait but held on its side: the screen is turned in code */
+.app.turned-cw,
+.app.turned-ccw {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100dvh;
+  height: 100dvw;
+  transform-origin: top left;
+}
+.app.turned-cw {
+  transform: translateX(100dvw) rotate(90deg);
+}
+.app.turned-ccw {
+  transform: translateY(100dvh) rotate(-90deg);
+}
+.app.turned-cw .editor.focus,
+.app.turned-ccw .editor.focus {
+  flex-direction: row;
+}
+.app.turned-cw .focus-bar,
+.app.turned-ccw .focus-bar {
+  flex-direction: column;
+  justify-content: center;
+  padding: 8px 12px 8px 8px;
+}
+.tl-inner {
+  overflow: hidden;
+}

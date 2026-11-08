@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { engine } from '../engine.ts';
+import { setQuarter } from '../turn.ts';
 import { canPromptInstall, isAndroid, isIOS, isMobile, isStandalone, onInstallChange, promptInstall } from '../install.ts';
-import { deselect, importFiles, restore, set, useStore } from '../store.ts';
+import { deleteClip, deselect, duplicateClip, importFiles, redo, restore, set, undo, useStore } from '../store.ts';
 import { CanvasSheet } from './CanvasSheet.tsx';
 import { HelpSheet } from './HelpSheet.tsx';
 import { ExportSheet } from './ExportSheet.tsx';
-import { Gear, Help, Plus } from './icons.tsx';
+import { Copy, Gear, Help, Plus, Redo, Shrink, Trash, Undo } from './icons.tsx';
 import { FilePicker, PickLabel } from './Picker.tsx';
 import { Preview } from './Preview.tsx';
 import { Drawer, TabBar } from './Drawer.tsx';
@@ -19,6 +20,22 @@ export function App() {
   const ready = useStore((s) => s.ready);
   const hasClips = useStore((s) => s.project.clips.length > 0);
   const sheet = useStore((s) => s.sheet);
+  const focus = useStore((s) => s.focus);
+  // A phone that is locked to portrait does not turn the page. In full preview, turn the whole screen
+  // ourselves when the phone is held on its side (iPhone turns the page by itself, so it is skipped).
+  const [turn, setTurn] = useState<0 | 90 | -90>(0);
+  useEffect(() => setQuarter(turn), [turn]);
+  useEffect(() => {
+    if (!focus || isIOS || typeof DeviceMotionEvent === 'undefined') return setTurn(0);
+    const f = (e: DeviceMotionEvent) => {
+      const g = e.accelerationIncludingGravity;
+      if (!g || g.x == null || g.y == null || window.innerWidth > window.innerHeight) return setTurn(0);
+      if (Math.abs(g.x) > 6.5 && Math.abs(g.x) > Math.abs(g.y) * 1.6) setTurn(g.x < 0 ? 90 : -90);
+      else if (Math.abs(g.y) > 6.5 && Math.abs(g.y) > Math.abs(g.x) * 1.6) setTurn(0);
+    };
+    window.addEventListener('devicemotion', f);
+    return () => (window.removeEventListener('devicemotion', f), setTurn(0));
+  }, [focus]);
   // a closed sheet stays for a moment so it can slide out
   const [lastSheet, setLastSheet] = useState<typeof sheet>('none');
   const [leaving, setLeaving] = useState(false);
@@ -102,7 +119,7 @@ export function App() {
   }, [hasClips]);
 
   return (
-    <div class="app" style={{ '--tl-h': `${tlH}px` } as Record<string, string>}>
+    <div class={`app ${turn ? (turn > 0 ? 'turned-cw' : 'turned-ccw') : ''}`} style={{ '--tl-h': `${tlH}px` } as Record<string, string>}>
       <FilePicker />
       {!hasClips && (
         <header class="top">
@@ -121,12 +138,19 @@ export function App() {
       {!support.ok ? (
         <Unsupported />
       ) : !ready ? null : hasClips ? (
-        <main class="editor">
-          <Preview />
-          <Timeline />
-          <TabBar />
-          <Drawer />
-        </main>
+        focus ? (
+          <main class="editor focus">
+            <Preview />
+            <FocusBar />
+          </main>
+        ) : (
+          <main class="editor">
+            <Preview />
+            <Timeline />
+            <TabBar />
+            <Drawer />
+          </main>
+        )
       ) : (
         <Empty />
       )}
@@ -227,5 +251,32 @@ function InstallHint() {
       <p>Installed, it opens full screen, works without internet and keeps your project safe.</p>
       {body}
     </section>
+  );
+}
+
+/** Preview focus: the picture fills the screen and only a few buttons stay (below it, or beside it when the phone is on its side). */
+function FocusBar() {
+  const selected = useStore((s) => s.selected);
+  const canUndo = useStore((s) => s.canUndo);
+  const canRedo = useStore((s) => s.canRedo);
+  const has = useStore((s) => !!s.project.clips[s.selected]);
+  return (
+    <div class="focus-bar">
+      <button class="tl-btn" disabled={!has} onClick={() => (engine.pause(), deleteClip(selected))} aria-label="Delete the selected clip">
+        <Trash />
+      </button>
+      <button class="tl-btn" disabled={!canUndo} onClick={undo} aria-label="Undo">
+        <Undo />
+      </button>
+      <button class="tl-btn" disabled={!canRedo} onClick={redo} aria-label="Redo">
+        <Redo />
+      </button>
+      <button class="tl-btn" disabled={!has} onClick={() => (engine.pause(), duplicateClip(selected))} aria-label="Duplicate the selected clip">
+        <Copy />
+      </button>
+      <button class="tl-btn exit" onClick={() => set({ focus: false })} aria-label="Leave full preview">
+        <Shrink />
+      </button>
+    </div>
   );
 }

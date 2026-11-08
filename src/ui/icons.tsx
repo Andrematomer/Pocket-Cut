@@ -171,3 +171,8 @@ export const Swatch = () => (
     <circle cx="12" cy="12" r="8" fill="currentColor" stroke="none" />
   </I>
 );
+export const Shrink = () => (
+  <I>
+    <path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5" />
+  </I>
+);

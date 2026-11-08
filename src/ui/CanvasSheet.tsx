@@ -1,5 +1,6 @@
 import { setSettings, useStore } from '../store.ts';
 import type { AspectChoice } from '../types.ts';
+import { ColorRow } from './Drawer.tsx';
 import { Fold } from './Fold.tsx';
 import { Sheet } from './Sheet.tsx';
 
@@ -11,8 +12,8 @@ export function CanvasSheet({ onClose }: { onClose: () => void }) {
   const aspect = useStore((s) => s.project.settings.aspect);
   const bg = useStore((s) => s.project.settings.background);
   return (
-    <Sheet title="Canvas" onClose={onClose}>
-      <Fold title="Shape of the video" hint={<>The shape of the exported video. It starts with the shape that suits your first clip. Move, zoom and turn each clip right on the preview to place it.</>}>
+    <Sheet title="Ratio" onClose={onClose}>
+      <Fold title="Ratio" hint={<>The shape of the exported video. It starts with the shape that suits your first clip. Move, zoom and turn each clip right on the preview to place it.</>}>
         <div class="chips" role="group" aria-label="Canvas shape">
           {ASPECTS.map((a) => (
             <button key={a} class={`chip num ${aspect === a ? 'on' : ''}`} aria-pressed={aspect === a} onClick={() => setSettings({ aspect: a })}>
@@ -22,10 +23,8 @@ export function CanvasSheet({ onClose }: { onClose: () => void }) {
         </div>
         
       </Fold>
-      <Fold title="Background color" hint={<>Tap the swatch to open your system's color picker. The color shows wherever no picture covers the canvas, in the preview and in the export.</>}>
-        <label class="color-block" style={{ background: bg }} aria-label="Background color">
-              <input type="color" value={bg} onInput={(e) => setSettings({ background: (e.currentTarget as HTMLInputElement).value })} />
-        </label>
+      <Fold title="Background color" hint={<>Tap the color to open your system's color picker. The color shows wherever no picture covers the canvas, in the preview and in the export.</>}>
+        <ColorRow label="Background color" value={bg} onPick={(c) => setSettings({ background: c })} />
       </Fold>
       <button class="cta" onClick={onClose}>
         Done

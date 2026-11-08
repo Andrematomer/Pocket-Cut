@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { NO_GRADE } from '../layers.ts';
-import { editText, set, setSolidColor, setSpeed, updateClip, useStore, type Tool } from '../store.ts';
+import { editText, set, setSolidColor, setSpeed, targets, updateClip, useStore, type Tool } from '../store.ts';
 import { TEXT_FONTS, autoOutline } from '../text.ts';
 import { MAX_SPEED, MIN_SPEED, clipDuration, fmtTime } from '../timeline.ts';
 import type { Grade, MediaInfo } from '../types.ts';
 import { Download, FontIcon, Gear, Help, Look, Mute, OutlineIcon, Sound, Speed, Swatch, TextIcon } from './icons.tsx';
 import { Slider } from './Slider.tsx';
+import { useSwap } from './swap.ts';
 
 const SPEEDS = [0.25, 0.5, 0.75, 1, 1.5, 2, 3, 4];
 
@@ -43,42 +44,41 @@ export function tabsFor(m: MediaInfo | undefined): Tool[] {
  */
 export function TabBar() {
   const drawer = useStore((s) => s.drawer);
+  const sheet = useStore((s) => s.sheet);
+  const exporting = useStore((s) => s.exporting);
   const clip = useStore((s) => s.project.clips[s.selected]);
+  const multi = useStore((s) => s.multi);
   const aspect = useStore((s) => s.project.settings.aspect);
-  const media = useStore((s) => (s.project.clips[s.selected] ? s.project.media[s.project.clips[s.selected]!.mediaId] : undefined));
-  const sig = clip ? tabsFor(media).join() : 'project';
-  const prevSig = useRef(sig);
-  const swapped = prevSig.current !== sig;
-  useEffect(() => {
-    prevSig.current = sig;
-  });
-  if (!clip) {
-    // nothing selected: the tools of the whole project
+  const mediaOf = useStore((s) => s.project.media);
+  const clips = useStore((s) => s.project.clips);
+  // with several strips picked, only the tabs every one of them has are shown
+  const picked = multi.length > 0 ? clips.filter((c) => multi.includes(c.id)) : clip ? [clip] : [];
+  const tabs = picked.length === 0 ? [] : TABS.map((t) => t.key).filter((k) => picked.every((c) => tabsFor(mediaOf[c.mediaId]).includes(k)) && !(k === 'text' && picked.length > 1));
+  const sig = picked.length === 0 ? 'project' : tabs.join() || 'none';
+  const { shown, cls } = useSwap({ project: picked.length === 0, tabs }, sig);
+  const openSheet = (name: 'help' | 'canvas' | 'settings' | 'export') => () => set({ sheet: sheet === name ? 'none' : name, drawer: null });
+  if (shown.project) {
+    // nothing selected: the tools of the whole project (they rise over the timeline like any other tool)
+    const items: { name: 'help' | 'canvas' | 'settings' | 'export'; label: string; icon: preact.JSX.Element }[] = [
+      { name: 'help', label: 'Help', icon: <Help /> },
+      { name: 'canvas', label: `Ratio ${aspect}`, icon: <i class="canvas-ico" aria-hidden="true" /> },
+      { name: 'settings', label: 'Settings', icon: <Gear /> },
+      { name: 'export', label: 'Export', icon: <Download /> },
+    ];
     return (
-      <nav class={`tabbar ${swapped ? 'swap' : ''}`} key="project" aria-label="Project tools">
-        <button class="tab" onClick={() => set({ sheet: 'help' })}>
-          <Help />
-          <span>Help</span>
-        </button>
-        <button class="tab" onClick={() => set({ sheet: 'canvas' })}>
-          <i class="canvas-ico" aria-hidden="true" />
-          <span>Ratio {aspect}</span>
-        </button>
-        <button class="tab" onClick={() => set({ sheet: 'settings' })}>
-          <Gear />
-          <span>Settings</span>
-        </button>
-        <button class="tab export-tab" onClick={() => set({ sheet: 'export' })}>
-          <Download />
-          <span>Export</span>
-        </button>
+      <nav class={`tabbar ${cls}`} aria-label="Project tools">
+        {items.map((it) => (
+          <button key={it.name} class={`tab ${sheet === it.name ? 'on' : ''}`} disabled={exporting && it.name !== 'export'} aria-expanded={sheet === it.name} onClick={openSheet(it.name)}>
+            {it.icon}
+            <span>{it.label}</span>
+          </button>
+        ))}
       </nav>
     );
   }
-  const shown = tabsFor(media);
   return (
-    <nav class={`tabbar ${swapped ? 'swap' : ''}`} key={shown.join()} aria-label="Clip tools">
-      {TABS.filter((t) => shown.includes(t.key)).map((t) => (
+    <nav class={`tabbar ${cls}`} aria-label="Clip tools">
+      {TABS.filter((t) => shown.tabs.includes(t.key)).map((t) => (
         <button key={t.key} class={`tab ${drawer === t.key ? 'on' : ''}`} aria-expanded={drawer === t.key} onClick={() => set({ drawer: drawer === t.key ? null : t.key, tool: t.key })}>
           <t.icon />
           <span>{t.name}</span>
@@ -156,6 +156,7 @@ export function Drawer() {
   const clip = useStore((s) => s.project.clips[s.selected]);
   const media = useStore((s) => (s.project.clips[s.selected] ? s.project.media[s.project.clips[s.selected]!.mediaId] : undefined));
   const close = () => set({ drawer: null });
+  const each = (fn: (i: number) => void) => (targets().length > 1 ? targets() : [index]).forEach(fn);
   // the panel stays for a moment after it is closed, so it can slide out
   const [last, setLast] = useState<Tool | null>(null);
   const [leaving, setLeaving] = useState(false);
@@ -171,10 +172,7 @@ export function Drawer() {
     return () => clearTimeout(id);
   }, [tool]);
   const shown = tool ?? last;
-  const prevTab = useRef<Tool | null>(null);
-  useEffect(() => {
-    prevTab.current = tool;
-  });
+  const sw = useSwap(shown, shown ?? '');
 
   useEffect(() => {
     const key = (e: KeyboardEvent) => e.key === 'Escape' && close();
@@ -189,8 +187,7 @@ export function Drawer() {
   });
 
   if (!shown || !clip || !media || !ok.includes(shown)) return null;
-  const tab = shown;
-  const swappedTab = prevTab.current !== null && prevTab.current !== tab;
+  const tab = sw.shown ?? shown;
   const dur = clipDuration(clip);
   const pct = Math.round(clip.volume * 100);
   const setVol = (v: number) => updateClip(index, { volume: Math.min(1, Math.max(0, v / 100)) });
@@ -229,7 +226,7 @@ export function Drawer() {
     <>
       {tool && <div class="drawer-scrim" onPointerDown={close} />}
       <div class={`drawer ${leaving ? 'out' : ''}`} role="region" aria-label={`${tab} options`}>
-        <div class={swappedTab ? 'swap' : ''} key={tab}>
+        <div class={sw.cls}>
         <div class="drawer-head">
           <strong>{media.text ? `“${media.name}”` : media.name || 'Clip'}</strong>
           <span class="num dim">{fmtTime(dur)}</span>
@@ -244,9 +241,9 @@ export function Drawer() {
         {tab === 'color' && (
           <section>
             {media.solid !== undefined ? (
-              <ColorRow label="Color" value={media.solid} onPick={(c) => void setSolidColor(index, c)} />
+              <ColorRow label="Color" value={media.solid} onPick={(c) => each((i) => void setSolidColor(i, c))} />
             ) : (
-              <ColorRow label="Text color" value={textColor} onPick={(c) => void editText(index, { color: c })} />
+              <ColorRow label="Text color" value={textColor} onPick={(c) => each((i) => void editText(i, { color: c }))} />
             )}
           </section>
         )}
@@ -255,7 +252,7 @@ export function Drawer() {
           <section>
             <div class="chips" role="group" aria-label="Font">
               {TEXT_FONTS.map((f) => (
-                <button key={f.key} class={`chip ${f.key === (media.textFont ?? 'sans') ? 'on' : ''}`} style={{ fontFamily: f.css, fontWeight: f.weight }} aria-pressed={f.key === (media.textFont ?? 'sans')} onClick={() => void editText(index, { font: f.key })}>
+                <button key={f.key} class={`chip ${f.key === (media.textFont ?? 'sans') ? 'on' : ''}`} style={{ fontFamily: f.css, fontWeight: f.weight }} aria-pressed={f.key === (media.textFont ?? 'sans')} onClick={() => each((i) => void editText(i, { font: f.key }))}>
                   {f.name}
                 </button>
               ))}
@@ -265,8 +262,8 @@ export function Drawer() {
 
         {tab === 'outline' && (
           <section>
-            {row('Thickness', `${outlineWidth}`, () => void editText(index, { width: 14 }), <Slider label="Outline thickness" value={outlineWidth} min={0} max={40} step={1} fineStep={0.5} snaps={[0, 14]} snapPx={10} valueText={`${outlineWidth}`} onChange={(v) => void editText(index, { width: Math.round(v) })} />)}
-            <ColorRow label="Outline color" value={outlineColor} onPick={(c) => void editText(index, { outline: c })} />
+            {row('Thickness', `${outlineWidth}`, () => each((i) => void editText(i, { width: 14 })), <Slider label="Outline thickness" value={outlineWidth} min={0} max={40} step={1} fineStep={0.5} snaps={[0, 14]} snapPx={10} valueText={`${outlineWidth}`} onChange={(v) => each((i) => void editText(i, { width: Math.round(v) }))} />)}
+            <ColorRow label="Outline color" value={outlineColor} onPick={(c) => each((i) => void editText(i, { outline: c }))} />
           </section>
         )}
 
