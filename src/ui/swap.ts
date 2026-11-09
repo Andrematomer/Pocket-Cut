@@ -1,29 +1,30 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 
 /**
- * When `key` changes between two real values, the old content slides down and fades (class swap-out),
- * THEN the new content takes its place and slides back up (swap-in). Going from or to "nothing" (key
- * '') changes at once: that is an opening or closing, which has its own animation.
+ * When `key` changes between two real values, the old content slides down and fades (swap-out) FIRST,
+ * and only then the new content takes its place and slides back up (swap-in). Going from or to
+ * "nothing" (key '') changes at once: that is an opening or closing, which has its own animation.
  */
 export function useSwap<T>(value: T, key: string, ms = 120): { shown: T; cls: string } {
-  const [st, setSt] = useState<{ phase: '' | 'out' | 'in'; shown: T }>({ phase: '', shown: value });
-  const last = useRef({ key, value });
+  const [st, setSt] = useState<{ key: string; phase: '' | 'in' }>({ key, phase: '' });
+  const last = useRef(value);
   const latest = useRef(value);
   latest.current = value;
-  const prevKey = useRef(key);
+  const pending = st.key !== key;
+  const direct = pending && (st.key === '' || key === '');
   useEffect(() => {
-    const was = prevKey.current;
-    prevKey.current = key;
-    if (was === key) return;
-    if (was === '' || key === '') {
-      setSt({ phase: '', shown: value });
-      return;
-    }
-    setSt({ phase: 'out', shown: last.current.value });
-    const a = window.setTimeout(() => setSt({ phase: 'in', shown: latest.current }), ms);
-    const b = window.setTimeout(() => setSt({ phase: '', shown: latest.current }), ms * 2 + 30);
-    return () => (clearTimeout(a), clearTimeout(b));
-  }, [key]);
-  if (st.phase === '') last.current = { key, value };
-  return { shown: st.phase === '' ? value : st.shown, cls: st.phase ? `swap-${st.phase}` : '' };
+    if (st.key === key) return;
+    if (direct) return setSt({ key, phase: '' });
+    // old content has been sliding down since this very render; swap it when it is gone
+    const a = window.setTimeout(() => setSt({ key, phase: 'in' }), ms);
+    return () => clearTimeout(a);
+  }, [key, st.key]);
+  useEffect(() => {
+    if (st.phase !== 'in') return;
+    const b = window.setTimeout(() => setSt((s) => ({ ...s, phase: '' })), ms + 30);
+    return () => clearTimeout(b);
+  }, [st.phase, st.key]);
+  if (pending && !direct) return { shown: last.current, cls: 'swap-out' };
+  last.current = value;
+  return { shown: value, cls: st.phase === 'in' ? 'swap-in' : '' };
 }

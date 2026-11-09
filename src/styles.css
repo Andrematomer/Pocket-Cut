@@ -2391,10 +2391,6 @@ label.cta {
   }
 }
 
-/* sideways panning of the timeline is handled in code */
-.tl-scroll {
-  touch-action: pan-y;
-}
 .tl.dragging .tl-scroll {
   touch-action: none;
 }
@@ -2519,4 +2515,22 @@ label.cta {
 }
 .tl-inner {
   overflow: hidden;
+}
+
+/* strip: length on top, name on the bottom */
+.strip-time {
+  position: absolute;
+  left: 4px;
+  top: 2px;
+  right: 4px;
+  font-size: 10.5px;
+  color: #fff;
+  text-shadow: 0 0 3px #000, 0 0 3px #000;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
+.strip-clip.solid .strip-time {
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.7);
 }

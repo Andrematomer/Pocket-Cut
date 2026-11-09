@@ -229,7 +229,6 @@ export function Drawer() {
         <div class={sw.cls}>
         <div class="drawer-head">
           <strong>{media.text ? `“${media.name}”` : media.name || 'Clip'}</strong>
-          <span class="num dim">{fmtTime(dur)}</span>
         </div>
 
         {tab === 'text' && (

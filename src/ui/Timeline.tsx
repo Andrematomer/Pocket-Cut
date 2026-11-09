@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { keyOf } from '../bake.ts';
 import { engine } from '../engine.ts';
 import { thumbUrl } from '../media.ts';
-import { addSolid, addTextClip, deleteClip, deselect, duplicateClip, enterMulti, getState, moveClipTo, redo, removeGap, selectClip, set, splitAtPlayhead, toast, toggleMulti, undo, updateClip, useStore } from '../store.ts';
+import { addSolid, addTextClip, deleteClip, deselect, duplicateClip, enterMulti, getState, moveClipTo, moveMulti, redo, removeGap, selectClip, set, splitAtPlayhead, toast, toggleMulti, undo, updateClip, useStore } from '../store.ts';
 import { PEAKS_PER_SEC } from '../wave.ts';
 import { MIN_CLIP, activeAt, clipDuration, clipEnd, fmtTime, gapAt, totalOf } from '../timeline.ts';
 import type { Clip, MediaInfo } from '../types.ts';
@@ -148,8 +148,10 @@ export function Timeline() {
     const el = scroller.current;
     if (!el) return;
     let pinch: { d0: number; pps0: number } | null = null;
+    let trail: { t: number; x: number; left: number }[] = [];
     const dist = (e: TouchEvent) => Math.hypot(e.touches[0]!.clientX - e.touches[1]!.clientX, e.touches[0]!.clientY - e.touches[1]!.clientY);
     const start = (e: TouchEvent) => {
+      trail = [];
       if (e.touches.length === 2) {
         pinch = { d0: dist(e), pps0: live.current.pps };
         pinching.current = true;
@@ -164,9 +166,27 @@ export function Timeline() {
         e.preventDefault();
         setPps(Math.max(MIN_PPS, Math.min(MAX_PPS, (pinch.pps0 * dist(e)) / pinch.d0)));
       } else if (st.current?.active || trimRef.current) e.preventDefault();
+      else if (e.touches.length === 1) {
+        const now = performance.now();
+        trail.push({ t: now, x: e.touches[0]!.clientX, left: el.scrollLeft });
+        trail = trail.filter((p) => now - p.t < 120);
+      }
     };
     const end = (e: TouchEvent) => {
       if (e.touches.length < 2) (pinch = null, (pinching.current = false));
+      if (e.touches.length === 0 && trail.length) {
+        // a slow, careful scroll must stop exactly where the finger stopped (no slide from the lift-off)
+        const a = trail[0]!;
+        const b = trail[trail.length - 1]!;
+        const v = b.t > a.t ? Math.abs(b.x - a.x) / (b.t - a.t) : 0;
+        if (v < 0.35 || performance.now() - b.t > 60) {
+          const left = b.left;
+          el.style.overflowX = 'hidden';
+          el.scrollLeft = left;
+          requestAnimationFrame(() => (el.style.overflowX = ''));
+        }
+      }
+      trail = [];
     };
     el.addEventListener('touchstart', start, { passive: true });
     el.addEventListener('touchmove', mv, { passive: false });
@@ -180,73 +200,6 @@ export function Timeline() {
     };
   }, []);
 
-  // sideways panning is done here, not by the phone: it stops dead where the finger stops, and the two
-  // ends of the project are walls (no rubber band, no coasting past them). Up and down stay native.
-  const pan = useRef<{ id: number; x0: number; y0: number; left0: number; on: boolean; trail: { t: number; x: number }[] } | null>(null);
-  const coast = useRef(0);
-  const maxLeft = () => totalOf(live.current.clips) * live.current.pps;
-  const stopCoast = () => {
-    cancelAnimationFrame(coast.current);
-    coast.current = 0;
-  };
-  const panDown = (e: PointerEvent) => {
-    const el = scroller.current;
-    stopCoast();
-    if (!el || (e.pointerType === 'mouse' && e.button !== 0) || pan.current) return;
-    pan.current = { id: e.pointerId, x0: e.clientX, y0: e.clientY, left0: el.scrollLeft, on: false, trail: [{ t: performance.now(), x: e.clientX }] };
-  };
-  const panMove = (e: PointerEvent) => {
-    const p = pan.current;
-    const el = scroller.current;
-    if (!p || !el || e.pointerId !== p.id || pinching.current) return;
-    if (st.current?.active || trimRef.current) return;
-    const dx = e.clientX - p.x0;
-    if (!p.on) {
-      if (Math.abs(dx) < 8 || Math.abs(dx) < Math.abs(e.clientY - p.y0)) return;
-      p.on = true;
-      if (st.current) (clearTimeout(st.current.timer), (st.current = null)); // a drag, not a pick-up
-      try {
-        el.setPointerCapture(e.pointerId);
-      } catch {
-        /* the pointer is gone */
-      }
-    }
-    el.scrollLeft = Math.max(0, Math.min(maxLeft(), p.left0 - dx));
-    const now = performance.now();
-    p.trail.push({ t: now, x: e.clientX });
-    p.trail = p.trail.filter((q) => now - q.t < 100);
-  };
-  const panUp = (e: PointerEvent) => {
-    const p = pan.current;
-    const el = scroller.current;
-    if (!p || e.pointerId !== p.id) return;
-    pan.current = null;
-    if (!p.on || !el) return;
-    swallow.current = true;
-    setTimeout(() => (swallow.current = false), 0);
-    const a = p.trail[0];
-    const b = p.trail[p.trail.length - 1];
-    let v = a && b && b.t > a.t && performance.now() - b.t < 60 ? -(b.x - a.x) / (b.t - a.t) : 0; // px per ms, scroll direction
-    if (Math.abs(v) < 0.5 || e.type === 'pointercancel') return; // a careful scroll stops where it stopped
-    let last = performance.now();
-    const step = (now: number) => {
-      const dt = Math.min(32, now - last);
-      last = now;
-      let left = el.scrollLeft + v * dt;
-      const hi = maxLeft();
-      if (left <= 0 || left >= hi) {
-        el.scrollLeft = Math.max(0, Math.min(hi, left));
-        coast.current = 0;
-        return; // the wall
-      }
-      el.scrollLeft = left;
-      v *= Math.pow(0.0015, dt / 1000); // glide to a stop in about a second
-      if (Math.abs(v) > 0.04) coast.current = requestAnimationFrame(step);
-      else coast.current = 0;
-    };
-    coast.current = requestAnimationFrame(step);
-  };
-
   // ---------- moving a strip ----------
 
   /** nearest snap for a strip starting at `at` that is `dur` long: where it goes, and the edge it lines up with */
@@ -255,7 +208,7 @@ export function Timeline() {
     const limit = SNAP_PX / k;
     const points = [0, ph];
     cs.forEach((c, i) => {
-      if (i !== index) points.push(c.at, clipEnd(c));
+      if (i !== index && !getState().multi.includes(c.id)) points.push(c.at, clipEnd(c));
     });
     let best = at;
     let guide: number | null = null;
@@ -309,7 +262,7 @@ export function Timeline() {
       setMove((d) => {
         if (commit && d) {
           const c = live.current.clips[d.index];
-          if (c && (d.at !== c.at || d.track !== c.track)) moveClipTo(d.index, d.at, d.track);
+          if (c && (d.at !== c.at || d.track !== c.track)) (getState().multi.includes(c.id) ? moveMulti : moveClipTo)(d.index, d.at, d.track);
           else if (c && !getState().multi.includes(c.id)) enterMulti(d.index); // held and let go in place: pick several
         }
         return null;
@@ -437,7 +390,7 @@ export function Timeline() {
   const barDrag = useRef<{ id: number; y0: number; h0: number; lo: number; hi: number; grip: boolean; armed: boolean; moved: boolean } | null>(null);
   const setTlH = (h: number) => window.dispatchEvent(new CustomEvent('pc-tl-height', { detail: h }));
   const barDown = (e: PointerEvent) => {
-    if ((e.target as Element).closest('button, label, input, .add-menu')) return; // buttons only tap
+    if (!(e.target as Element).closest('.tl-grip')) return; // only the grip is a divider; the buttons and the space between them do nothing here
     const app = document.querySelector('.app') as HTMLElement | null;
     const stage = document.querySelector('.stage') as HTMLElement | null;
     if (!app || !stage) return;
@@ -473,7 +426,6 @@ export function Timeline() {
     barDrag.current = null;
     if (e.type === 'pointerup' && !d.moved && d.grip) toast('Slide this handle up or down to give the preview or the timeline more room.');
     if (d.armed && e.type === 'pointerup') {
-      setTlH(d.h0);
       set({ focus: true, drawer: null, sheet: 'none' });
       return;
     }
@@ -557,7 +509,7 @@ export function Timeline() {
         </div>
       </div>
       <div class="tl-wrap">
-        <div class="tl-scroll" ref={scroller} onScroll={onScroll} onPointerDown={panDown} onPointerMove={panMove} onPointerUp={panUp} onPointerCancel={panUp}>
+        <div class="tl-scroll" ref={scroller} onScroll={onScroll}>
           <div class="tl-inner" style={{ width: `${width}px`, minHeight: `${height}px` }} onClick={(e) => e.target === e.currentTarget && deselect()}>
             <div class="tl-ruler" style={{ height: `${RULER}px` }}>
               {ticks.map((t) => (
@@ -583,15 +535,17 @@ export function Timeline() {
             {move?.guide != null && <div class="snap-guide" style={{ left: `${padL + move.guide * pps}px` }} />}
             {clips.map((c, i) => {
               const m = media[c.mediaId];
-              const moving = move?.index === i;
+              const lead = move ? clips[move.index] : undefined;
+              const follows = !!move && !!lead && move.index !== i && multi.includes(c.id) && multi.includes(lead.id);
+              const moving = move?.index === i || follows;
               const tr = trim?.index === i ? trim : null;
-              const at = moving ? move!.at : (tr?.at ?? c.at);
+              const at = follows ? Math.max(0, c.at + (move!.at - lead!.at)) : moving ? move!.at : (tr?.at ?? c.at);
               const start = tr?.start ?? c.start;
               const end = tr?.end ?? c.end;
-              const track = moving ? move!.track : c.track;
+              const track = moving && !follows ? move!.track : c.track;
               const row = lanes.indexOf(track);
               if (row < 0) return null;
-              const top = moving ? move!.top : rowTop(row);
+              const top = follows ? Math.max(RULER, rowTop(row) + (move!.top - rowTop(lanes.indexOf(lead!.track)))) : moving ? move!.top : rowTop(row);
               const url = thumbUrl(c.mediaId);
               const p = progress[c.mediaId];
               const audio = isAudio(m);
@@ -627,10 +581,13 @@ export function Timeline() {
                     </span>
                   )}
                   {url && !m?.text && <span class="strip-thumb" style={{ backgroundImage: `url("${url}")`, backgroundPosition: `${-((tr?.at ?? c.at) - c.at) * pps}px center` }} />}
-                  <span class="strip-label num">
-                    {c.speed !== 1 ? `${c.speed}× · ` : ''}
-                    {audio || m?.text || m?.solid ? (m?.name ?? '') : fmtTime((end - start) / c.speed)}
-                  </span>
+                  {ROW >= 30 && (
+                    <span class="strip-time num">
+                      {c.speed !== 1 ? `${c.speed}× · ` : ''}
+                      {fmtTime((end - start) / c.speed)}
+                    </span>
+                  )}
+                  <span class="strip-label num">{m?.name ?? ''}</span>
                   {p !== undefined && (
                     <span class="tile-pie" title="Making a lighter copy for the preview">
                       <Pie value={p} size={16} />

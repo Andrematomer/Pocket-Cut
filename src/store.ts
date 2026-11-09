@@ -303,6 +303,31 @@ export function deselect(): void {
   set({ selected: -1, multi: [], gap: null, handles: false, boxMode: false, drawer: null });
 }
 
+/** Moves every picked strip by the same time and lane distance as the dragged one. */
+export function moveMulti(index: number, at: number, track: number): void {
+  const lead = state.project.clips[index];
+  if (!lead) return;
+  const ids = targets().map((i) => state.project.clips[i]!.id);
+  const group = state.project.clips.filter((c) => ids.includes(c.id));
+  let dAt = at - lead.at;
+  dAt = Math.max(dAt, -Math.min(...group.map((c) => c.at)));
+  const dTrack = track - lead.track;
+  if (Math.abs(dAt) < 1e-6 && dTrack === 0) return;
+  edit((p) => {
+    const rest = p.clips.filter((c) => !ids.includes(c.id));
+    const placed: Clip[] = [...rest];
+    const moved = new Map<string, Clip>();
+    for (const c of [...group].sort((a, b) => Math.abs(a.track) - Math.abs(b.track) || a.at - b.at)) {
+      const when = Math.max(0, Math.round((c.at + dAt) * 100) / 100);
+      const t = freeTrack(placed, when, clipDuration(c), c.track + dTrack);
+      const m = { ...c, at: when, track: t };
+      moved.set(c.id, m);
+      placed.push(m);
+    }
+    return { ...p, clips: p.clips.map((c) => moved.get(c.id) ?? c) };
+  }, { key: 'move:multi' });
+}
+
 /** Selects a clip and brings the position marker into it, so it shows in the preview. */
 export function selectClip(index: number, opts: { keepPlayhead?: boolean } = {}): void {
   const c = state.project.clips[index];

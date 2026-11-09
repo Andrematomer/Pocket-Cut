@@ -349,9 +349,6 @@ function Gestures({ boxW, boxH }: { boxW: number; boxH: number }) {
         doubleTap();
       } else {
         lastTap.current = { t: tp.t, x: tp.x, y: tp.y };
-        // a single tap shows or hides the crop handles (after the time a second tap would need)
-        clearTimeout(cropTimer.current);
-        cropTimer.current = window.setTimeout(() => set({ boxMode: !getState().boxMode }), 330);
       }
     }
   };
@@ -398,7 +395,7 @@ let onBox = 0;
  * that is being dragged, so the two ways never fight. The box may reach outside the canvas.
  */
 function TransformBox({ boxW: W, boxH: H }: { boxW: number; boxH: number }) {
-  const on = useStore((s) => s.boxMode);
+  const on = useStore((s) => s.multi.length === 0); // the box is simply there whenever one strip is selected
   const selected = useStore((s) => s.selected);
   const clip = useStore((s) => s.project.clips[s.selected]);
   const media = useStore((s) => (s.project.clips[s.selected] ? s.project.media[s.project.clips[s.selected]!.mediaId] : undefined));
@@ -411,6 +408,8 @@ function TransformBox({ boxW: W, boxH: H }: { boxW: number; boxH: number }) {
     if (!d) return;
     clearTimeout(d.timer);
     d.frame?.classList.remove('fine');
+    const b = d.frame?.querySelector('.gesture-badge');
+    if (b && b.textContent === 'FINE') (b.textContent = ''), b.classList.remove('on');
   };
   const cancel = () => {
     if (!st.current) return;
@@ -515,10 +514,12 @@ function TransformBox({ boxW: W, boxH: H }: { boxW: number; boxH: number }) {
         d.fineRaw = d.last;
         d.fineEff = d.last;
         d.frame?.classList.add('fine');
-      }, 700);
+        const b = d.frame?.querySelector('.gesture-badge');
+        if (b) (b.textContent = 'FINE'), b.classList.add('on');
+      }, HOLD_MS);
     };
     (d as { arm?: () => void }).arm = arm;
-    arm();
+    if (h !== 'rot') arm(); // the rotor keeps the plain two-finger way
     void stretch;
   };
 

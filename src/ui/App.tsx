@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { engine } from '../engine.ts';
+import { outputSize } from '../geometry.ts';
 import { setQuarter } from '../turn.ts';
 import { canPromptInstall, isAndroid, isIOS, isMobile, isStandalone, onInstallChange, promptInstall } from '../install.ts';
 import { deleteClip, deselect, duplicateClip, importFiles, redo, restore, set, undo, useStore } from '../store.ts';
@@ -21,21 +22,20 @@ export function App() {
   const hasClips = useStore((s) => s.project.clips.length > 0);
   const sheet = useStore((s) => s.sheet);
   const focus = useStore((s) => s.focus);
-  // A phone that is locked to portrait does not turn the page. In full preview, turn the whole screen
-  // ourselves when the phone is held on its side (iPhone turns the page by itself, so it is skipped).
-  const [turn, setTurn] = useState<0 | 90 | -90>(0);
-  useEffect(() => setQuarter(turn), [turn]);
+  // Full preview of a wide project on a portrait screen: the whole screen is turned a quarter, so the wide picture fills it
+  // (the buttons turn with it). A screen that is already wide (a tab turned by the browser) needs nothing.
+  const wide = useStore((s) => {
+    const o = outputSize(s.project);
+    return o.w > o.h;
+  });
+  const [portrait, setPortrait] = useState(() => window.innerHeight >= window.innerWidth);
   useEffect(() => {
-    if (!focus || isIOS || typeof DeviceMotionEvent === 'undefined') return setTurn(0);
-    const f = (e: DeviceMotionEvent) => {
-      const g = e.accelerationIncludingGravity;
-      if (!g || g.x == null || g.y == null || window.innerWidth > window.innerHeight) return setTurn(0);
-      if (Math.abs(g.x) > 6.5 && Math.abs(g.x) > Math.abs(g.y) * 1.6) setTurn(g.x < 0 ? 90 : -90);
-      else if (Math.abs(g.y) > 6.5 && Math.abs(g.y) > Math.abs(g.x) * 1.6) setTurn(0);
-    };
-    window.addEventListener('devicemotion', f);
-    return () => (window.removeEventListener('devicemotion', f), setTurn(0));
-  }, [focus]);
+    const f = () => setPortrait(window.innerHeight >= window.innerWidth);
+    window.addEventListener('resize', f);
+    return () => window.removeEventListener('resize', f);
+  }, []);
+  const turn: 0 | 90 | -90 = focus && wide && portrait ? 90 : 0;
+  useEffect(() => setQuarter(turn), [turn]);
   // a closed sheet stays for a moment so it can slide out
   const [lastSheet, setLastSheet] = useState<typeof sheet>('none');
   const [leaving, setLeaving] = useState(false);
@@ -274,7 +274,7 @@ function FocusBar() {
       <button class="tl-btn" disabled={!has} onClick={() => (engine.pause(), duplicateClip(selected))} aria-label="Duplicate the selected clip">
         <Copy />
       </button>
-      <button class="tl-btn exit" onClick={() => set({ focus: false })} aria-label="Leave full preview">
+      <button class="tl-btn exit" onClick={() => (window.dispatchEvent(new CustomEvent('pc-tl-height', { detail: 200 })), set({ focus: false }))} aria-label="Leave full preview">
         <Shrink />
       </button>
     </div>
