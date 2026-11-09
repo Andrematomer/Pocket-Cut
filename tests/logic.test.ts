@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { IDENTITY_VIEW, baseScale, clampView, snapEightCropped, dragView, fillZoom, fitZoom, frameTransform, nearestAspect, snapEight, normAngle, outputSize, pinchView, quarterTurned, snapView } from '../src/geometry.ts';
 import { gradePixel } from '../src/layers.ts';
-import { activeAt, endOfTrack, freeTrack, gapAt, removeGap, settleAt, planParts, sourceAt, totalOf } from '../src/timeline.ts';
+import { activeAt, endOfTrack, freeTrack, gapAt, removeGap, resolveOverlaps, settleAt, planParts, sourceAt, totalOf } from '../src/timeline.ts';
 import { resample, timeStretch } from '../src/stretch.ts';
 import { MAX_MBPS, MIN_MBPS, RATE_STOPS, autoBitrate, estimateBytes, fmtMbps, videoBitrate } from '../src/bitrate.ts';
 import { emptyProject, type Clip } from '../src/types.ts';
@@ -326,4 +326,19 @@ test('settleAt: a strip dropped a hair from a neighbour sits flush, so it is not
   assert.equal(settleAt(others, e + 0.2, 2, 0), null);
   assert.equal(settleAt(others, e - 0.004, 2, 1), null); // another lane: nothing to settle against
   assert.equal(freeTrack(others, settleAt(others, e - 0.004, 2, 0)!, 2, 0), 0);
+});
+
+test('resolveOverlaps: the manipulated strip goes to the NEXT lane (not the next free one) and pushes what it lands on', () => {
+  // slowed clip `a` (0..4) now runs over `b` (3..5) on lane 0; lane 1 holds `c` (2..6) and lane 2 is empty
+  const cs = [mk('a', 0, 4, 0), mk('b', 3, 2, 0), mk('c', 2, 4, 1)];
+  const out = resolveOverlaps(cs, ['a']);
+  const by = (id: string) => out.find((x) => x.id === id)!;
+  assert.equal(by('a').track, 1); // next lane, even though lane 1 is busy
+  assert.equal(by('c').track, 2); // the one it landed on is pushed out in turn
+  assert.equal(by('b').track, 0);
+  // sound lanes push downwards
+  const au = [mk('p', 0, 4, -1), mk('q', 3, 2, -1)];
+  assert.equal(resolveOverlaps(au, ['p']).find((x) => x.id === 'p')!.track, -2);
+  // nothing overlaps: nothing moves
+  assert.deepEqual(resolveOverlaps([mk('a', 0, 2, 0), mk('b', 2, 2, 0)], ['a']).map((c) => c.track), [0, 0]);
 });

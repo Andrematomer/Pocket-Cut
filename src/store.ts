@@ -6,7 +6,7 @@ import { setAwakeMode } from './wake.ts';
 import { computePeaks } from './wave.ts';
 import { onProxyProgress, onProxyWork, queueProxy, requeueAllProxies, setProxyOrder } from './proxy.ts';
 import { clearSaved, loadSaved, requestPersistence, saveMedia, saveProject } from './persist.ts';
-import { activeAt, clipDuration, clipEnd, endOfTrack, freeTrack, settleAt, MAX_SPEED, MIN_CLIP, MIN_SPEED, removeGap as removeGapFrom, totalOf, type Gap } from './timeline.ts';
+import { activeAt, clipDuration, clipEnd, endOfTrack, freeTrack, resolveOverlaps, settleAt, MAX_SPEED, MIN_CLIP, MIN_SPEED, removeGap as removeGapFrom, totalOf, type Gap } from './timeline.ts';
 import { DEFAULT_SETTINGS, emptyProject, type Clip, type ExportSettings, type MediaInfo, type Project } from './types.ts';
 
 export type Tool = 'speed' | 'sound' | 'look' | 'clip' | 'text' | 'color' | 'font' | 'outline';
@@ -256,7 +256,16 @@ export function updateClip(index: number, patch: Partial<Clip>): void {
   const id = state.project.clips[index]?.id;
   // with several strips picked, the sound, speed and look settings reach all of them
   const all = id !== undefined && state.multi.includes(id) && Object.keys(patch).every((k) => SHARED.includes(k as keyof Clip));
-  edit((p) => ({ ...p, clips: p.clips.map((c, i) => (all ? state.multi.includes(c.id) : i === index) ? { ...c, ...patch } : c) }), { key: `${all ? 'multi' : index}:${Object.keys(patch).join()}` });
+  const touched = state.project.clips.filter((c, i) => (all ? state.multi.includes(c.id) : i === index)).map((c) => c.id);
+  const timing = 'speed' in patch || 'start' in patch || 'end' in patch || 'at' in patch;
+  edit(
+    (p) => {
+      const next = p.clips.map((c, i) => ((all ? state.multi.includes(c.id) : i === index) ? { ...c, ...patch } : c));
+      // a strip that grows (slower speed, longer trim) into its neighbour goes to the next lane out, pushing what it lands on
+      return { ...p, clips: timing ? resolveOverlaps(next, touched) : next };
+    },
+    { key: `${all ? 'multi' : index}:${Object.keys(patch).join()}` },
+  );
 }
 
 export function setSpeed(index: number, speed: number): void {
@@ -293,9 +302,10 @@ export function moveClipTo(index: number, at: number, track: number): void {
   const others = state.project.clips.filter((_, i) => i !== index);
   const dur = clipDuration(c);
   const flush = settleAt(others, at, dur, track);
-  const next = { at: flush ?? when, track: freeTrack(others, flush ?? when, dur, track) };
+  const next = { at: flush ?? when, track };
   if (next.at === c.at && next.track === c.track) return;
-  edit((p) => ({ ...p, clips: p.clips.map((x, i) => (i === index ? { ...x, ...next } : x)) }), { key: `move:${index}` });
+  // dropped on another strip: this one goes to the next lane out, and whatever it lands on is pushed out in turn
+  edit((p) => ({ ...p, clips: resolveOverlaps(p.clips.map((x, i) => (i === index ? { ...x, ...next } : x)), [c.id]) }), { key: `move:${index}` });
 }
 
 export function deselect(): void {
@@ -314,17 +324,9 @@ export function moveMulti(index: number, at: number, track: number): void {
   const dTrack = track - lead.track;
   if (Math.abs(dAt) < 1e-6 && dTrack === 0) return;
   edit((p) => {
-    const rest = p.clips.filter((c) => !ids.includes(c.id));
-    const placed: Clip[] = [...rest];
-    const moved = new Map<string, Clip>();
-    for (const c of [...group].sort((a, b) => Math.abs(a.track) - Math.abs(b.track) || a.at - b.at)) {
-      const when = Math.max(0, Math.round((c.at + dAt) * 100) / 100);
-      const t = freeTrack(placed, when, clipDuration(c), c.track + dTrack);
-      const m = { ...c, at: when, track: t };
-      moved.set(c.id, m);
-      placed.push(m);
-    }
-    return { ...p, clips: p.clips.map((c) => moved.get(c.id) ?? c) };
+    const order = [...group].sort((a, b) => Math.abs(a.track) - Math.abs(b.track) || a.at - b.at).map((c) => c.id);
+    const moved = p.clips.map((c) => (ids.includes(c.id) ? { ...c, at: Math.max(0, Math.round((c.at + dAt) * 100) / 100), track: c.track + dTrack } : c));
+    return { ...p, clips: resolveOverlaps(moved, order) };
   }, { key: 'move:multi' });
 }
 
@@ -341,6 +343,13 @@ export function enterMulti(index: number): void {
   const c = state.project.clips[index];
   if (!c) return;
   set({ selected: index, multi: [c.id], gap: null, drawer: null, sheet: 'none', handles: false, boxMode: false });
+}
+
+/** Picks exactly these strips (box select). */
+export function setMulti(ids: string[]): void {
+  const idx = state.project.clips.map((c, i) => (ids.includes(c.id) ? i : -1)).filter((i) => i >= 0);
+  if (idx.length === 0) return;
+  set({ multi: ids, selected: idx[idx.length - 1]!, gap: null, drawer: null, sheet: 'none', handles: false, boxMode: false });
 }
 
 /** In multi-selection a tap adds a strip or takes it out again. */
@@ -366,9 +375,8 @@ export function duplicateClip(index: number): void {
   const picked = idx.map((i) => state.project.clips[i]).filter((c): c is Clip => !!c);
   if (picked.length === 0) return;
   edit((p) => {
-    const clips = [...p.clips];
-    for (const c of picked) clips.push({ ...c, id: newId(), at: clipEnd(c), track: freeTrack(clips, clipEnd(c), clipDuration(c), c.track) });
-    return { ...p, clips };
+    const fresh = picked.map((c) => ({ ...c, id: newId(), at: clipEnd(c) }));
+    return { ...p, clips: resolveOverlaps([...p.clips, ...fresh], fresh.map((c) => c.id)) };
   });
   if (picked.length === 1) set({ selected: state.project.clips.length - 1 });
 }

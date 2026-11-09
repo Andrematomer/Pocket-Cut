@@ -205,6 +205,14 @@ function Gestures({ boxW, boxH }: { boxW: number; boxH: number }) {
   };
 
   useEffect(() => {
+    adoptFingers = adopt;
+    return () => {
+      adoptFingers = null;
+      window.removeEventListener('pointermove', move);
+    };
+  }, []);
+
+  useEffect(() => {
     // safety nets: the element's own events are enough on a good day
     const lost = (e: PointerEvent) => {
       if (!pts.current.has(e.pointerId)) return;
@@ -234,8 +242,30 @@ function Gestures({ boxW, boxH }: { boxW: number; boxH: number }) {
   }, []);
 
   const rel = (e: PointerEvent): Pt => {
-    const p = localPoint((e.currentTarget as HTMLElement).getBoundingClientRect(), e.clientX, e.clientY);
+    return relClient(e.clientX, e.clientY);
+  };
+  const relClient = (cx: number, cy: number): Pt => {
+    const r = (root.current ?? document.body).getBoundingClientRect();
+    const p = localPoint(r, cx, cy);
     return { x: p.x - sizes.current.boxW / 2, y: p.y - sizes.current.boxH / 2 };
+  };
+  const lastEv = useRef<Event | null>(null);
+  const winMove = useRef(false);
+  /** The transform box saw a second finger: both fingers now belong to the picture (pinch), wherever they landed. */
+  const adopt = (list: { id: number; x: number; y: number }[]) => {
+    const c = current();
+    if (!c) return;
+    engine.pause();
+    for (const f of list.slice(0, 2)) pts.current.set(f.id, relClient(f.x, f.y));
+    if (tap.current) tap.current.multi = true;
+    else tap.current = { t: performance.now(), x: list[0]!.x, y: list[0]!.y, moved: true, multi: true };
+    if (!live.current) live.current = c.clip.view;
+    rebase();
+    startTimer();
+    if (!winMove.current) {
+      winMove.current = true;
+      window.addEventListener('pointermove', move);
+    }
   };
 
   const down = (e: PointerEvent) => {
@@ -290,6 +320,8 @@ function Gestures({ boxW, boxH }: { boxW: number; boxH: number }) {
     startTimer();
   };
   const move = (e: PointerEvent) => {
+    if (lastEv.current === e) return; // the same event reaches the layer and the window
+    lastEv.current = e;
     if (!pts.current.has(e.pointerId)) return;
     if (e.pointerType === 'mouse' && e.buttons === 0) return flush(); // button released somewhere we did not see
     pts.current.set(e.pointerId, rel(e));
@@ -386,6 +418,8 @@ type Handle = 'tl' | 'tr' | 'br' | 'bl' | 'l' | 't' | 'r' | 'b' | 'rot';
 
 /** fingers on the screen right now (any element), and whether one of them is on the transform box */
 const fingers = new Set<number>();
+const fingerAt = new Map<number, { x: number; y: number }>();
+let adoptFingers: ((list: { id: number; x: number; y: number }[]) => void) | null = null;
 let onBox = 0;
 
 /**
@@ -425,27 +459,36 @@ function TransformBox({ boxW: W, boxH: H }: { boxW: number; boxH: number }) {
   useEffect(() => {
     const down = (e: PointerEvent) => {
       // the first finger of a new touch: anything still remembered from before was lost
-      if (e.isPrimary) (fingers.clear(), (onBox = 0));
+      if (e.isPrimary) (fingers.clear(), fingerAt.clear(), (onBox = 0));
       fingers.add(e.pointerId);
+      fingerAt.set(e.pointerId, { x: e.clientX, y: e.clientY });
       const el = e.target as Element | null;
       const mine = !!el?.closest?.('.tbox-h');
       if (mine) onBox = e.pointerId;
       // anything outside the preview (timeline, tabs, header...) puts the box away
       if (!el?.closest?.('.frame') && getState().boxMode) set({ boxMode: false });
       if (fingers.size >= 2 || !mine) cancel();
+      // two fingers on the preview always mean pinch, even when the first one is already on a handle
+      if (fingers.size >= 2 && el?.closest?.('.frame')) adoptFingers?.([...fingerAt].map(([id, p]) => ({ id, x: p.x, y: p.y })));
       setQuiet(fingers.size >= 2 || !mine);
+    };
+    const track = (e: PointerEvent) => {
+      if (fingerAt.has(e.pointerId)) fingerAt.set(e.pointerId, { x: e.clientX, y: e.clientY });
     };
     const up = (e: PointerEvent) => {
       fingers.delete(e.pointerId);
+      fingerAt.delete(e.pointerId);
       if (onBox === e.pointerId) onBox = 0;
       if (fingers.size === 0) setQuiet(false);
       else if (fingers.size === 1 && !onBox) setQuiet(true);
     };
     window.addEventListener('pointerdown', down, true);
+    window.addEventListener('pointermove', track, true);
     window.addEventListener('pointerup', up, true);
     window.addEventListener('pointercancel', up, true);
     return () => {
       window.removeEventListener('pointerdown', down, true);
+      window.removeEventListener('pointermove', track, true);
       window.removeEventListener('pointerup', up, true);
       window.removeEventListener('pointercancel', up, true);
     };

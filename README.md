@@ -44,9 +44,8 @@ After the first visit it works with no connection.
 | Tabs | With a clip selected: its tabs (Speed, Sound, Look, Text...) raise a drawer over the timeline. With nothing selected (tap an empty lane, a gap or the space around the canvas): Help, Ratio, Settings, Export. |
 | Middle bar | Add, Delete, Play, Undo, Redo, Split, Duplicate. Drag any empty part of the bar up or down to trade height between preview and timeline. |
 | Split | The Split button cuts the selected strip at the yellow line, or every strip under the line when nothing is selected. |
-| Several strips | Hold a strip until it lifts and let go without moving: it glows and you pick more with taps. Tabs shared by all of them stay; sound, speed and look changes reach all. Delete, Duplicate and Split work on all. |
+| Several strips | Hold on empty space in the timeline (a gap too) until the box appears, then drag it over strips to pick them. Tap strips to add or remove them, or hold and box again to add more. Tabs shared by all of them stay; sound, speed and look changes reach all, and dragging one moves all. |
 | Full preview | Drag the ⇕ handle at the end of the middle bar all the way down and release: the preview fills the screen with Delete, Undo, Redo, Duplicate and Exit. Dragging it up shrinks the preview to nothing. |
-| Logos | The logo folder holds unused logo and name ideas. |
 | Speed | A snapping slider from 0.25× to 4×. The voice keeps its pitch, or follows the speed if you prefer. |
 | Look | Opacity, brightness, contrast, color and warmth, per clip, for video and pictures (needs WebGL). |
 | Place and crop | Drag, pinch and twist the clip on the preview, with snapping to the center, edges, quarter turns, "fits" and "fills"; up to 90% of it can leave the frame. Tap once for a transform box (scale, turn, crop). |

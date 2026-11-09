@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { keyOf } from '../bake.ts';
 import { engine } from '../engine.ts';
 import { thumbUrl } from '../media.ts';
-import { addSolid, addTextClip, deleteClip, deselect, duplicateClip, enterMulti, getState, moveClipTo, moveMulti, redo, removeGap, selectClip, set, splitAtPlayhead, toast, toggleMulti, undo, updateClip, useStore } from '../store.ts';
+import { addSolid, addTextClip, deleteClip, deselect, duplicateClip, getState, moveClipTo, moveMulti, redo, removeGap, selectClip, set, setMulti, splitAtPlayhead, toast, toggleMulti, undo, updateClip, useStore } from '../store.ts';
 import { PEAKS_PER_SEC } from '../wave.ts';
 import { MIN_CLIP, activeAt, clipDuration, clipEnd, fmtTime, gapAt, totalOf } from '../timeline.ts';
 import type { Clip, MediaInfo } from '../types.ts';
@@ -165,7 +165,7 @@ export function Timeline() {
       if (pinch && e.touches.length === 2) {
         e.preventDefault();
         setPps(Math.max(MIN_PPS, Math.min(MAX_PPS, (pinch.pps0 * dist(e)) / pinch.d0)));
-      } else if (st.current?.active || trimRef.current) e.preventDefault();
+      } else if (st.current?.active || trimRef.current || boxRef.current?.active) e.preventDefault();
       else if (e.touches.length === 1) {
         const now = performance.now();
         trail.push({ t: now, x: e.touches[0]!.clientX, left: el.scrollLeft });
@@ -199,6 +199,83 @@ export function Timeline() {
       el.removeEventListener('touchcancel', end);
     };
   }, []);
+
+  // ---------- box select: hold on empty space, then drag a box over the strips ----------
+
+  const [box, setBox] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
+  const boxRef = useRef<{ id: number; sx: number; sy: number; x0: number; y0: number; x1: number; y1: number; timer: number; active: boolean } | null>(null);
+  const toContent = (cx: number, cy: number) => {
+    const el = scroller.current!;
+    const r = el.getBoundingClientRect();
+    return { x: cx - r.left + el.scrollLeft, y: cy - r.top + el.scrollTop };
+  };
+  const boxDown = (e: PointerEvent) => {
+    const el = scroller.current;
+    if (!el || !e.isPrimary || (e.pointerType === 'mouse' && e.button !== 0)) return;
+    if ((e.target as Element).closest('.strip-clip, .trim-h, .gap-trash, .tl-ruler')) return;
+    const p = toContent(e.clientX, e.clientY);
+    const b = { id: e.pointerId, sx: e.clientX, sy: e.clientY, x0: p.x, y0: p.y, x1: p.x, y1: p.y, timer: 0, active: false };
+    boxRef.current = b;
+    b.timer = window.setTimeout(() => {
+      if (boxRef.current !== b) return;
+      b.active = true;
+      engine.pause();
+      try {
+        navigator.vibrate?.(12);
+      } catch {
+        /* not supported */
+      }
+      try {
+        el.setPointerCapture(b.id);
+      } catch {
+        /* the pointer is gone */
+      }
+      setBox({ x0: b.x0, y0: b.y0, x1: b.x1, y1: b.y1 });
+    }, HOLD_MS);
+  };
+  const boxMove = (e: PointerEvent) => {
+    const b = boxRef.current;
+    if (!b || e.pointerId !== b.id) return;
+    if (!b.active) {
+      if (Math.hypot(e.clientX - b.sx, e.clientY - b.sy) > WOBBLE) {
+        clearTimeout(b.timer); // a scroll, not a box
+        boxRef.current = null;
+      }
+      return;
+    }
+    const p = toContent(e.clientX, e.clientY);
+    b.x1 = p.x;
+    b.y1 = p.y;
+    setBox({ x0: b.x0, y0: b.y0, x1: b.x1, y1: b.y1 });
+  };
+  const boxUp = (e: PointerEvent) => {
+    const b = boxRef.current;
+    if (!b || e.pointerId !== b.id) return;
+    clearTimeout(b.timer);
+    boxRef.current = null;
+    if (!b.active) return;
+    setBox(null);
+    swallow.current = true;
+    setTimeout(() => (swallow.current = false), 0);
+    if (e.type !== 'pointerup') return;
+    const { clips: cs, pps: k, lanes: ln, padL: pl } = live.current;
+    const l = Math.min(b.x0, b.x1);
+    const r = Math.max(b.x0, b.x1);
+    const t = Math.min(b.y0, b.y1);
+    const bt = Math.max(b.y0, b.y1);
+    const hits = cs.filter((c) => {
+      const row = ln.indexOf(c.track);
+      if (row < 0) return false;
+      const x = pl + c.at * k;
+      const w = Math.max(14, clipDuration(c) * k);
+      const y = rowTop(row);
+      return x < r && x + w > l && y < bt && y + ROW > t;
+    });
+    if (hits.length === 0) return;
+    // a second box adds to what is already picked
+    const ids = [...new Set([...(getState().multi.length ? getState().multi : []), ...hits.map((c) => c.id)])];
+    setMulti(ids);
+  };
 
   // ---------- moving a strip ----------
 
@@ -263,7 +340,6 @@ export function Timeline() {
         if (commit && d) {
           const c = live.current.clips[d.index];
           if (c && (d.at !== c.at || d.track !== c.track)) (getState().multi.includes(c.id) ? moveMulti : moveClipTo)(d.index, d.at, d.track);
-          else if (c && !getState().multi.includes(c.id)) enterMulti(d.index); // held and let go in place: pick several
         }
         return null;
       });
@@ -416,8 +492,8 @@ export function Timeline() {
     if (!d || d.id !== e.pointerId) return;
     const raw = d.h0 + (d.y0 - e.clientY);
     if (Math.abs(e.clientY - d.y0) > 6) d.moved = true;
-    // pulled well past the stop: the timeline folds away, and letting go there opens the preview on its own
-    d.armed = raw < d.lo - 44;
+    // finger at the bottom edge: the timeline folds away, and letting go there opens the full preview
+    d.armed = e.clientY >= window.innerHeight - 56 && raw < d.lo; // only with the finger at the very bottom of the screen
     setTlH(d.armed ? 0 : Math.round(Math.max(d.lo, Math.min(d.hi, raw))));
   };
   const barUp = (e: PointerEvent) => {
@@ -509,7 +585,7 @@ export function Timeline() {
         </div>
       </div>
       <div class="tl-wrap">
-        <div class="tl-scroll" ref={scroller} onScroll={onScroll}>
+        <div class="tl-scroll" ref={scroller} onScroll={onScroll} onPointerDown={boxDown} onPointerMove={boxMove} onPointerUp={boxUp} onPointerCancel={boxUp}>
           <div class="tl-inner" style={{ width: `${width}px`, minHeight: `${height}px` }} onClick={(e) => e.target === e.currentTarget && deselect()}>
             <div class="tl-ruler" style={{ height: `${RULER}px` }}>
               {ticks.map((t) => (
@@ -532,6 +608,7 @@ export function Timeline() {
                 </button>
               </div>
             )}
+            {box && <div class="tl-box" style={{ left: `${Math.min(box.x0, box.x1)}px`, top: `${Math.min(box.y0, box.y1)}px`, width: `${Math.abs(box.x1 - box.x0)}px`, height: `${Math.abs(box.y1 - box.y0)}px` }} />}
             {move?.guide != null && <div class="snap-guide" style={{ left: `${padL + move.guide * pps}px` }} />}
             {clips.map((c, i) => {
               const m = media[c.mediaId];

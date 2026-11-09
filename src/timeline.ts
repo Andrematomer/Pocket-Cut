@@ -111,8 +111,8 @@ export function gapAt(clips: Clip[], track: number, t: number): Gap | null {
 
 /**
  * Closes a gap: every clip that starts at or after its end moves earlier by the gap's length, on all
- * lanes. A moved clip that would land on another clip of its lane goes to the next free lane further
- * out (up for pictures and video, down for sound).
+ * lanes. A moved clip that would land on another clip of its lane goes to the next lane out (see
+ * resolveOverlaps).
  */
 export function removeGap(clips: Clip[], gap: Gap): Clip[] {
   const len = gap.to - gap.from;
@@ -122,7 +122,6 @@ export function removeGap(clips: Clip[], gap: Gap): Clip[] {
   const still = out.filter((c) => c.at < gap.to - eps);
   moving.sort((a, b) => Math.abs(a.track) - Math.abs(b.track) || a.at - b.at);
   const placed: Clip[] = [...still];
-  const free = (c: Clip) => !placed.some((o) => o.track === c.track && c.at < clipEnd(o) - eps && o.at < clipEnd(c) - eps);
   for (const c of moving) c.at = Math.max(0, Math.round((c.at - len) * 100) / 100);
   // pass 1: clips that fit on their own lane stay there, so a hop never takes a lane a later clip needs
   const hop: Clip[] = [];
@@ -131,12 +130,39 @@ export function removeGap(clips: Clip[], gap: Gap): Clip[] {
     if (clash) hop.push(c);
     else placed.push(c);
   }
-  // pass 2: only the clashing ones move out to the next free lane
-  for (const c of hop) {
-    const dir = c.track >= 0 ? 1 : -1;
-    let guard = 0;
-    while (!free(c) && guard++ < 64) c.track += dir;
-    placed.push(c);
+  // pass 2: a clashing clip goes to the next lane out, and whatever it lands on is pushed out the same way
+  let res = out;
+  for (const c of hop) res = resolveOverlaps(res, [c.id]);
+  return res;
+}
+
+/**
+ * Keeps every lane free of overlaps without ever reshuffling the order of the picture: a clip in `ids`
+ * that overlaps another one on its lane goes to the NEXT lane out (up from lane 0, down below it), not
+ * to the next lane that happens to be free. If it lands on something there, that clip is pushed to the
+ * next lane out in turn, and so on.
+ */
+export function resolveOverlaps(clips: Clip[], ids: string[]): Clip[] {
+  const out = clips.map((c) => ({ ...c }));
+  const eps = 1e-6;
+  const hit = (a: Clip, b: Clip) => a.id !== b.id && a.track === b.track && a.at < clipEnd(b) - eps && b.at < clipEnd(a) - eps;
+  const out1 = (c: Clip) => (c.track += c.track >= 0 ? 1 : -1);
+  const shove = (c: Clip, depth: number) => {
+    if (depth > 400) return;
+    for (const o of out) {
+      if (hit(c, o)) {
+        out1(o);
+        shove(o, depth + 1);
+      }
+    }
+  };
+  for (const id of ids) {
+    const c = out.find((x) => x.id === id);
+    if (!c) continue;
+    if (out.some((o) => hit(c, o))) {
+      out1(c);
+      shove(c, 0);
+    }
   }
   return out;
 }
