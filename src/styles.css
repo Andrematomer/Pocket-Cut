@@ -2558,3 +2558,16 @@ label.cta {
   user-select: none;
   -webkit-touch-callout: none;
 }
+
+/* the turned screen has no notch or home bar on its top and bottom edges: the real insets sit on its left (or right) edge */
+.app.turned-cw,
+.app.turned-ccw {
+  --safe-t: 0px;
+  --safe-b: 0px;
+}
+.app.turned-cw .stage {
+  padding-left: calc(env(safe-area-inset-top, 0px) + 8px);
+}
+.app.turned-ccw .stage {
+  padding-right: calc(env(safe-area-inset-top, 0px) + 8px);
+}

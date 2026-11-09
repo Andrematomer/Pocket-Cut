@@ -455,8 +455,8 @@ export function Timeline() {
     const x = e.clientX - el.getBoundingClientRect().left + el.scrollLeft;
     const t = (x - padL) / pps;
     const g = gapAt(clips, track, t);
-    if (!g) {
-      deselect(); // empty lane space: nothing is selected any more
+    if (!g || getState().multi.length > 0) {
+      deselect(); // empty lane space (or any gap while several strips are picked): nothing is selected any more
       return;
     }
     engine.pause();
@@ -477,7 +477,10 @@ export function Timeline() {
     const needed = Math.ceil((stage.clientWidth - px(cs.paddingLeft) - px(cs.paddingRight)) / (o.w / o.h)) + px(cs.paddingTop) + px(cs.paddingBottom);
     const room = stage.clientHeight;
     // the timeline stops shrinking once the preview already has all the height its width can use...
-    const lo = Math.max(0, Math.min(h0, h0 + room - needed));
+    // (a wide picture cannot use more height, so the divider is free all the way down to the tab bar)
+    void needed;
+    void room;
+    const lo = 0;
     // ...and can grow until the preview is gone
     const hi = Math.max(lo, h0 + room - px(cs.paddingTop) - px(cs.paddingBottom));
     barDrag.current = { id: e.pointerId, y0: e.clientY, h0, lo, hi, grip: !!(e.target as Element).closest('.tl-grip'), armed: false, moved: false };
@@ -493,7 +496,7 @@ export function Timeline() {
     const raw = d.h0 + (d.y0 - e.clientY);
     if (Math.abs(e.clientY - d.y0) > 6) d.moved = true;
     // finger at the bottom edge: the timeline folds away, and letting go there opens the full preview
-    d.armed = e.clientY >= window.innerHeight - 56 && raw < d.lo; // only with the finger at the very bottom of the screen
+    d.armed = e.clientY >= window.innerHeight - 80 && raw < d.lo + 1; // only with the finger at the very bottom of the screen
     setTlH(d.armed ? 0 : Math.round(Math.max(d.lo, Math.min(d.hi, raw))));
   };
   const barUp = (e: PointerEvent) => {
