@@ -1,5 +1,11 @@
 import { importFiles } from './store.ts';
 
+/** Where the next picked files go: after the last strip, or as a layer at the yellow line. Set by the button that opened the picker. */
+let pickMode: 'end' | 'playhead' = 'end';
+export const setPickMode = (m: 'end' | 'playhead'): void => {
+  pickMode = m;
+};
+
 export const ACCEPT = 'video/*,image/*,audio/mpeg,audio/mp4,audio/x-m4a,audio/aac,audio/wav,audio/x-wav,.mp4,.mov,.m4v,.webm,.mkv,.3gp,.jpg,.jpeg,.png,.webp,.gif,.heic,.heif,.avif,.mp3,.m4a,.wav,.aac,.caf';
 export const PICKER_ID = 'pc-file-input';
 
@@ -10,7 +16,9 @@ export const PICKER_ID = 'pc-file-input';
 export function onPicked(input: HTMLInputElement): void {
   const files = [...(input.files ?? [])];
   input.value = '';
-  void importFiles(files);
+  const mode = pickMode;
+  pickMode = 'end';
+  void importFiles(files, mode);
 }
 
 /**

@@ -7,7 +7,7 @@ import { computePeaks } from './wave.ts';
 import { onProxyProgress, onProxyWork, queueProxy, requeueAllProxies, setProxyOrder } from './proxy.ts';
 import { clearSaved, loadSaved, requestPersistence, saveMedia, saveProject } from './persist.ts';
 import { activeAt, clipDuration, clipEnd, endOfTrack, freeTrack, resolveOverlaps, settleAt, MAX_SPEED, MIN_CLIP, MIN_SPEED, removeGap as removeGapFrom, totalOf, type Gap } from './timeline.ts';
-import { DEFAULT_SETTINGS, emptyProject, type Clip, type ExportSettings, type MediaInfo, type Project } from './types.ts';
+import { DEFAULT_SETTINGS, emptyProject, type Clip, type ExportSettings, type MediaInfo, type Project, type View } from './types.ts';
 
 export type Tool = 'speed' | 'sound' | 'look' | 'clip' | 'text' | 'color' | 'font' | 'outline';
 export type Sheet = 'none' | 'export' | 'settings' | 'canvas' | 'help';
@@ -268,6 +268,13 @@ export function updateClip(index: number, patch: Partial<Clip>): void {
   );
 }
 
+/** Places several strips on the canvas at once (a group transform), as one undo step. */
+export function setViews(entries: [number, View][]): void {
+  if (entries.length === 0) return;
+  const byId = new Map(entries.map(([i, v]) => [state.project.clips[i]?.id, v] as const));
+  edit((p) => ({ ...p, clips: p.clips.map((c) => (byId.has(c.id) ? { ...c, view: byId.get(c.id)! } : c)) }), { key: `views:${[...byId.keys()].join()}` });
+}
+
 export function setSpeed(index: number, speed: number): void {
   updateClip(index, { speed: Math.min(MAX_SPEED, Math.max(MIN_SPEED, Math.round(speed * 100) / 100)) });
 }
@@ -374,9 +381,16 @@ export function duplicateClip(index: number): void {
   const idx = state.multi.length > 0 ? targets() : [index];
   const picked = idx.map((i) => state.project.clips[i]).filter((c): c is Clip => !!c);
   if (picked.length === 0) return;
+  // the copy becomes the next strip: it starts where the original (or the whole picked group) ends, and everything
+  // that came after moves later by the same amount, on every lane, like inserting a clip into a sequence
+  const from = Math.min(...picked.map((c) => c.at));
+  const to = Math.max(...picked.map(clipEnd));
+  const span = to - from; // exact: rounding here would leave a sliver of overlap and send the copy to another lane
+  const ids = new Set(picked.map((c) => c.id));
   edit((p) => {
-    const fresh = picked.map((c) => ({ ...c, id: newId(), at: clipEnd(c) }));
-    return { ...p, clips: resolveOverlaps([...p.clips, ...fresh], fresh.map((c) => c.id)) };
+    const moved = p.clips.map((c) => (!ids.has(c.id) && c.at >= to - 1e-6 ? { ...c, at: c.at + span } : c));
+    const fresh = picked.map((c) => ({ ...c, id: newId(), at: c.at + span }));
+    return { ...p, clips: resolveOverlaps([...moved, ...fresh], fresh.map((c) => c.id)) };
   });
   if (picked.length === 1) set({ selected: state.project.clips.length - 1 });
 }
@@ -554,9 +568,10 @@ export function setName(name: string): void {
 
 // ---------- import ----------
 
-export async function importFiles(files: File[]): Promise<void> {
+export async function importFiles(files: File[], mode: 'end' | 'playhead' = 'end'): Promise<void> {
   if (files.length === 0) return;
   const added: Clip[] = [];
+  let cursor = state.playhead;
   const media: Project['media'] = {};
   let failed = 0;
   let lastError = '';
@@ -586,10 +601,20 @@ export async function importFiles(files: File[]): Promise<void> {
         registerMedia(id, file, thumb, { name: file.name });
       }
       media[id] = info;
-      const track = audio ? -1 : 0;
-      // new clips go to the end of their lane, one after another
-      const at = endOfTrack([...state.project.clips, ...added], track);
-      added.push({ id: newId(), mediaId: id, start: 0, end: image ? Math.min(info.duration, state.prefs.imageSeconds) : info.duration, speed: 1, view: { ...IDENTITY_VIEW }, volume: 1, keepPitch: true, at, track });
+      const base = audio ? -1 : 0;
+      const end = image ? Math.min(info.duration, state.prefs.imageSeconds) : info.duration;
+      let at: number;
+      let track = base;
+      if (mode === 'playhead') {
+        // as a layer: starts at the yellow line, on the first free lane, one file after another
+        at = Math.round(cursor * 100) / 100;
+        track = freeTrack([...state.project.clips, ...added], at, end, base);
+        cursor = at + end;
+      } else {
+        // new clips go to the end of their lane, one after another
+        at = endOfTrack([...state.project.clips, ...added], track);
+      }
+      added.push({ id: newId(), mediaId: id, start: 0, end, speed: 1, view: { ...IDENTITY_VIEW }, volume: 1, keepPitch: true, at, track });
       void saveMedia(id, { blob: file, name: file.name, thumb });
       queueProxy(id, info, state.prefs.previewLong);
     } catch (e) {

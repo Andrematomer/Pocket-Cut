@@ -3,7 +3,7 @@ import { engine } from '../engine.ts';
 import { outputSize } from '../geometry.ts';
 import { setQuarter } from '../turn.ts';
 import { canPromptInstall, isAndroid, isIOS, isMobile, isStandalone, onInstallChange, promptInstall } from '../install.ts';
-import { deleteClip, deselect, duplicateClip, importFiles, redo, restore, set, undo, useStore } from '../store.ts';
+import { deleteClip, deselect, duplicateClip, getState, importFiles, redo, restore, set, undo, useStore } from '../store.ts';
 import { CanvasSheet } from './CanvasSheet.tsx';
 import { HelpSheet } from './HelpSheet.tsx';
 import { ExportSheet } from './ExportSheet.tsx';
@@ -110,8 +110,19 @@ export function App() {
       if (el.closest('button, a, input, label, textarea, select, .strip-clip, .frame, .tl-scroll, .tl-bar, .tl-gap, .drawer, .tabbar, .sheet, .toast, .add-menu')) return;
       deselect();
     };
+    // a picked gap is let go by the next touch anywhere (except on the gap itself, which holds the trash can)
+    const letGo = (e: PointerEvent) => {
+      if (!getState().gap) return;
+      const el = e.target as Element | null;
+      if (el?.closest?.('.tl-gap')) return;
+      set({ gap: null });
+    };
     window.addEventListener('click', tap);
-    return () => window.removeEventListener('click', tap);
+    window.addEventListener('pointerdown', letGo, true);
+    return () => {
+      window.removeEventListener('click', tap);
+      window.removeEventListener('pointerdown', letGo, true);
+    };
   }, []);
 
   useEffect(() => {

@@ -2571,3 +2571,41 @@ label.cta {
 .app.turned-ccw .stage {
   padding-right: calc(env(safe-area-inset-top, 0px) + 8px);
 }
+
+/* round 10 */
+.add-menu.down {
+  bottom: auto;
+  top: 44px;
+}
+.add-menu small,
+.add-menu button small {
+  display: block;
+  font-weight: 400;
+  font-size: 12px;
+  color: var(--muted);
+}
+.add-menu {
+  min-width: 190px;
+}
+/* the time badge is a button now: tap = pick every strip under the yellow line */
+button.tl-time {
+  pointer-events: auto;
+  border: 0;
+  padding: 0 8px;
+  height: 18px;
+  line-height: 18px;
+  font-family: inherit;
+  cursor: pointer;
+}
+/* the whole area right of the dashed line, the full height of the bar, is the pane divider */
+.tl-grip {
+  flex: 1 1 30px;
+  min-width: 30px;
+  align-self: stretch;
+  height: auto;
+  margin: -2px -8px -6px 2px;
+  padding-right: 8px;
+}
+.tbox.group polygon {
+  stroke-dasharray: 7 4;
+}

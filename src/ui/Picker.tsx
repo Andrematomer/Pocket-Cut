@@ -1,5 +1,5 @@
 import type { ComponentChildren } from 'preact';
-import { ACCEPT, PICKER_ID, onPicked, pickVideos } from '../files.ts';
+import { ACCEPT, PICKER_ID, onPicked, pickVideos, setPickMode } from '../files.ts';
 
 /** The one file input of the app. Always in the page, hidden but not display:none. */
 export function FilePicker() {
@@ -7,7 +7,7 @@ export function FilePicker() {
 }
 
 /** A button that opens the picker. A <label> for the input, so the tap itself opens the system dialog. */
-export function PickLabel({ class: cls, label, children }: { class: string; label?: string; children: ComponentChildren }) {
+export function PickLabel({ class: cls, label, mode = 'end', children }: { class: string; label?: string; mode?: 'end' | 'playhead'; children: ComponentChildren }) {
   return (
     <label
       htmlFor={PICKER_ID}
@@ -15,9 +15,11 @@ export function PickLabel({ class: cls, label, children }: { class: string; labe
       {...({ role: "button" } as object)}
       tabIndex={0}
       aria-label={label}
+      onClick={() => setPickMode(mode)}
       onKeyDown={(e) => {
         if (e.key === 'Enter' || e.key === ' ') {
           e.preventDefault();
+          setPickMode(mode);
           pickVideos();
         }
       }}

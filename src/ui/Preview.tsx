@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { engine } from '../engine.ts';
 import { baseScale, clampView, clampZoom, dragView, fitZoom, normAngle, outputSize, pinchView, snapEightCropped, snapView, type Pt } from '../geometry.ts';
-import { getState, selectClip, set, setCrop, updateClip, useStore } from '../store.ts';
+import { getState, selectClip, set, setCrop, setViews, updateClip, useStore } from '../store.ts';
 import { localPoint } from '../turn.ts';
 import { activeAt, fmtTime, totalOf } from '../timeline.ts';
 import type { Crop, View } from '../types.ts';
@@ -90,6 +90,7 @@ export function Preview() {
         <canvas ref={canvas} style={{ width: `${box.w}px`, height: `${box.h}px` }} />
         {box.w > 0 && <Gestures boxW={box.w} boxH={box.h} />}
         {box.w > 0 && clip && media && <TransformBox boxW={box.w} boxH={box.h} />}
+        {box.w > 0 && <GroupBox boxW={box.w} boxH={box.h} />}
         {busy && <div class="overlay-note">{busy}</div>}
         {!busy && clip && progress[clip.mediaId] !== undefined && (
           <div class="overlay-note with-pie">
@@ -679,6 +680,213 @@ function TransformBox({ boxW: W, boxH: H }: { boxW: number; boxH: number }) {
       {handle('b', `side h ${stretch ? 'stretch' : ''}`)}
       {handle('l', `side v ${stretch ? 'stretch' : ''}`)}
       {handle('r', `side v ${stretch ? 'stretch' : ''}`)}
+      {handle('tl', 'corner')}
+      {handle('tr', 'corner')}
+      {handle('br', 'corner')}
+      {handle('bl', 'corner')}
+      {handle('rot', 'rotor')}
+    </>
+  );
+}
+
+type Clip1 = ReturnType<typeof getState>['project']['clips'][number];
+type Media1 = ReturnType<typeof getState>['project']['media'][string];
+
+/** The four corners of what a strip shows on the canvas (cropped, and for text the area of the letters). */
+function quadOf(c: Clip1, m: Media1, W: number, H: number): Pt[] {
+  const inset: Crop = m.textBox ?? { l: 0, t: 0, r: 0, b: 0 };
+  const cr: Crop = c.crop ?? { l: 0, t: 0, r: 0, b: 0 };
+  const k: Crop = m.solid !== undefined ? cr : { l: Math.max(cr.l, inset.l), t: Math.max(cr.t, inset.t), r: Math.max(cr.r, inset.r), b: Math.max(cr.b, inset.b) };
+  const sc = baseScale(m.width, m.height, W, H) * c.view.zoom;
+  const pw = m.width * sc;
+  const ph = m.height * sc;
+  const a = (c.view.rot * Math.PI) / 180;
+  const cos = Math.cos(a);
+  const sin = Math.sin(a);
+  const cx = W / 2 + c.view.x * W;
+  const cy = H / 2 + c.view.y * H;
+  const xs = [-pw / 2 + k.l * pw, pw / 2 - k.r * pw];
+  const ys = [-ph / 2 + k.t * ph, ph / 2 - k.b * ph];
+  return [
+    [xs[0]!, ys[0]!],
+    [xs[1]!, ys[0]!],
+    [xs[1]!, ys[1]!],
+    [xs[0]!, ys[1]!],
+  ].map(([lx, ly]) => ({ x: cx + lx! * cos - ly! * sin, y: cy + lx! * sin + ly! * cos }));
+}
+
+/**
+ * One box around the picked strips that are under the yellow line. Corners scale and the round handle turns
+ * them all together, like a group; strips that are picked but not on screen at this moment are left alone.
+ */
+function GroupBox({ boxW: W, boxH: H }: { boxW: number; boxH: number }) {
+  const multi = useStore((s) => s.multi);
+  const clips = useStore((s) => s.project.clips);
+  const mediaMap = useStore((s) => s.project.media);
+  const playhead = useStore((s) => s.playhead);
+  const [drag, setDrag] = useState<{ f: number; dr: number; P: Pt } | null>(null);
+  const st = useRef<{ id: number; h: Handle; p0: Pt; last: Pt; anchor: Pt; fineRaw: Pt; fineEff: Pt; fine: boolean; timer: number; frame: HTMLElement | null; members: { i: number; v: View }[]; box: { l: number; t: number; r: number; b: number } } | null>(null);
+
+  const members = multi.length === 0 ? [] : activeAt(clips, playhead).filter((i) => multi.includes(clips[i]!.id) && mediaMap[clips[i]!.mediaId] && mediaMap[clips[i]!.mediaId]!.kind !== 'audio');
+  const key = members.join();
+  const endFine = () => {
+    const d = st.current;
+    if (!d) return;
+    clearTimeout(d.timer);
+    d.frame?.classList.remove('fine');
+    const b = d.frame?.querySelector('.gesture-badge');
+    if (b && b.textContent === 'FINE') (b.textContent = ''), b.classList.remove('on');
+  };
+  const cancel = () => {
+    if (!st.current) return;
+    endFine();
+    st.current = null;
+    setDrag(null);
+    engine.liveMany = null;
+    engine.draw();
+  };
+  useEffect(cancel, [key]);
+  if (members.length === 0) return null;
+
+  // the box around all of them, as it is at rest
+  const pts = members.flatMap((i) => quadOf(clips[i]!, mediaMap[clips[i]!.mediaId]!, W, H));
+  const rest = { l: Math.min(...pts.map((p) => p.x)), t: Math.min(...pts.map((p) => p.y)), r: Math.max(...pts.map((p) => p.x)), b: Math.max(...pts.map((p) => p.y)) };
+  const box = st.current?.box ?? rest;
+  const base: Record<Handle, Pt> = {
+    tl: { x: box.l, y: box.t },
+    tr: { x: box.r, y: box.t },
+    br: { x: box.r, y: box.b },
+    bl: { x: box.l, y: box.b },
+    l: { x: box.l, y: (box.t + box.b) / 2 },
+    r: { x: box.r, y: (box.t + box.b) / 2 },
+    t: { x: (box.l + box.r) / 2, y: box.t },
+    b: { x: (box.l + box.r) / 2, y: box.b },
+    rot: { x: (box.l + box.r) / 2, y: box.t - 34 },
+  };
+  const turn = (p: Pt, f: number, dr: number, P: Pt): Pt => {
+    const cos = Math.cos(dr);
+    const sin = Math.sin(dr);
+    const dx = p.x - P.x;
+    const dy = p.y - P.y;
+    return { x: P.x + f * (dx * cos - dy * sin), y: P.y + f * (dx * sin + dy * cos) };
+  };
+  const pos = (h: Handle): Pt => {
+    if (!drag) return base[h];
+    // the handle above the box keeps its distance while the box scales
+    if (h === 'rot') {
+      const top = turn(base.t, drag.f, drag.dr, drag.P);
+      const c = turn({ x: (box.l + box.r) / 2, y: (box.t + box.b) / 2 }, drag.f, drag.dr, drag.P);
+      const vx = top.x - c.x;
+      const vy = top.y - c.y;
+      const len = Math.hypot(vx, vy) || 1;
+      return { x: top.x + (vx / len) * 34, y: top.y + (vy / len) * 34 };
+    }
+    return turn(base[h], drag.f, drag.dr, drag.P);
+  };
+
+  const frameBox = (e: PointerEvent): Pt => localPoint((e.currentTarget as HTMLElement).parentElement!.getBoundingClientRect(), e.clientX, e.clientY);
+  const down = (h: Handle) => (e: PointerEvent) => {
+    e.stopPropagation();
+    e.preventDefault();
+    if (fingers.size > 1) return;
+    engine.pause();
+    try {
+      (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    } catch {
+      /* the pointer is gone */
+    }
+    const p0 = frameBox(e);
+    const d = { id: e.pointerId, h, p0, last: p0, anchor: p0, fineRaw: p0, fineEff: p0, fine: false, timer: 0, frame: (e.currentTarget as HTMLElement).parentElement, members: members.map((i) => ({ i, v: clips[i]!.view })), box: rest };
+    st.current = d;
+    const arm = () => {
+      clearTimeout(d.timer);
+      d.timer = window.setTimeout(() => {
+        if (st.current !== d || d.fine) return;
+        d.fine = true;
+        d.fineRaw = d.last;
+        d.fineEff = d.last;
+        d.frame?.classList.add('fine');
+        const b = d.frame?.querySelector('.gesture-badge');
+        if (b) (b.textContent = 'FINE'), b.classList.add('on');
+      }, HOLD_MS);
+    };
+    (d as { arm?: () => void }).arm = arm;
+    if (h !== 'rot') arm();
+  };
+  const point = (e: PointerEvent): Pt => {
+    const d = st.current!;
+    const raw = frameBox(e);
+    d.last = raw;
+    if (d.fine) return { x: d.fineEff.x + (raw.x - d.fineRaw.x) * 0.1, y: d.fineEff.y + (raw.y - d.fineRaw.y) * 0.1 };
+    if (Math.hypot(raw.x - d.anchor.x, raw.y - d.anchor.y) > 10) {
+      d.anchor = raw;
+      (d as { arm?: () => void }).arm?.();
+    }
+    return raw;
+  };
+  const solve = (e: PointerEvent): { f: number; dr: number; P: Pt } => {
+    const d = st.current!;
+    const P = point(e);
+    const b = d.box;
+    if (d.h === 'rot') {
+      const C = { x: (b.l + b.r) / 2, y: (b.t + b.b) / 2 };
+      const ang = (p: Pt) => Math.atan2(p.y - C.y, p.x - C.x);
+      let deg = ((ang(P) - ang(d.p0)) * 180) / Math.PI;
+      const q = Math.round(deg / 45) * 45;
+      if (Math.abs(deg - q) < 3) deg = q;
+      return { f: 1, dr: (deg * Math.PI) / 180, P: C };
+    }
+    const corner = (k: string): Pt => ({ x: k.includes('l') ? b.l : b.r, y: k.includes('t') ? b.t : b.b });
+    const opp = ({ tl: 'br', tr: 'bl', br: 'tl', bl: 'tr' } as Record<string, string>)[d.h] ?? 'br';
+    const A = corner(opp);
+    const D = corner(d.h);
+    const vx = D.x - A.x;
+    const vy = D.y - A.y;
+    let f = Math.max(0.05, ((P.x - A.x) * vx + (P.y - A.y) * vy) / (vx * vx + vy * vy || 1));
+    // no strip may leave the allowed zoom range: the group stops when the first one does
+    const zs = d.members.map((m) => m.v.zoom);
+    f = Math.min(f, clampZoom(1e9) / Math.max(...zs));
+    f = Math.max(f, clampZoom(0) / Math.min(...zs));
+    return { f, dr: 0, P: A };
+  };
+  const views = (t: { f: number; dr: number; P: Pt }): [number, View][] =>
+    st.current!.members.map(({ i, v }) => {
+      const c = turn({ x: W / 2 + v.x * W, y: H / 2 + v.y * H }, t.f, t.dr, t.P);
+      return [i, { x: (c.x - W / 2) / W, y: (c.y - H / 2) / H, zoom: clampZoom(v.zoom * t.f), rot: normAngle(v.rot + (t.dr * 180) / Math.PI) }];
+    });
+  const move = (e: PointerEvent) => {
+    if (!st.current || st.current.id !== e.pointerId) return;
+    const t = solve(e);
+    setDrag(t);
+    engine.liveMany = new Map(views(t));
+    engine.draw();
+  };
+  const up = (e: PointerEvent) => {
+    const d = st.current;
+    if (!d || d.id !== e.pointerId) return;
+    const t = e.type === 'pointerup' ? solve(e) : null;
+    const out = t ? views(t) : [];
+    endFine();
+    st.current = null;
+    setDrag(null);
+    engine.liveMany = null;
+    if (t) setViews(out);
+    engine.draw();
+  };
+
+  const poly = (['tl', 'tr', 'br', 'bl'] as Handle[]).map((h) => `${pos(h).x},${pos(h).y}`).join(' ');
+  const handle = (h: Handle, cls: string) => (
+    <div key={h} class={`tbox-h ${cls}`} style={{ left: `${pos(h).x}px`, top: `${pos(h).y}px` }} onPointerDown={down(h)} onPointerMove={move} onPointerUp={up} onPointerCancel={up} aria-label={h === 'rot' ? 'Turn all' : 'Scale all'} />
+  );
+  const top = pos('t' as Handle);
+  const topMid = { x: (pos('tl').x + pos('tr').x) / 2, y: (pos('tl').y + pos('tr').y) / 2 };
+  void top;
+  return (
+    <>
+      <svg class="tbox group" width={W} height={H} aria-hidden="true">
+        <polygon points={poly} />
+        <line x1={topMid.x} y1={topMid.y} x2={pos('rot').x} y2={pos('rot').y} />
+      </svg>
       {handle('tl', 'corner')}
       {handle('tr', 'corner')}
       {handle('br', 'corner')}

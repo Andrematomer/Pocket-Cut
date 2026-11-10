@@ -62,6 +62,8 @@ export class PreviewEngine {
   playing = false;
   /** while a finger is moving a picture, this view is drawn instead of the saved one */
   live: { index: number; view: View } | null = null;
+  /** views of several strips being moved together by the group box (clip index to view) */
+  liveMany: Map<number, View> | null = null;
   /** crop being dragged on screen (not yet saved to the clip) */
   cropLive: { index: number; crop: Crop } | null = null;
   /** while cutting, the whole uncropped picture is drawn faintly behind the cut one */
@@ -199,7 +201,7 @@ export class PreviewEngine {
       const clip = p.clips[i];
       const media = clip && p.media[clip.mediaId];
       if (!clip || !media || media.kind === 'audio') continue;
-      const o = { outW: canvas.width, outH: canvas.height, view: this.live && this.live.index === i ? this.live.view : clip.view, keepBackground: true };
+      const o = { outW: canvas.width, outH: canvas.height, view: this.liveMany?.get(i) ?? (this.live && this.live.index === i ? this.live.view : clip.view), keepBackground: true };
       const look = { opacity: clip.opacity, grade: clip.grade, crop: this.cropLive && this.cropLive.index === i ? this.cropLive.crop : clip.crop };
       const faint = this.ghost && this.cropLive?.index === i ? { ...look, crop: undefined, opacity: (look.opacity ?? 1) * 0.35 } : null;
       const img = this.deps.getImage(clip.mediaId);

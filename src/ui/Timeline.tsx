@@ -77,6 +77,7 @@ export function Timeline() {
   const canRedo = useStore((s) => s.canRedo);
   const hasSel = selected >= 0 && !!clips[selected];
   const [menu, setMenu] = useState(false);
+  const [menuUp, setMenuUp] = useState(true);
   const [pps, setPps] = useState(36); // pixels per second
   const [move, setMove] = useState<Move | null>(null);
   const [trim, setTrim] = useState<Trim | null>(null);
@@ -463,27 +464,33 @@ export function Timeline() {
     set({ gap: g, drawer: null, selected: -1, handles: false, boxMode: false });
   };
   // ---------- the middle bar is also the handle that trades height between preview and timeline ----------
-  const barDrag = useRef<{ id: number; y0: number; h0: number; lo: number; hi: number; grip: boolean; armed: boolean; moved: boolean } | null>(null);
+  const barDrag = useRef<{ id: number; y0: number; h0: number; lo: number; hi: number; thr: number; grip: boolean; armed: boolean; moved: boolean; cur: number; pts: { t: number; y: number }[] } | null>(null);
+  const flingRaf = useRef(0);
   const setTlH = (h: number) => window.dispatchEvent(new CustomEvent('pc-tl-height', { detail: h }));
+  const saveTlH = () => {
+    try {
+      localStorage.setItem('pocket-cut-nla:tl-height', String(Math.round(parseFloat(getComputedStyle(document.querySelector('.app')!).getPropertyValue('--tl-h')) || 200)));
+    } catch {
+      /* ignore */
+    }
+  };
+  const openFocus = () => {
+    cancelAnimationFrame(flingRaf.current);
+    set({ focus: true, drawer: null, sheet: 'none' });
+  };
   const barDown = (e: PointerEvent) => {
-    if (!(e.target as Element).closest('.tl-grip')) return; // only the grip is a divider; the buttons and the space between them do nothing here
+    if (!(e.target as Element).closest('.tl-grip')) return; // only the grip is a divider; the buttons do nothing here
     const app = document.querySelector('.app') as HTMLElement | null;
     const stage = document.querySelector('.stage') as HTMLElement | null;
     if (!app || !stage) return;
+    cancelAnimationFrame(flingRaf.current);
     const h0 = parseFloat(getComputedStyle(app).getPropertyValue('--tl-h')) || 200;
     const cs = getComputedStyle(stage);
     const px = (v: string) => parseFloat(v) || 0;
-    const o = outputSize(getState().project);
-    const needed = Math.ceil((stage.clientWidth - px(cs.paddingLeft) - px(cs.paddingRight)) / (o.w / o.h)) + px(cs.paddingTop) + px(cs.paddingBottom);
-    const room = stage.clientHeight;
-    // the timeline stops shrinking once the preview already has all the height its width can use...
-    // (a wide picture cannot use more height, so the divider is free all the way down to the tab bar)
-    void needed;
-    void room;
-    const lo = 0;
-    // ...and can grow until the preview is gone
-    const hi = Math.max(lo, h0 + room - px(cs.paddingTop) - px(cs.paddingBottom));
-    barDrag.current = { id: e.pointerId, y0: e.clientY, h0, lo, hi, grip: !!(e.target as Element).closest('.tl-grip'), armed: false, moved: false };
+    // the timeline can shrink to nothing and grow until the preview is gone
+    const hi = Math.max(0, h0 + stage.clientHeight - px(cs.paddingTop) - px(cs.paddingBottom));
+    // less than one lane (under the ruler) still showing: letting go opens the full preview
+    barDrag.current = { id: e.pointerId, y0: e.clientY, h0, lo: 0, hi, thr: RULER + ROW, grip: true, armed: false, moved: false, cur: h0, pts: [{ t: e.timeStamp, y: e.clientY }] };
     try {
       (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
     } catch {
@@ -495,24 +502,48 @@ export function Timeline() {
     if (!d || d.id !== e.pointerId) return;
     const raw = d.h0 + (d.y0 - e.clientY);
     if (Math.abs(e.clientY - d.y0) > 6) d.moved = true;
-    // finger at the bottom edge: the timeline folds away, and letting go there opens the full preview
-    d.armed = e.clientY >= window.innerHeight - 80 && raw < d.lo + 1; // only with the finger at the very bottom of the screen
-    setTlH(d.armed ? 0 : Math.round(Math.max(d.lo, Math.min(d.hi, raw))));
+    d.pts.push({ t: e.timeStamp, y: e.clientY });
+    if (d.pts.length > 8) d.pts.shift();
+    d.armed = raw < d.thr;
+    d.cur = Math.round(Math.max(d.lo, Math.min(d.hi, raw)));
+    setTlH(d.cur);
+  };
+  /** after a flick the divider keeps going and slows down; if it passes the full-preview line on the way down it opens at once */
+  const fling = (d: NonNullable<typeof barDrag.current>, vh: number) => {
+    let h = d.cur;
+    let v = vh; // px per ms, positive = timeline growing
+    let last = performance.now();
+    const step = (now: number) => {
+      const dt = Math.min(32, now - last);
+      last = now;
+      h += v * dt;
+      v *= Math.exp(-dt / 325);
+      if (v < 0 && h < d.thr) return openFocus();
+      h = Math.max(d.lo, Math.min(d.hi, h));
+      setTlH(Math.round(h));
+      if (Math.abs(v) > 0.02 && h > d.lo && h < d.hi) flingRaf.current = requestAnimationFrame(step);
+      else saveTlH();
+    };
+    flingRaf.current = requestAnimationFrame(step);
   };
   const barUp = (e: PointerEvent) => {
     const d = barDrag.current;
     if (!d || d.id !== e.pointerId) return;
     barDrag.current = null;
     if (e.type === 'pointerup' && !d.moved && d.grip) toast('Slide this handle up or down to give the preview or the timeline more room.');
-    if (d.armed && e.type === 'pointerup') {
-      set({ focus: true, drawer: null, sheet: 'none' });
-      return;
+    if (d.armed && e.type === 'pointerup') return openFocus();
+    if (e.type === 'pointerup' && d.moved) {
+      const n = d.pts.length;
+      const first = d.pts[0]!;
+      const lastPt = d.pts[n - 1]!;
+      const dt = lastPt.t - first.t;
+      // a flick: still moving when the finger lifted
+      if (n >= 2 && dt > 0 && e.timeStamp - lastPt.t < 80) {
+        const vh = (first.y - lastPt.y) / dt;
+        if (Math.abs(vh) > 0.35) return fling(d, vh);
+      }
     }
-    try {
-      localStorage.setItem('pocket-cut-nla:tl-height', String(Math.round(parseFloat(getComputedStyle(document.querySelector('.app')!).getPropertyValue('--tl-h')) || 200)));
-    } catch {
-      /* ignore */
-    }
+    saveTlH();
   };
   const gapRow = gap ? lanes.indexOf(gap.track) : -1;
 
@@ -527,15 +558,30 @@ export function Timeline() {
           {playing ? <Pause /> : <Play />}
         </button>
         <div class="tl-left">
-          <button class={`tl-add ${menu ? 'on' : ''}`} aria-haspopup="menu" aria-expanded={menu} onClick={() => setMenu(!menu)}>
+          <button class={`tl-add ${menu ? 'on' : ''}`} aria-haspopup="menu" aria-expanded={menu} onClick={(e) => {
+              // the menu opens on the side with more room: above the bar (the preview) or below it (the lanes)
+              const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+              const tab = (document.querySelector('.tabbar') as HTMLElement | null)?.offsetHeight ?? 56;
+              setMenuUp(r.top > window.innerHeight - r.bottom - tab);
+              setMenu(!menu);
+            }}>
             <Plus /> <span>Add</span>
           </button>
           {menu && (
             <>
               <div class="add-scrim" onPointerDown={() => setMenu(false)} />
-              <div class="add-menu" role="menu">
-                <PickLabel class="add-item" label="Add videos, pictures or sound">
-                  <span onClick={() => window.setTimeout(() => setMenu(false), 600)}>Media</span>
+              <div class={`add-menu ${menuUp ? 'up' : 'down'}`} role="menu">
+                <PickLabel class="add-item" label="Add videos, pictures or sound after the last strip" mode="end">
+                  <span onClick={() => window.setTimeout(() => setMenu(false), 600)}>
+                    Media
+                    <small>after the last strip</small>
+                  </span>
+                </PickLabel>
+                <PickLabel class="add-item" label="Add videos, pictures or sound as a layer at the yellow line" mode="playhead">
+                  <span onClick={() => window.setTimeout(() => setMenu(false), 600)}>
+                    Media as layer
+                    <small>at the yellow line</small>
+                  </span>
                 </PickLabel>
                 <button
                   role="menuitem"
@@ -546,6 +592,7 @@ export function Timeline() {
                   }}
                 >
                   Text
+                  <small>at the yellow line</small>
                 </button>
                 <button
                   role="menuitem"
@@ -556,6 +603,7 @@ export function Timeline() {
                   }}
                 >
                   Color
+                  <small>at the yellow line</small>
                 </button>
               </div>
             </>
@@ -684,7 +732,19 @@ export function Timeline() {
             })}
           </div>
         </div>
-        <div class="tl-time num" style={{ left: `${padL}px` }}>{fmtTime(playhead, 2)}</div>
+        <button
+          class="tl-time num"
+          style={{ left: `${padL}px` }}
+          aria-label="Select every strip under the yellow line"
+          onClick={() => {
+            const ids = activeAt(clips, playhead).map((i) => clips[i]!.id);
+            if (ids.length === 0) return toast('No strip is under the yellow line.');
+            engine.pause();
+            setMulti(ids);
+          }}
+        >
+          {fmtTime(playhead, 2)}
+        </button>
         <div class="tl-playhead" style={{ left: `${padL}px` }} />
       </div>
     </div>
