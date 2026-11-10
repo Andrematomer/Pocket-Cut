@@ -373,3 +373,12 @@ test('optimizeLanes: fewest lanes, same order of every overlapping pair', () => 
   const stack = optimizeLanes([mk('a', 1, 0), mk('b', 2, 0), mk('c', 3, 0)]);
   assert.deepEqual(stack.clips.map((c) => c.track), [1, 2, 3]);
 });
+
+test('removeGap: a gap that starts at an odd time never bounces the next strip to another lane', () => {
+  for (const end of [4.123, 3.337, 7.0049, 1.999, 5.5551]) {
+    const cs = [mk('a', 0, end, 0), mk('b', end + 2.4417, 3, 0)];
+    const out = removeGap(cs, { track: 0, from: end, to: end + 2.4417 });
+    assert.equal(out.find((c) => c.id === 'b')!.track, 0, `end ${end}`);
+    assert.ok(Math.abs(out.find((c) => c.id === 'b')!.at - end) < 1e-3);
+  }
+});

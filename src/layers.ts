@@ -7,10 +7,10 @@ export const NO_GRADE: Grade = { brightness: 0, contrast: 0, saturation: 0, warm
 
 export const isGraded = (g?: Grade): g is Grade => !!g && (g.brightness !== 0 || g.contrast !== 0 || g.saturation !== 0 || g.warmth !== 0);
 
-export const NO_FX: Fx = { vignette: 0, blur: 0, glow: 0, sharpen: 0, pixelate: 0, chroma: 0, emboss: 0 };
+export const NO_FX: Fx = { vignette: 0, blur: 0, sharpen: 0, pixelate: 0, chroma: 0, emboss: 0 };
 
 /** true when at least one effect is on: with all of them at 0 the picture never goes through the shader for effects */
-export const isFx = (f?: Fx): f is Fx => !!f && (f.vignette !== 0 || f.blur > 0 || f.glow > 0 || f.sharpen > 0 || f.pixelate > 0 || f.chroma > 0 || f.emboss > 0);
+export const isFx = (f?: Fx): f is Fx => !!f && (f.vignette !== 0 || f.blur > 0 || f.sharpen > 0 || f.pixelate > 0 || f.chroma !== 0 || f.emboss !== 0);
 
 /** Pure per-pixel colour maths (the same as the shader), rgb 0..1. Used by tests. */
 export function gradePixel(rgb: [number, number, number], g: Grade): [number, number, number] {
@@ -42,18 +42,15 @@ vec2 k=vec2(1.,px.x/px.y);
 vec2 p=uv;
 if(e2.x>0.){float n=mix(220.,10.,sqrt(e2.x));vec2 cells=vec2(n,n*px.x/px.y);p=(floor(p*cells)+.5)/cells;}
 vec4 c;
-if(e2.y>0.){vec2 o=vec2(e2.y*.12,0.);vec4 a=T(p+o);vec4 m=T(p);vec4 d=T(p-o);c=vec4(a.r,m.g,d.b,m.a);}else c=T(p);
+if(e2.y!=0.){vec2 o=e2.y>0.?vec2(e2.y*.12,0.):vec2(0.,-e2.y*.12*k.y);vec4 a=T(p+o);vec4 m=T(p);vec4 d=T(p-o);c=vec4(a.r,m.g,d.b,m.a);}else c=T(p);
 if(e1.w>0.){vec2 so=vec2(.0018)*k;vec4 bl=(S(p+vec2(so.x,0.))+S(p-vec2(so.x,0.))+S(p+vec2(0.,so.y))+S(p-vec2(0.,so.y)))*.25;c.rgb+=(c.rgb-bl.rgb)*e1.w*2.;}
-if(e1.z>0.){float ga=e1.z;vec4 b=B(p,mix(.012,.075,ga));float gain=ga*2.2;vec3 col=b.rgb*gain;col=mix(col,vec3(b.a)*gain,smoothstep(.5,1.,ga));
-float lum=dot(b.rgb/max(b.a,.001),W);vec3 bloom=b.rgb*smoothstep(.5,1.,lum)*ga*.5;
-c.rgb+=col*(1.-c.a)+bloom;c.a=min(1.,c.a+(1.-c.a)*clamp(b.a*gain,0.,1.));}
 c.rgb=clamp(c.rgb,0.,c.a);
 vec3 r=c.a>0.0?c.rgb/c.a:c.rgb;
 r+=vec3(g.x*.5+g.w*.12,g.x*.5,g.x*.5-g.w*.12);
 r=(r-.5)*(1.+g.y)+.5;
 float y=dot(r,W);
 r=clamp(vec3(y)+(r-vec3(y))*(1.+g.z),0.,1.);
-if(e2.z>0.){vec2 eo=vec2(.0022)*k;float emb=dot(S(p-eo).rgb,W)-dot(S(p+eo).rgb,W);r=clamp(mix(r,vec3(.5),e2.z*.55)+vec3(emb*e2.z*3.),0.,1.);}
+if(e2.z!=0.){vec2 eo=vec2(.0022)*k;float sg=e2.z>0.?1.:-1.;float am=abs(e2.z);float emb=(dot(S(p-eo).rgb,W)-dot(S(p+eo).rgb,W))*sg;r=clamp(mix(r,vec3(.5),am*.55)+vec3(emb*am*3.),0.,1.);}
 if(e1.x!=0.){float m=smoothstep(.2,1.,distance(uv,vec2(.5))*1.4142)*abs(e1.x)*.95;r=e1.x>0.?r*(1.-m):mix(r,vec3(1.),m);}
 gl_FragColor=vec4(r*c.a,c.a);}`;
 
@@ -129,10 +126,10 @@ function grade(src: CanvasImageSource, w: number, h: number, g: Grade, fx: Fx, h
     gl.bindTexture(gl.TEXTURE_2D, s.tex);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, src as TexImageSource);
     gl.uniform4f(s.loc, g.brightness, g.contrast, g.saturation, g.warmth);
-    gl.uniform4f(s.e1, fx.vignette, fx.blur, fx.glow, fx.sharpen);
+    gl.uniform4f(s.e1, fx.vignette, fx.blur, 0, fx.sharpen);
     gl.uniform4f(s.e2, fx.pixelate, fx.chroma, fx.emboss, 0);
     // the preview blurs with few samples to stay fast; the export uses 2x (light blur) to 4x (strong blur) as many
-    gl.uniform1f(s.rings, hq ? Math.round(2 * (2 + 2 * Math.max(fx.blur, fx.glow))) : 2);
+    gl.uniform1f(s.rings, hq ? Math.round(2 * (2 + 2 * fx.blur)) : 2);
     gl.uniform2f(s.px, 1 / gw, 1 / gh);
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
     return { img: s.canvas as CanvasImageSource, w: gw, h: gh };

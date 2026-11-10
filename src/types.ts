@@ -39,11 +39,10 @@ export interface Grade {
   warmth: number;
 }
 
-/** picture effects, 0 = off (and not computed at all); vignette runs -1 (light) to 1 (dark), the others 0..1 */
+/** picture effects, 0 = off (and not computed at all); vignette, emboss and color split run -1..1 (the sign flips the light, or the split to the other axis), the others 0..1 */
 export interface Fx {
   vignette: number;
   blur: number;
-  glow: number;
   sharpen: number;
   pixelate: number;
   chroma: number;

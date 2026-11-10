@@ -124,7 +124,8 @@ export function removeGap(clips: Clip[], gap: Gap): Clip[] {
   const still = out.filter((c) => c.at < gap.to - eps);
   moving.sort((a, b) => Math.abs(a.track) - Math.abs(b.track) || a.at - b.at);
   const placed: Clip[] = [...still];
-  for (const c of moving) c.at = Math.max(0, Math.round((c.at - len) * 100) / 100);
+  // no rounding: a rounded start can land a hair inside the strip before the gap and bounce this one to the next lane
+  for (const c of moving) c.at = Math.abs(c.at - len - gap.from) < 1e-3 ? gap.from : Math.max(0, c.at - len);
   // pass 1: clips that fit on their own lane stay there, so a hop never takes a lane a later clip needs
   const hop: Clip[] = [];
   for (const c of moving) {

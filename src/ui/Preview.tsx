@@ -441,13 +441,34 @@ function Gestures({ boxW, boxH }: { boxW: number; boxH: number }) {
   };
   /** snaps to the closest of the eight tidy placements (quarter turn x fit/fill); again flips fit/fill */
   const doubleTap = () => {
-    const c = current();
-    if (!c) return;
+    const st = getState();
     const { boxW: W, boxH: H } = sizes.current;
-    const v = clampView(snapEightCropped(c.clip.view, c.clip.crop, c.media.width, c.media.height, W, H), { sw: c.media.width, sh: c.media.height, W, H });
-    updateClip(getState().selected, { view: v });
-    const fit = fitZoom(c.media.width, c.media.height, v.rot, W, H);
-    showBadge(Math.abs(v.zoom - fit) / fit < 0.02 ? 'Fit' : 'Fill');
+    const members = groupMembers();
+    const idx = members.length > 1 ? members : [st.selected];
+    const entries: [number, View][] = [];
+    let badgeText = '';
+    for (const i of idx) {
+      const clip = st.project.clips[i];
+      const media = clip && st.project.media[clip.mediaId];
+      if (!clip || !media || media.kind === 'audio') continue;
+      // the box a person sees hugs the letters of a text, so fit and fill use that box, not the whole picture with its margins
+      const inset = media.textBox;
+      const sc = clip.crop;
+      const crop = media.solid !== undefined || !inset ? sc : { l: Math.max(sc?.l ?? 0, inset.l), t: Math.max(sc?.t ?? 0, inset.t), r: Math.max(sc?.r ?? 0, inset.r), b: Math.max(sc?.b ?? 0, inset.b) };
+      const v = clampView(snapEightCropped(clip.view, crop, media.width, media.height, W, H), { sw: media.width, sh: media.height, W, H });
+      entries.push([i, v]);
+      if (!badgeText) {
+        const cw = media.width * (1 - (crop?.l ?? 0) - (crop?.r ?? 0));
+        const ch = media.height * (1 - (crop?.t ?? 0) - (crop?.b ?? 0));
+        const k = baseScale(cw, ch, W, H) / baseScale(media.width, media.height, W, H);
+        const fit = fitZoom(cw, ch, v.rot, W, H) * k;
+        badgeText = Math.abs(v.zoom - fit) / fit < 0.02 ? 'Fit' : 'Fill';
+      }
+    }
+    if (!entries.length) return;
+    if (entries.length === 1) updateClip(entries[0]![0], { view: entries[0]![1] });
+    else setViews(entries);
+    showBadge(badgeText);
     window.setTimeout(() => !fine.current && showBadge(''), 700);
   };
   const wheel = (e: WheelEvent) => {

@@ -310,11 +310,10 @@ export function Drawer() {
           <section>
             {fxRow('Vignette', 'vignette', true)}
             {fxRow('Blur', 'blur')}
-            {fxRow('Glow', 'glow')}
             {fxRow('Sharpen', 'sharpen')}
             {fxRow('Pixelate', 'pixelate')}
-            {fxRow('Emboss', 'emboss')}
-            {fxRow('Color split', 'chroma')}
+            {fxRow('Emboss', 'emboss', true)}
+            {fxRow('Color split', 'chroma', true)}
             <p class="hint">Tap a name twice to reset that slider.</p>
           </section>
         )}
