@@ -2,9 +2,9 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { keyOf } from '../bake.ts';
 import { engine } from '../engine.ts';
 import { thumbUrl } from '../media.ts';
-import { addSolid, addTextClip, deleteClip, deselect, duplicateClip, getState, moveClipTo, moveMulti, redo, removeGap, selectClip, set, setMulti, splitAtPlayhead, toast, toggleMulti, undo, updateClip, useStore } from '../store.ts';
+import { addSolid, addTextClip, deleteClip, deselect, duplicateClip, getState, moveClipTo, moveMulti, redo, removeGap, removeLane, selectClip, set, setMulti, splitAtPlayhead, toast, toggleMulti, undo, updateClip, useStore } from '../store.ts';
 import { PEAKS_PER_SEC } from '../wave.ts';
-import { MIN_CLIP, activeAt, clipDuration, clipEnd, fmtTime, gapAt, totalOf } from '../timeline.ts';
+import { MIN_CLIP, activeAt, clipDuration, clipEnd, fmtTime, gapAt, laneRemovable, totalOf } from '../timeline.ts';
 import type { Clip, MediaInfo } from '../types.ts';
 import { PickLabel } from './Picker.tsx';
 import { Pie } from './Pie.tsx';
@@ -99,8 +99,8 @@ export function Timeline() {
   const extent = Math.max(total, move ? move.at + (clips[move.index] ? clipDuration(clips[move.index]!) : 0) : 0);
   const width = extent * pps + viewW;
   const height = RULER + lanes.length * (ROW + GAP) + 6;
-  const live = useRef({ clips, pps, lanes, playhead, media, padL, height });
-  live.current = { clips, pps, lanes, playhead, media, padL, height };
+  const live = useRef({ clips, pps, lanes, playhead, media, padL, height, width });
+  live.current = { clips, pps, lanes, playhead, media, padL, height, width };
   const rowTop = (row: number) => RULER + row * (ROW + GAP);
 
   // the size of the viewport decides where the yellow line sits
@@ -135,7 +135,7 @@ export function Timeline() {
     if (getState().playing) engine.pause();
     // moving around the timeline by hand leaves nothing selected (a strip being dragged or trimmed stays)
     const g = getState();
-    if ((g.selected >= 0 || g.gap) && g.multi.length === 0 && !st.current?.active && !trimRef.current) deselect();
+    if ((g.selected >= 0 || g.gap) && g.multi.length === 0 && !st.current?.active && !trimRef.current && !boxRef.current?.active) deselect();
     set({ playhead: t });
     if (!seekFrame.current)
       seekFrame.current = requestAnimationFrame(() => {
@@ -204,18 +204,34 @@ export function Timeline() {
   // ---------- box select: hold on empty space, then drag a box over the strips ----------
 
   const [box, setBox] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
-  const boxRef = useRef<{ id: number; sx: number; sy: number; x0: number; y0: number; x1: number; y1: number; timer: number; active: boolean } | null>(null);
+  const boxRef = useRef<{ id: number; sx: number; sy: number; x0: number; y0: number; x1: number; y1: number; timer: number; active: boolean; cx: number; cy: number; raf: number } | null>(null);
   const toContent = (cx: number, cy: number) => {
     const el = scroller.current!;
     const r = el.getBoundingClientRect();
     return { x: cx - r.left + el.scrollLeft, y: cy - r.top + el.scrollTop };
+  };
+  /** while the box is being drawn, a finger near an edge scrolls the timeline (like moving a strip) and the box grows with it */
+  const boxFrame = () => {
+    const b = boxRef.current;
+    const el = scroller.current;
+    if (!b || !b.active || !el) return;
+    const r = el.getBoundingClientRect();
+    if (b.cx < r.left + EDGE) el.scrollLeft -= Math.ceil(((r.left + EDGE - b.cx) / EDGE) * 14);
+    else if (b.cx > r.right - EDGE) el.scrollLeft += Math.ceil(((b.cx - (r.right - EDGE)) / EDGE) * 14);
+    if (b.cy < r.top + RULER + 14) el.scrollTop -= Math.ceil(Math.min(1, (r.top + RULER + 14 - b.cy) / 40) * 2.5);
+    else if (b.cy > r.bottom - 24) el.scrollTop += Math.ceil(Math.min(1, (b.cy - (r.bottom - 24)) / 40) * 2.5);
+    const p = toContent(b.cx, b.cy);
+    b.x1 = p.x;
+    b.y1 = p.y;
+    setBox({ x0: b.x0, y0: b.y0, x1: b.x1, y1: b.y1 });
+    b.raf = requestAnimationFrame(boxFrame);
   };
   const boxDown = (e: PointerEvent) => {
     const el = scroller.current;
     if (!el || !e.isPrimary || (e.pointerType === 'mouse' && e.button !== 0)) return;
     if ((e.target as Element).closest('.strip-clip, .trim-h, .gap-trash, .tl-ruler')) return;
     const p = toContent(e.clientX, e.clientY);
-    const b = { id: e.pointerId, sx: e.clientX, sy: e.clientY, x0: p.x, y0: p.y, x1: p.x, y1: p.y, timer: 0, active: false };
+    const b = { id: e.pointerId, sx: e.clientX, sy: e.clientY, x0: p.x, y0: p.y, x1: p.x, y1: p.y, timer: 0, active: false, cx: e.clientX, cy: e.clientY, raf: 0 };
     boxRef.current = b;
     b.timer = window.setTimeout(() => {
       if (boxRef.current !== b) return;
@@ -232,6 +248,7 @@ export function Timeline() {
         /* the pointer is gone */
       }
       setBox({ x0: b.x0, y0: b.y0, x1: b.x1, y1: b.y1 });
+      b.raf = requestAnimationFrame(boxFrame);
     }, HOLD_MS);
   };
   const boxMove = (e: PointerEvent) => {
@@ -244,6 +261,8 @@ export function Timeline() {
       }
       return;
     }
+    b.cx = e.clientX;
+    b.cy = e.clientY;
     const p = toContent(e.clientX, e.clientY);
     b.x1 = p.x;
     b.y1 = p.y;
@@ -253,6 +272,7 @@ export function Timeline() {
     const b = boxRef.current;
     if (!b || e.pointerId !== b.id) return;
     clearTimeout(b.timer);
+    cancelAnimationFrame(b.raf);
     boxRef.current = null;
     if (!b.active) return;
     setBox(null);
@@ -450,12 +470,19 @@ export function Timeline() {
   // tapping empty space between two strips picks that gap (red box with a trash can)
   const laneTap = (e: MouseEvent, track: number) => {
     if (swallow.current || e.target !== e.currentTarget) return;
+    if (getState().gap?.lane) return; // the picked lane handles its own tap
     setMenu(false);
     const el = scroller.current;
     if (!el) return;
     const x = e.clientX - el.getBoundingClientRect().left + el.scrollLeft;
     const t = (x - padL) / pps;
     const g = gapAt(clips, track, t);
+    if (!g && getState().multi.length === 0 && laneRemovable(live.current.clips, track)) {
+      // an empty lane between used ones: pick the whole lane (tap it again to take it out)
+      engine.pause();
+      set({ gap: { track, from: 0, to: Math.max(1, (live.current.width - padL) / pps), lane: true }, drawer: null, selected: -1, handles: false, boxMode: false });
+      return;
+    }
     if (!g || getState().multi.length > 0) {
       deselect(); // empty lane space (or any gap while several strips are picked): nothing is selected any more
       return;
@@ -466,6 +493,8 @@ export function Timeline() {
   // ---------- the middle bar is also the handle that trades height between preview and timeline ----------
   const barDrag = useRef<{ id: number; y0: number; h0: number; lo: number; hi: number; thr: number; grip: boolean; armed: boolean; moved: boolean; cur: number; pts: { t: number; y: number }[] } | null>(null);
   const flingRaf = useRef(0);
+  const [arrow, setArrow] = useState<{ x: number; y: number; ping: boolean } | null>(null);
+  const arrowTimer = useRef(0);
   const setTlH = (h: number) => window.dispatchEvent(new CustomEvent('pc-tl-height', { detail: h }));
   const saveTlH = () => {
     try {
@@ -484,6 +513,9 @@ export function Timeline() {
     const stage = document.querySelector('.stage') as HTMLElement | null;
     if (!app || !stage) return;
     cancelAnimationFrame(flingRaf.current);
+    clearTimeout(arrowTimer.current);
+    const gr = (e.target as Element).closest('.tl-grip')!.getBoundingClientRect();
+    setArrow({ x: gr.left + gr.width / 2, y: e.clientY, ping: false });
     const h0 = parseFloat(getComputedStyle(app).getPropertyValue('--tl-h')) || 200;
     const cs = getComputedStyle(stage);
     const px = (v: string) => parseFloat(v) || 0;
@@ -503,6 +535,7 @@ export function Timeline() {
     const raw = d.h0 + (d.y0 - e.clientY);
     if (Math.abs(e.clientY - d.y0) > 6) d.moved = true;
     d.pts.push({ t: e.timeStamp, y: e.clientY });
+    setArrow((a) => (a ? { ...a, y: e.clientY } : a));
     if (d.pts.length > 8) d.pts.shift();
     d.armed = raw < d.thr;
     d.cur = Math.round(Math.max(d.lo, Math.min(d.hi, raw)));
@@ -530,7 +563,11 @@ export function Timeline() {
     const d = barDrag.current;
     if (!d || d.id !== e.pointerId) return;
     barDrag.current = null;
-    if (e.type === 'pointerup' && !d.moved && d.grip) toast('Slide this handle up or down to give the preview or the timeline more room.');
+    // let go after dragging: the arrow goes. A plain tap: the arrow bobs up and down once to show what the handle does
+    if (e.type === 'pointerup' && !d.moved && d.grip) {
+      setArrow((a) => (a ? { ...a, ping: true } : a));
+      arrowTimer.current = window.setTimeout(() => setArrow(null), 1000);
+    } else setArrow(null);
     if (d.armed && e.type === 'pointerup') return openFocus();
     if (e.type === 'pointerup' && d.moved) {
       const n = d.pts.length;
@@ -635,6 +672,14 @@ export function Timeline() {
           <span aria-hidden="true">⇕</span>
         </div>
       </div>
+      {arrow && (
+        <div class={`div-arrow ${arrow.ping ? 'ping' : ''}`} style={{ left: `${arrow.x}px`, top: `${arrow.y}px` }} aria-hidden="true">
+          <svg viewBox="0 0 24 180" width="24" height="180">
+            <path d="M12 6V174M3 16L12 4l9 12M3 164l9 12 9-12" fill="none" stroke="#000" stroke-opacity=".55" stroke-width="7" stroke-linecap="round" stroke-linejoin="round" />
+            <path d="M12 6V174M3 16L12 4l9 12M3 164l9 12 9-12" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+        </div>
+      )}
       <div class="tl-wrap">
         <div class="tl-scroll" ref={scroller} onScroll={onScroll} onPointerDown={boxDown} onPointerMove={boxMove} onPointerUp={boxUp} onPointerCancel={boxUp}>
           <div class="tl-inner" style={{ width: `${width}px`, minHeight: `${height}px` }} onClick={(e) => e.target === e.currentTarget && deselect()}>
@@ -653,8 +698,8 @@ export function Timeline() {
               </div>
             ))}
             {gap && gapRow >= 0 && (
-              <div class="tl-gap" style={{ left: `${padL + gap.from * pps}px`, width: `${(gap.to - gap.from) * pps}px`, top: `${rowTop(gapRow)}px`, height: `${ROW}px` }}>
-                <button class="gap-trash" aria-label={`Remove the ${fmtTime(gap.to - gap.from)} gap`} onClick={() => removeGap()}>
+              <div class={`tl-gap ${gap.lane ? 'lane' : ''}`} style={{ left: `${padL + gap.from * pps}px`, width: `${(gap.to - gap.from) * pps}px`, top: `${rowTop(gapRow)}px`, height: `${ROW}px` }} onClick={gap.lane ? () => removeLane() : undefined}>
+                <button class="gap-trash" aria-label={gap.lane ? `Remove empty lane ${gap.track}` : `Remove the ${fmtTime(gap.to - gap.from)} gap`} onClick={(e) => (gap.lane ? (e.stopPropagation(), removeLane()) : removeGap())}>
                   <Trash />
                 </button>
               </div>

@@ -287,7 +287,7 @@ export async function exportProject(
             const src = srcs.get(clip.mediaId)!;
             if (project.media[clip.mediaId]?.kind === 'audio') continue;
             const o = { outW, outH, view: clip.view, keepBackground: true };
-            const look = { opacity: clip.opacity, grade: clip.grade, crop: clip.crop };
+            const look = { opacity: clip.opacity, grade: clip.grade, fx: clip.fx, crop: clip.crop };
             if (src.image) {
               drawLayer(ctx, src.image, src.image.width, src.image.height, look, o);
               continue;

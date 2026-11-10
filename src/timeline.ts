@@ -90,6 +90,8 @@ export interface Gap {
   track: number;
   from: number;
   to: number;
+  /** the whole lane is picked (it is empty and lies between used lanes) */
+  lane?: boolean;
 }
 
 const MIN_GAP = 0.05;
@@ -196,4 +198,51 @@ export function settleAt(others: Clip[], at: number, dur: number, track: number)
     }
   }
   return best;
+}
+
+/**
+ * An empty lane that lies between used ones can be removed: it is empty, and there are strips on lanes on both
+ * sides of it. Returns false for any other lane.
+ */
+export function laneRemovable(clips: Clip[], track: number): boolean {
+  if (clips.some((c) => c.track === track)) return false;
+  return clips.some((c) => c.track > track) && clips.some((c) => c.track < track);
+}
+
+/**
+ * Takes an empty lane out of the stack. The strips on the far side of it (further from lane 0) move one lane
+ * toward 0; for lane 0 itself, the side that reaches further out is the one that moves.
+ */
+export function removeLane(clips: Clip[], track: number): Clip[] {
+  if (!laneRemovable(clips, track)) return clips;
+  let up: boolean;
+  if (track > 0) up = true;
+  else if (track < 0) up = false;
+  else up = Math.max(...clips.map((c) => c.track)) >= -Math.min(...clips.map((c) => c.track));
+  return clips.map((c) => (up ? (c.track > track ? { ...c, track: c.track - 1 } : c) : c.track < track ? { ...c, track: c.track + 1 } : c));
+}
+
+/**
+ * Packs the lanes toward 0 without changing what is drawn over what: a strip moves one lane closer to 0 (picture
+ * lanes stop at 0, sound lanes at -1) only when that lane is free for its whole length, and this repeats until
+ * nothing moves. Returns the new strips and how many moved.
+ */
+export function optimizeLanes(clips: Clip[]): { clips: Clip[]; moved: number } {
+  const out = clips.map((c) => ({ ...c }));
+  const moved = new Set<string>();
+  const hit = (a: Clip, b: Clip) => a.id !== b.id && a.at < clipEnd(b) - 1e-6 && b.at < clipEnd(a) - 1e-6;
+  for (let pass = 0; pass < 400; pass++) {
+    let changed = false;
+    const order = [...out].sort((a, b) => Math.abs(a.track) - Math.abs(b.track) || a.at - b.at);
+    for (const c of order) {
+      const goal = c.track > 0 ? c.track - 1 : c.track < -1 ? c.track + 1 : null;
+      if (goal === null) continue;
+      if (out.some((o) => o.track === goal && hit(c, o))) continue;
+      c.track = goal;
+      moved.add(c.id);
+      changed = true;
+    }
+    if (!changed) break;
+  }
+  return { clips: out, moved: moved.size };
 }

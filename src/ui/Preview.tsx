@@ -131,6 +131,14 @@ function Gestures({ boxW, boxH }: { boxW: number; boxH: number }) {
   const arm = useRef(new Map<number, Pt>());
   const base = useRef<{ view: View; a: Pt; b: Pt | null; ids: number[] } | null>(null);
   const live = useRef<View | null>(null);
+  // with several strips picked the fingers move all of those that are on screen, as one group
+  const groupBase = useRef<{ i: number; v: View }[] | null>(null);
+  const groupLive = useRef<[number, View][] | null>(null);
+  const groupMembers = (): number[] => {
+    const st = getState();
+    if (st.multi.length === 0) return [];
+    return activeAt(st.project.clips, st.playhead).filter((i) => st.multi.includes(st.project.clips[i]!.id) && st.project.media[st.project.clips[i]!.mediaId]?.kind !== 'audio');
+  };
   const fine = useRef(false);
   const tap = useRef<{ t: number; x: number; y: number; moved: boolean; multi: boolean } | null>(null);
   const lastTap = useRef<{ t: number; x: number; y: number } | null>(null);
@@ -172,6 +180,8 @@ function Gestures({ boxW, boxH }: { boxW: number; boxH: number }) {
     if (!c) return;
     const ids = [...pts.current.keys()].slice(0, 2);
     base.current = ids.length ? { view: live.current ?? c.clip.view, a: pts.current.get(ids[0]!)!, b: ids[1] !== undefined ? pts.current.get(ids[1])! : null, ids } : null;
+    const gm = groupMembers();
+    groupBase.current = gm.length ? gm.map((i) => ({ i, v: groupLive.current?.find(([j]) => j === i)?.[1] ?? getState().project.clips[i]!.view })) : null;
     arm.current = new Map(pts.current);
   };
   /** (re)starts the hold timer: still fingers for this long switch to fine control from where they are */
@@ -196,6 +206,14 @@ function Gestures({ boxW, boxH }: { boxW: number; boxH: number }) {
     base.current = null;
     guides(null);
     setFineLook(false);
+    groupBase.current = null;
+    if (groupLive.current) {
+      const out = groupLive.current;
+      groupLive.current = null;
+      engine.liveMany = null;
+      setViews(out);
+      engine.draw();
+    }
     const v = live.current;
     live.current = null;
     if (v && v !== getState().project.clips[getState().selected]?.view) {
@@ -340,7 +358,42 @@ function Gestures({ boxW, boxH }: { boxW: number; boxH: number }) {
     }
     step(b, c);
   };
+  /** one or two fingers moving, scaling and turning every picked strip on screen around the same point */
+  const stepGroup = (b: NonNullable<typeof base.current>, members: { i: number; v: View }[]) => {
+    const { boxW: W, boxH: H } = sizes.current;
+    const raw1 = pts.current.get(b.ids[0]!);
+    const raw2 = b.b ? pts.current.get(b.ids[1]!) : undefined;
+    if (!raw1 || (b.b && !raw2)) return;
+    const f = (p: Pt, q: Pt): Pt => (fine.current ? { x: q.x + (p.x - q.x) * FINE, y: q.y + (p.y - q.y) * FINE } : p);
+    const a1 = f(raw1, b.a);
+    let m0: Pt = b.a;
+    let m1: Pt = a1;
+    let scale = 1;
+    let dr = 0;
+    if (b.b && raw2) {
+      const b1 = f(raw2, b.b);
+      m0 = { x: (b.a.x + b.b.x) / 2, y: (b.a.y + b.b.y) / 2 };
+      m1 = { x: (a1.x + b1.x) / 2, y: (a1.y + b1.y) / 2 };
+      scale = Math.max(0.05, Math.hypot(b1.x - a1.x, b1.y - a1.y) / (Math.hypot(b.b.x - b.a.x, b.b.y - b.a.y) || 1));
+      dr = Math.atan2(b1.y - a1.y, b1.x - a1.x) - Math.atan2(b.b.y - b.a.y, b.b.x - b.a.x);
+    }
+    const zs = members.map((m) => m.v.zoom);
+    scale = Math.max(clampZoom(0) / Math.min(...zs), Math.min(scale, clampZoom(1e9) / Math.max(...zs)));
+    const cos = Math.cos(dr);
+    const sin = Math.sin(dr);
+    const out: [number, View][] = members.map(({ i, v }) => {
+      const dx = v.x * W - m0.x;
+      const dy = v.y * H - m0.y;
+      const nx = m1.x + scale * (dx * cos - dy * sin);
+      const ny = m1.y + scale * (dx * sin + dy * cos);
+      return [i, { x: nx / W, y: ny / H, zoom: clampZoom(v.zoom * scale), rot: normAngle(v.rot + (dr * 180) / Math.PI) }];
+    });
+    groupLive.current = out;
+    engine.liveMany = new Map(out);
+    if (!frame.current) frame.current = requestAnimationFrame(paint);
+  };
   const step = (b: NonNullable<typeof base.current>, c: NonNullable<ReturnType<typeof current>>) => {
+    if (groupBase.current) return stepGroup(b, groupBase.current);
     const { boxW: W, boxH: H } = sizes.current;
     const raw1 = pts.current.get(b.ids[0]!);
     const raw2 = b.b ? pts.current.get(b.ids[1]!) : undefined;

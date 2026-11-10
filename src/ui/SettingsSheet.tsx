@@ -2,7 +2,7 @@ import { useEffect, useState } from 'preact/hooks';
 import { fmtBytes } from '../files.ts';
 import { storageEstimate } from '../persist.ts';
 import { canPromptInstall, isIOS, isStandalone, promptInstall } from '../install.ts';
-import { discardProject, setPrefs, useStore } from '../store.ts';
+import { discardProject, optimizeTimeline, setPrefs, toast, useStore } from '../store.ts';
 import { browserInfo, checkSupport } from '../support.ts';
 import { Fold } from './Fold.tsx';
 import { Sheet } from './Sheet.tsx';
@@ -88,6 +88,19 @@ export function SettingsSheet({ onClose }: { onClose: () => void }) {
             <Slider label="Timeline strip height" value={prefs.rowScale} min={0.5} max={2} step={0.05} fineStep={0.01} snaps={[1]} snapPx={14} valueText={`${Math.round(prefs.rowScale * 100)} percent`} onChange={(v) => setPrefs({ rowScale: Math.round(v * 100) / 100 })} />
           </div>
         )}
+      </Fold>
+
+      <Fold title="Tidy the timeline" hint={<>Moves every strip as close to lane 0 as it can go, so no empty lanes are left between them. What covers what never changes.</>}>
+        <button
+          class="btn"
+          onClick={() => {
+            const n = optimizeTimeline();
+            toast(n === 0 ? 'The lanes are already as tight as they can be.' : `${n} strip${n === 1 ? '' : 's'} moved closer to lane 0.`);
+          }}
+          disabled={!hasProject}
+        >
+          Optimize timeline
+        </button>
       </Fold>
 
       <Fold title="Saved project" hint={<>

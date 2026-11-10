@@ -39,6 +39,16 @@ export interface Grade {
   warmth: number;
 }
 
+/** picture effects, each 0..1 with 0 = off (and not computed at all) */
+export interface Fx {
+  vignette: number;
+  blur: number;
+  glow: number;
+  sharpen: number;
+  pixelate: number;
+  chroma: number;
+}
+
 export interface Crop {
   l: number;
   t: number;
@@ -64,6 +74,8 @@ export interface Clip {
   opacity?: number;
   /** color grading, each -1..1 with 0 = unchanged */
   grade?: Grade;
+  /** effects (missing = none) */
+  fx?: Fx;
   /** the part of each side that is cut off, 0..1 of the picture's size */
   crop?: Crop;
   /** lane: higher lanes are drawn on top; audio clips live on lane -1 and below */

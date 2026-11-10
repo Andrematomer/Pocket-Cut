@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { IDENTITY_VIEW, baseScale, clampView, snapEightCropped, dragView, fillZoom, fitZoom, frameTransform, nearestAspect, snapEight, normAngle, outputSize, pinchView, quarterTurned, snapView } from '../src/geometry.ts';
 import { gradePixel } from '../src/layers.ts';
-import { activeAt, endOfTrack, freeTrack, gapAt, removeGap, resolveOverlaps, settleAt, planParts, sourceAt, totalOf } from '../src/timeline.ts';
+import { activeAt, endOfTrack, freeTrack, gapAt, laneRemovable, optimizeLanes, removeGap, removeLane, resolveOverlaps, settleAt, planParts, sourceAt, totalOf } from '../src/timeline.ts';
 import { resample, timeStretch } from '../src/stretch.ts';
 import { MAX_MBPS, MIN_MBPS, RATE_STOPS, autoBitrate, estimateBytes, fmtMbps, videoBitrate } from '../src/bitrate.ts';
 import { emptyProject, type Clip } from '../src/types.ts';
@@ -341,4 +341,32 @@ test('resolveOverlaps: the manipulated strip goes to the NEXT lane (not the next
   assert.equal(resolveOverlaps(au, ['p']).find((x) => x.id === 'p')!.track, -2);
   // nothing overlaps: nothing moves
   assert.deepEqual(resolveOverlaps([mk('a', 0, 2, 0), mk('b', 2, 2, 0)], ['a']).map((c) => c.track), [0, 0]);
+});
+
+test('laneRemovable / removeLane: only an empty lane between used ones, the far side moves toward 0', () => {
+  const mk = (id: string, track: number, at = 0) => ({ id, mediaId: 'm', start: 0, end: 4, speed: 1, view: { x: 0, y: 0, zoom: 1, rot: 0 }, volume: 1, keepPitch: true, at, track });
+  const clips = [mk('a', 0), mk('b', -2), mk('c', -5)];
+  assert.equal(laneRemovable(clips, -3), true);
+  assert.equal(laneRemovable(clips, -2), false);
+  assert.equal(laneRemovable(clips, -6), false);
+  assert.equal(laneRemovable(clips, 1), false);
+  const r = removeLane(clips, -3);
+  assert.deepEqual(r.map((c) => c.track), [0, -2, -4]);
+  const up = removeLane([mk('a', 0), mk('b', 3)], 1);
+  assert.deepEqual(up.map((c) => c.track), [0, 2]);
+});
+
+test('optimizeLanes: strips drop toward 0 only into free lanes, never past a clash', () => {
+  const mk = (id: string, track: number, at: number, end = 2) => ({ id, mediaId: 'm', start: 0, end, speed: 1, view: { x: 0, y: 0, zoom: 1, rot: 0 }, volume: 1, keepPitch: true, at, track });
+  // lane 0 busy 0..10, lane 1 early strip, lane 2 late strip with nothing under it on lane 1
+  const r = optimizeLanes([mk('base', 0, 0, 10), mk('early', 1, 0), mk('late', 2, 6)]);
+  assert.equal(r.clips.find((c) => c.id === 'late')!.track, 1);
+  assert.equal(r.clips.find((c) => c.id === 'early')!.track, 1);
+  assert.equal(r.moved, 1);
+  // a strip over another one keeps its place above it
+  const k = optimizeLanes([mk('base', 0, 0, 10), mk('over', 3, 1)]);
+  assert.equal(k.clips.find((c) => c.id === 'over')!.track, 1);
+  // sound lanes stop at -1
+  const s = optimizeLanes([mk('x', -4, 0)]);
+  assert.equal(s.clips[0]!.track, -1);
 });

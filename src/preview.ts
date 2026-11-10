@@ -202,7 +202,7 @@ export class PreviewEngine {
       const media = clip && p.media[clip.mediaId];
       if (!clip || !media || media.kind === 'audio') continue;
       const o = { outW: canvas.width, outH: canvas.height, view: this.liveMany?.get(i) ?? (this.live && this.live.index === i ? this.live.view : clip.view), keepBackground: true };
-      const look = { opacity: clip.opacity, grade: clip.grade, crop: this.cropLive && this.cropLive.index === i ? this.cropLive.crop : clip.crop };
+      const look = { opacity: clip.opacity, grade: clip.grade, fx: clip.fx, crop: this.cropLive && this.cropLive.index === i ? this.cropLive.crop : clip.crop };
       const faint = this.ghost && this.cropLive?.index === i ? { ...look, crop: undefined, opacity: (look.opacity ?? 1) * 0.35 } : null;
       const img = this.deps.getImage(clip.mediaId);
       if (img) {

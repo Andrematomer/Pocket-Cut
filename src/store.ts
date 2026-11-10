@@ -6,10 +6,10 @@ import { setAwakeMode } from './wake.ts';
 import { computePeaks } from './wave.ts';
 import { onProxyProgress, onProxyWork, queueProxy, requeueAllProxies, setProxyOrder } from './proxy.ts';
 import { clearSaved, loadSaved, requestPersistence, saveMedia, saveProject } from './persist.ts';
-import { activeAt, clipDuration, clipEnd, endOfTrack, freeTrack, resolveOverlaps, settleAt, MAX_SPEED, MIN_CLIP, MIN_SPEED, removeGap as removeGapFrom, totalOf, type Gap } from './timeline.ts';
+import { activeAt, clipDuration, clipEnd, endOfTrack, freeTrack, laneRemovable, optimizeLanes, removeLane as removeLaneFrom, resolveOverlaps, settleAt, MAX_SPEED, MIN_CLIP, MIN_SPEED, removeGap as removeGapFrom, totalOf, type Gap } from './timeline.ts';
 import { DEFAULT_SETTINGS, emptyProject, type Clip, type ExportSettings, type MediaInfo, type Project, type View } from './types.ts';
 
-export type Tool = 'speed' | 'sound' | 'look' | 'clip' | 'text' | 'color' | 'font' | 'outline';
+export type Tool = 'speed' | 'sound' | 'look' | 'effects' | 'clip' | 'text' | 'color' | 'font' | 'outline';
 export type Sheet = 'none' | 'export' | 'settings' | 'canvas' | 'help';
 
 export interface Toast {
@@ -251,7 +251,7 @@ export function setPrefs(patch: Partial<AppPrefs>): void {
   if (patch.previewLong !== undefined) requeueAllProxies(state.project.media);
 }
 
-const SHARED: (keyof Clip)[] = ['volume', 'speed', 'keepPitch', 'opacity', 'grade'];
+const SHARED: (keyof Clip)[] = ['volume', 'speed', 'keepPitch', 'opacity', 'grade', 'fx'];
 export function updateClip(index: number, patch: Partial<Clip>): void {
   const id = state.project.clips[index]?.id;
   // with several strips picked, the sound, speed and look settings reach all of them
@@ -381,16 +381,10 @@ export function duplicateClip(index: number): void {
   const idx = state.multi.length > 0 ? targets() : [index];
   const picked = idx.map((i) => state.project.clips[i]).filter((c): c is Clip => !!c);
   if (picked.length === 0) return;
-  // the copy becomes the next strip: it starts where the original (or the whole picked group) ends, and everything
-  // that came after moves later by the same amount, on every lane, like inserting a clip into a sequence
-  const from = Math.min(...picked.map((c) => c.at));
-  const to = Math.max(...picked.map(clipEnd));
-  const span = to - from; // exact: rounding here would leave a sliver of overlap and send the copy to another lane
-  const ids = new Set(picked.map((c) => c.id));
+  // the copy sits at the same time, one layer out: it goes to the next lane, and a strip it lands on is pushed out in turn
   edit((p) => {
-    const moved = p.clips.map((c) => (!ids.has(c.id) && c.at >= to - 1e-6 ? { ...c, at: c.at + span } : c));
-    const fresh = picked.map((c) => ({ ...c, id: newId(), at: c.at + span }));
-    return { ...p, clips: resolveOverlaps([...moved, ...fresh], fresh.map((c) => c.id)) };
+    const fresh = picked.map((c) => ({ ...c, id: newId() }));
+    return { ...p, clips: resolveOverlaps([...p.clips, ...fresh], fresh.map((c) => c.id)) };
   });
   if (picked.length === 1) set({ selected: state.project.clips.length - 1 });
 }
@@ -753,6 +747,26 @@ export function removeGap(): void {
   const i = state.project.clips.findIndex((c) => c.id === sel);
   set({ gap: null, selected: i });
 }
+
+/** Takes the picked empty lane out of the stack (strips on the far side move one lane toward 0). */
+export function removeLane(): void {
+  const g = state.gap;
+  if (!g || !g.lane) return;
+  const sel = state.project.clips[state.selected]?.id;
+  edit((p) => ({ ...p, clips: removeLaneFrom(p.clips, g.track) }));
+  const i = state.project.clips.findIndex((c) => c.id === sel);
+  set({ gap: null, selected: i });
+}
+
+/** Moves every strip as close to lane 0 as it can go without changing what covers what. Returns how many moved. */
+export function optimizeTimeline(): number {
+  const r = optimizeLanes(state.project.clips);
+  if (r.moved === 0) return 0;
+  edit((p) => ({ ...p, clips: optimizeLanes(p.clips).clips }));
+  return r.moved;
+}
+
+export { laneRemovable };
 
 // ---------- crop ----------
 

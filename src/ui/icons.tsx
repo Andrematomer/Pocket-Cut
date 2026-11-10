@@ -150,6 +150,12 @@ export const Look = () => (
     <path d="M12 12h8.5" />
   </I>
 );
+export const Effects = () => (
+  <I>
+    <path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z" />
+    <path d="M19 15.5l.7 1.8 1.8.7-1.8.7-.7 1.8-.7-1.8-1.8-.7 1.8-.7z" />
+  </I>
+);
 export const Layers = () => (
   <I>
     <path d="M12 3 3 8l9 5 9-5z" />

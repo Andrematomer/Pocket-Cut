@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
-import { NO_GRADE } from '../layers.ts';
+import { NO_FX, NO_GRADE, isFx } from '../layers.ts';
 import { editText, set, setSolidColor, setSpeed, targets, updateClip, useStore, type Tool } from '../store.ts';
 import { TEXT_FONTS, autoOutline } from '../text.ts';
 import { MAX_SPEED, MIN_SPEED, clipDuration, fmtTime } from '../timeline.ts';
-import type { Grade, MediaInfo } from '../types.ts';
-import { Download, FontIcon, Gear, Help, Look, Mute, OutlineIcon, Sound, Speed, Swatch, TextIcon } from './icons.tsx';
+import type { Fx, Grade, MediaInfo } from '../types.ts';
+import { Download, Effects, FontIcon, Gear, Help, Look, Mute, OutlineIcon, Sound, Speed, Swatch, TextIcon } from './icons.tsx';
 import { Slider } from './Slider.tsx';
 import { useSwap } from './swap.ts';
 
@@ -26,16 +26,17 @@ const TABS: TabDef[] = [
   { key: 'speed', name: 'Speed', icon: Speed },
   { key: 'sound', name: 'Sound', icon: Sound },
   { key: 'look', name: 'Look', icon: Look },
+  { key: 'effects', name: 'Effects', icon: Effects },
 ];
 
 /** which tabs make sense for a clip of this media */
 export function tabsFor(m: MediaInfo | undefined): Tool[] {
   if (!m) return [];
-  if (m.text !== undefined) return ['text', 'color', 'font', 'outline', 'look'];
-  if (m.solid !== undefined) return ['color', 'look'];
-  if (m.kind === 'image') return ['look'];
+  if (m.text !== undefined) return ['text', 'color', 'font', 'outline', 'look', 'effects'];
+  if (m.solid !== undefined) return ['color', 'look', 'effects'];
+  if (m.kind === 'image') return ['look', 'effects'];
   if (m.kind === 'audio') return ['speed', 'sound'];
-  return m.hasAudio ? ['speed', 'sound', 'look'] : ['speed', 'look'];
+  return m.hasAudio ? ['speed', 'sound', 'look', 'effects'] : ['speed', 'look', 'effects'];
 }
 
 /**
@@ -202,6 +203,18 @@ export function Drawer() {
     const g = { ...grade, ...patch };
     updateClip(index, { grade: g.brightness || g.contrast || g.saturation || g.warmth ? g : undefined });
   };
+  const fx: Fx = clip.fx ?? NO_FX;
+  const setFx = (patch: Partial<Fx>) => {
+    const f = { ...fx, ...patch };
+    updateClip(index, { fx: isFx(f) ? f : undefined });
+  };
+  const fxRow = (label: string, key: keyof Fx) =>
+    row(
+      label,
+      `${Math.round(fx[key] * 100)}`,
+      () => setFx({ [key]: 0 }),
+      <Slider label={label} value={Math.round(fx[key] * 100)} min={0} max={100} step={1} fineStep={0.5} snaps={[0]} snapPx={12} valueText={`${Math.round(fx[key] * 100)}`} onChange={(v) => setFx({ [key]: Math.round(v) / 100 })} />,
+    );
   const opacity = Math.round((clip.opacity ?? 1) * 100);
   const textColor = media.textColor ?? '#ffffff';
   const outlineColor = media.textOutline ?? autoOutline(textColor);
@@ -290,6 +303,18 @@ export function Drawer() {
             <ResetLabel label="Volume" onReset={() => setVol(100)} />
             <Slider label="Volume" value={pct} min={0} max={100} step={1} fineStep={0.5} snaps={[0, 100]} snapPx={14} valueText={pct === 0 ? 'muted' : `${pct} percent`} onChange={setVol} />
             <span class="num dval">{pct === 0 ? 'Muted' : `${pct}%`}</span>
+          </section>
+        )}
+
+        {tab === 'effects' && (
+          <section>
+            {fxRow('Vignette', 'vignette')}
+            {fxRow('Blur', 'blur')}
+            {fxRow('Glow', 'glow')}
+            {fxRow('Sharpen', 'sharpen')}
+            {fxRow('Pixelate', 'pixelate')}
+            {fxRow('Color split', 'chroma')}
+            <p class="hint">Every effect starts at 0 and costs nothing until you raise it. Tap a name twice to reset.</p>
           </section>
         )}
 

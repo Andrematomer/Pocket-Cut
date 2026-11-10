@@ -2609,3 +2609,57 @@ button.tl-time {
 .tbox.group polygon {
   stroke-dasharray: 7 4;
 }
+
+/* a picked empty lane: the whole red box is the button */
+.tl-gap.lane {
+  pointer-events: auto;
+}
+
+/* the divider shows what it does with a long arrow (too long for a finger to cover) instead of a sentence */
+.div-arrow {
+  position: fixed;
+  z-index: 40;
+  width: 24px;
+  height: 180px;
+  margin: -90px 0 0 -12px;
+  color: var(--accent);
+  pointer-events: none;
+  filter: drop-shadow(0 0 6px rgba(0, 0, 0, 0.6));
+}
+.div-arrow.ping {
+  animation: arrow-ping 0.3s ease-in-out 3 alternate;
+}
+@keyframes arrow-ping {
+  from {
+    transform: translateY(-26px);
+  }
+  to {
+    transform: translateY(26px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .div-arrow.ping {
+    animation: none;
+  }
+}
+/* every pixel of the middle bar is a button: each one reaches over its neighbours' gaps and the bar's padding */
+.tl-bar .play,
+.tl-bar .tl-add,
+.tl-bar .tl-btn {
+  position: relative;
+}
+.tl-bar .tl-add::before,
+.tl-bar .tl-btn::before {
+  content: '';
+  position: absolute;
+  inset: -5px -1.5px -9px -1.5px;
+}
+.tl-bar .play::before {
+  content: '';
+  position: absolute;
+  inset: -2px -1.5px -6px -8px;
+}
+/* the ruler with the times stays on top when the lanes scroll up and down */
+.tl-inner {
+  overflow: clip;
+}
