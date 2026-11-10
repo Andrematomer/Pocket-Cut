@@ -39,7 +39,7 @@ export interface Grade {
   warmth: number;
 }
 
-/** picture effects, each 0..1 with 0 = off (and not computed at all) */
+/** picture effects, 0 = off (and not computed at all); vignette runs -1 (light) to 1 (dark), the others 0..1 */
 export interface Fx {
   vignette: number;
   blur: number;
@@ -47,6 +47,7 @@ export interface Fx {
   sharpen: number;
   pixelate: number;
   chroma: number;
+  emboss: number;
 }
 
 export interface Crop {

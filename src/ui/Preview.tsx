@@ -213,6 +213,7 @@ function Gestures({ boxW, boxH }: { boxW: number; boxH: number }) {
       engine.liveMany = null;
       setViews(out);
       engine.draw();
+      live.current = null; // the group moved the strips: the single-strip view that was remembered at touch-down must not be written back
     }
     const v = live.current;
     live.current = null;

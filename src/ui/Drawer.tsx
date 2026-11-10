@@ -208,12 +208,12 @@ export function Drawer() {
     const f = { ...fx, ...patch };
     updateClip(index, { fx: isFx(f) ? f : undefined });
   };
-  const fxRow = (label: string, key: keyof Fx) =>
+  const fxRow = (label: string, key: keyof Fx, signed = false) =>
     row(
       label,
       `${Math.round(fx[key] * 100)}`,
       () => setFx({ [key]: 0 }),
-      <Slider label={label} value={Math.round(fx[key] * 100)} min={0} max={100} step={1} fineStep={0.5} snaps={[0]} snapPx={12} valueText={`${Math.round(fx[key] * 100)}`} onChange={(v) => setFx({ [key]: Math.round(v) / 100 })} />,
+      <Slider label={label} value={Math.round(fx[key] * 100)} min={signed ? -100 : 0} max={100} step={1} fineStep={0.5} snaps={[0]} snapPx={12} valueText={`${Math.round(fx[key] * 100)}`} onChange={(v) => setFx({ [key]: Math.round(v) / 100 })} />,
     );
   const opacity = Math.round((clip.opacity ?? 1) * 100);
   const textColor = media.textColor ?? '#ffffff';
@@ -308,13 +308,14 @@ export function Drawer() {
 
         {tab === 'effects' && (
           <section>
-            {fxRow('Vignette', 'vignette')}
+            {fxRow('Vignette', 'vignette', true)}
             {fxRow('Blur', 'blur')}
             {fxRow('Glow', 'glow')}
             {fxRow('Sharpen', 'sharpen')}
             {fxRow('Pixelate', 'pixelate')}
+            {fxRow('Emboss', 'emboss')}
             {fxRow('Color split', 'chroma')}
-            <p class="hint">Every effect starts at 0 and costs nothing until you raise it. Tap a name twice to reset.</p>
+            <p class="hint">Tap a name twice to reset that slider.</p>
           </section>
         )}
 

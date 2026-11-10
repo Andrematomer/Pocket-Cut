@@ -22,6 +22,7 @@ export function App() {
   const hasClips = useStore((s) => s.project.clips.length > 0);
   const sheet = useStore((s) => s.sheet);
   const focus = useStore((s) => s.focus);
+  const locked = useStore((s) => s.locked);
   // Full preview of a wide project on a portrait screen: the whole screen is turned a quarter, so the wide picture fills it
   // (the buttons turn with it). A screen that is already wide (a tab turned by the browser) needs nothing.
   const wide = useStore((s) => {
@@ -130,8 +131,9 @@ export function App() {
   }, [hasClips]);
 
   return (
-    <div class={`app ${turn ? (turn > 0 ? 'turned-cw' : 'turned-ccw') : ''}`} style={{ '--tl-h': `${tlH}px` } as Record<string, string>}>
+    <div class={`app ${locked ? 'locked' : ''} ${turn ? (turn > 0 ? 'turned-cw' : 'turned-ccw') : ''}`} style={{ '--tl-h': `${tlH}px` } as Record<string, string>}>
       <FilePicker />
+      {locked && <div class="lock-veil" />}
       {!hasClips && (
         <header class="top">
           <span class="title plain">Pocket Cut</span>

@@ -415,7 +415,8 @@ export function Timeline() {
 
   // ---------- trimming with the handles of the selected strip ----------
 
-  const trimRef = useRef<{ id: number; i: number; side: 'left' | 'right'; x0: number; base: { at: number; start: number; end: number }; cur: Trim } | null>(null);
+  const trimRef = useRef<{ id: number; i: number; side: 'left' | 'right'; x0: number; base: { at: number; start: number; end: number }; cur: Trim; guide?: number | null } | null>(null);
+  const [trimGuide, setTrimGuide] = useState<number | null>(null);
 
   const solveTrim = (t: NonNullable<typeof trimRef.current>, dx: number): Trim => {
     const clip = live.current.clips[t.i]!;
@@ -424,6 +425,21 @@ export function Timeline() {
     const k = live.current.pps;
     let dt = dx / k; // timeline seconds
     const b = t.base;
+    // the edge being dragged sticks to the playhead, the start, and the edges of other strips
+    const edge0 = t.side === 'left' ? b.at : b.at + (b.end - b.start) / clip.speed;
+    const lim = SNAP_PX / k;
+    let best = lim;
+    let hitAt: number | null = null;
+    const pts = [0, live.current.playhead];
+    live.current.clips.forEach((c, i) => {
+      if (i !== t.i) pts.push(c.at, clipEnd(c));
+    });
+    for (const p of pts) {
+      const dd = Math.abs(edge0 + dt - p);
+      if (dd < best) (best = dd), (hitAt = p);
+    }
+    if (hitAt != null) dt = hitAt - edge0;
+    t.guide = hitAt;
     if (t.side === 'left') {
       dt = Math.max(dt, -b.at, -b.start / clip.speed);
       dt = Math.min(dt, (b.end - MIN_CLIP - b.start) / clip.speed);
@@ -453,6 +469,7 @@ export function Timeline() {
     if (!t || e.pointerId !== t.id) return;
     t.cur = solveTrim(t, e.clientX - t.x0);
     setTrim(t.cur);
+    setTrimGuide(t.guide ?? null);
     engine.scrubSource(t.i, t.side === 'left' ? t.cur.start : Math.max(t.cur.start, t.cur.end - 0.05), false);
   };
   const trimUp = (e: PointerEvent) => {
@@ -460,10 +477,11 @@ export function Timeline() {
     if (!t || e.pointerId !== t.id) return;
     trimRef.current = null;
     setTrim(null);
+    setTrimGuide(null);
     const c = t.cur;
     // a tap on a handle (no drag) puts the handles away, which is how a very short strip gets them back off
     if (e.type === 'pointerup' && Math.abs(e.clientX - t.x0) < 6) set({ handles: false });
-    else if (e.type === 'pointerup' && (c.at !== t.base.at || c.start !== t.base.start || c.end !== t.base.end)) updateClip(t.i, { at: Math.round(c.at * 100) / 100, start: c.start, end: c.end });
+    else if (e.type === 'pointerup' && (c.at !== t.base.at || c.start !== t.base.start || c.end !== t.base.end)) updateClip(t.i, { at: t.guide != null ? c.at : Math.round(c.at * 100) / 100, start: c.start, end: c.end });
     void engine.showAt(getState().playhead);
   };
 
@@ -492,7 +510,6 @@ export function Timeline() {
   };
   // ---------- the middle bar is also the handle that trades height between preview and timeline ----------
   const barDrag = useRef<{ id: number; y0: number; h0: number; lo: number; hi: number; thr: number; grip: boolean; armed: boolean; moved: boolean; cur: number; pts: { t: number; y: number }[] } | null>(null);
-  const flingRaf = useRef(0);
   const [arrow, setArrow] = useState<{ x: number; y: number; ping: boolean } | null>(null);
   const arrowTimer = useRef(0);
   const setTlH = (h: number) => window.dispatchEvent(new CustomEvent('pc-tl-height', { detail: h }));
@@ -504,7 +521,6 @@ export function Timeline() {
     }
   };
   const openFocus = () => {
-    cancelAnimationFrame(flingRaf.current);
     set({ focus: true, drawer: null, sheet: 'none' });
   };
   const barDown = (e: PointerEvent) => {
@@ -512,7 +528,6 @@ export function Timeline() {
     const app = document.querySelector('.app') as HTMLElement | null;
     const stage = document.querySelector('.stage') as HTMLElement | null;
     if (!app || !stage) return;
-    cancelAnimationFrame(flingRaf.current);
     clearTimeout(arrowTimer.current);
     const gr = (e.target as Element).closest('.tl-grip')!.getBoundingClientRect();
     setArrow({ x: gr.left + gr.width / 2, y: e.clientY, ping: false });
@@ -541,24 +556,6 @@ export function Timeline() {
     d.cur = Math.round(Math.max(d.lo, Math.min(d.hi, raw)));
     setTlH(d.cur);
   };
-  /** after a flick the divider keeps going and slows down; if it passes the full-preview line on the way down it opens at once */
-  const fling = (d: NonNullable<typeof barDrag.current>, vh: number) => {
-    let h = d.cur;
-    let v = vh; // px per ms, positive = timeline growing
-    let last = performance.now();
-    const step = (now: number) => {
-      const dt = Math.min(32, now - last);
-      last = now;
-      h += v * dt;
-      v *= Math.exp(-dt / 325);
-      if (v < 0 && h < d.thr) return openFocus();
-      h = Math.max(d.lo, Math.min(d.hi, h));
-      setTlH(Math.round(h));
-      if (Math.abs(v) > 0.02 && h > d.lo && h < d.hi) flingRaf.current = requestAnimationFrame(step);
-      else saveTlH();
-    };
-    flingRaf.current = requestAnimationFrame(step);
-  };
   const barUp = (e: PointerEvent) => {
     const d = barDrag.current;
     if (!d || d.id !== e.pointerId) return;
@@ -569,17 +566,6 @@ export function Timeline() {
       arrowTimer.current = window.setTimeout(() => setArrow(null), 1000);
     } else setArrow(null);
     if (d.armed && e.type === 'pointerup') return openFocus();
-    if (e.type === 'pointerup' && d.moved) {
-      const n = d.pts.length;
-      const first = d.pts[0]!;
-      const lastPt = d.pts[n - 1]!;
-      const dt = lastPt.t - first.t;
-      // a flick: still moving when the finger lifted
-      if (n >= 2 && dt > 0 && e.timeStamp - lastPt.t < 80) {
-        const vh = (first.y - lastPt.y) / dt;
-        if (Math.abs(vh) > 0.35) return fling(d, vh);
-      }
-    }
     saveTlH();
   };
   const gapRow = gap ? lanes.indexOf(gap.track) : -1;
@@ -697,14 +683,25 @@ export function Timeline() {
                 <span class="tl-lane-name">{track}</span>
               </div>
             ))}
-            {gap && gapRow >= 0 && (
+            {gap && gapRow >= 0 && (() => {
+              // the bin sits in the middle of the part of the red box you can actually see
+              const bl = padL + gap.from * pps;
+              const bw = (gap.to - gap.from) * pps;
+              const v0 = playhead * pps;
+              const lo = Math.max(bl, v0);
+              const hi = Math.min(bl + bw, v0 + viewW);
+              const mid = hi > lo ? (lo + hi) / 2 - bl : bw / 2;
+              const trashX = Math.max(20, Math.min(Math.max(20, bw - 20), mid));
+              return (
               <div class={`tl-gap ${gap.lane ? 'lane' : ''}`} style={{ left: `${padL + gap.from * pps}px`, width: `${(gap.to - gap.from) * pps}px`, top: `${rowTop(gapRow)}px`, height: `${ROW}px` }} onClick={gap.lane ? () => removeLane() : undefined}>
-                <button class="gap-trash" aria-label={gap.lane ? `Remove empty lane ${gap.track}` : `Remove the ${fmtTime(gap.to - gap.from)} gap`} onClick={(e) => (gap.lane ? (e.stopPropagation(), removeLane()) : removeGap())}>
+                <button class="gap-trash" style={{ left: `${trashX}px` }} aria-label={gap.lane ? `Remove empty lane ${gap.track}` : `Remove the ${fmtTime(gap.to - gap.from)} gap`} onClick={(e) => (gap.lane ? (e.stopPropagation(), removeLane()) : removeGap())}>
                   <Trash />
                 </button>
               </div>
-            )}
+              );
+            })()}
             {box && <div class="tl-box" style={{ left: `${Math.min(box.x0, box.x1)}px`, top: `${Math.min(box.y0, box.y1)}px`, width: `${Math.abs(box.x1 - box.x0)}px`, height: `${Math.abs(box.y1 - box.y0)}px` }} />}
+            {trimGuide != null && <div class="snap-guide" style={{ left: `${padL + trimGuide * pps}px` }} />}
             {move?.guide != null && <div class="snap-guide" style={{ left: `${padL + move.guide * pps}px` }} />}
             {clips.map((c, i) => {
               const m = media[c.mediaId];

@@ -7,10 +7,10 @@ export const NO_GRADE: Grade = { brightness: 0, contrast: 0, saturation: 0, warm
 
 export const isGraded = (g?: Grade): g is Grade => !!g && (g.brightness !== 0 || g.contrast !== 0 || g.saturation !== 0 || g.warmth !== 0);
 
-export const NO_FX: Fx = { vignette: 0, blur: 0, glow: 0, sharpen: 0, pixelate: 0, chroma: 0 };
+export const NO_FX: Fx = { vignette: 0, blur: 0, glow: 0, sharpen: 0, pixelate: 0, chroma: 0, emboss: 0 };
 
 /** true when at least one effect is on: with all of them at 0 the picture never goes through the shader for effects */
-export const isFx = (f?: Fx): f is Fx => !!f && (f.vignette > 0 || f.blur > 0 || f.glow > 0 || f.sharpen > 0 || f.pixelate > 0 || f.chroma > 0);
+export const isFx = (f?: Fx): f is Fx => !!f && (f.vignette !== 0 || f.blur > 0 || f.glow > 0 || f.sharpen > 0 || f.pixelate > 0 || f.chroma > 0 || f.emboss > 0);
 
 /** Pure per-pixel colour maths (the same as the shader), rgb 0..1. Used by tests. */
 export function gradePixel(rgb: [number, number, number], g: Grade): [number, number, number] {
@@ -29,23 +29,32 @@ export function gradePixel(rgb: [number, number, number], g: Grade): [number, nu
 }
 
 const VERT = `attribute vec2 p;varying vec2 uv;void main(){uv=vec2(p.x*.5+.5,.5-p.y*.5);gl_Position=vec4(p,0.,1.);}`;
-const FRAG = `precision mediump float;varying vec2 uv;uniform sampler2D tex;uniform vec4 g;uniform vec4 e1;uniform vec4 e2;uniform vec2 px;
+const FRAG = `precision mediump float;varying vec2 uv;uniform sampler2D tex;uniform vec4 g;uniform vec4 e1;uniform vec4 e2;uniform vec2 px;uniform float rings;
+const vec3 W=vec3(.2126,.7152,.0722);
 vec4 S(vec2 p){return texture2D(tex,p);}
-vec4 B(vec2 p,float r){vec4 s=S(p);for(int i=0;i<8;i++){float a=float(i)*.785398;vec2 d=vec2(cos(a),sin(a))*r;s+=S(p+d)+S(p+d*.5);}return s/17.;}
+vec4 B(vec2 p,float r){vec4 s=S(p);float n=1.;vec2 k=vec2(1.,px.x/px.y);
+for(int j=0;j<8;j++){if(float(j)>=rings)break;float rr=r*float(j+1)/rings;float off=float(j)*.4;
+for(int i=0;i<8;i++){float a=float(i)*.785398+off;s+=S(p+vec2(cos(a),sin(a))*k*rr);n+=1.;}}
+return s/n;}
+vec4 T(vec2 q){return e1.y>0.?B(q,e1.y*.06):S(q);}
 void main(){
+vec2 k=vec2(1.,px.x/px.y);
 vec2 p=uv;
 if(e2.x>0.){float n=mix(220.,10.,sqrt(e2.x));vec2 cells=vec2(n,n*px.x/px.y);p=(floor(p*cells)+.5)/cells;}
-vec4 c=e1.y>0.?B(p,e1.y*.06):S(p);
-if(e2.y>0.&&e1.y<=0.){vec2 o=vec2(e2.y*.02,0.);c.r=S(p+o).r;c.b=S(p-o).b;}
-if(e1.w>0.){vec4 bl=(S(p+vec2(px.x,0.))+S(p-vec2(px.x,0.))+S(p+vec2(0.,px.y))+S(p-vec2(0.,px.y)))*.25;c.rgb+=(c.rgb-bl.rgb)*e1.w*2.;}
-if(e1.z>0.){vec4 b=B(p,.05);float l=dot(b.rgb/max(b.a,.001),vec3(.2126,.7152,.0722));c.rgb+=b.rgb*smoothstep(.4,1.,l)*e1.z*1.6;}
+vec4 c;
+if(e2.y>0.){vec2 o=vec2(e2.y*.12,0.);vec4 a=T(p+o);vec4 m=T(p);vec4 d=T(p-o);c=vec4(a.r,m.g,d.b,m.a);}else c=T(p);
+if(e1.w>0.){vec2 so=vec2(.0018)*k;vec4 bl=(S(p+vec2(so.x,0.))+S(p-vec2(so.x,0.))+S(p+vec2(0.,so.y))+S(p-vec2(0.,so.y)))*.25;c.rgb+=(c.rgb-bl.rgb)*e1.w*2.;}
+if(e1.z>0.){float ga=e1.z;vec4 b=B(p,mix(.012,.075,ga));float gain=ga*2.2;vec3 col=b.rgb*gain;col=mix(col,vec3(b.a)*gain,smoothstep(.5,1.,ga));
+float lum=dot(b.rgb/max(b.a,.001),W);vec3 bloom=b.rgb*smoothstep(.5,1.,lum)*ga*.5;
+c.rgb+=col*(1.-c.a)+bloom;c.a=min(1.,c.a+(1.-c.a)*clamp(b.a*gain,0.,1.));}
 c.rgb=clamp(c.rgb,0.,c.a);
 vec3 r=c.a>0.0?c.rgb/c.a:c.rgb;
 r+=vec3(g.x*.5+g.w*.12,g.x*.5,g.x*.5-g.w*.12);
 r=(r-.5)*(1.+g.y)+.5;
-float y=dot(r,vec3(.2126,.7152,.0722));
+float y=dot(r,W);
 r=clamp(vec3(y)+(r-vec3(y))*(1.+g.z),0.,1.);
-if(e1.x>0.){r*=1.-e1.x*smoothstep(.2,1.,distance(uv,vec2(.5))*1.4142)*.95;}
+if(e2.z>0.){vec2 eo=vec2(.0022)*k;float emb=dot(S(p-eo).rgb,W)-dot(S(p+eo).rgb,W);r=clamp(mix(r,vec3(.5),e2.z*.55)+vec3(emb*e2.z*3.),0.,1.);}
+if(e1.x!=0.){float m=smoothstep(.2,1.,distance(uv,vec2(.5))*1.4142)*abs(e1.x)*.95;r=e1.x>0.?r*(1.-m):mix(r,vec3(1.),m);}
 gl_FragColor=vec4(r*c.a,c.a);}`;
 
 interface Gl {
@@ -56,6 +65,7 @@ interface Gl {
   e1: WebGLUniformLocation;
   e2: WebGLUniformLocation;
   px: WebGLUniformLocation;
+  rings: WebGLUniformLocation;
 }
 
 let shared: Gl | null | undefined;
@@ -93,7 +103,7 @@ function setup(): Gl | null {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
     gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true);
-    shared = { canvas, gl, tex, loc: gl.getUniformLocation(prog, 'g')!, e1: gl.getUniformLocation(prog, 'e1')!, e2: gl.getUniformLocation(prog, 'e2')!, px: gl.getUniformLocation(prog, 'px')! };
+    shared = { canvas, gl, tex, loc: gl.getUniformLocation(prog, 'g')!, e1: gl.getUniformLocation(prog, 'e1')!, e2: gl.getUniformLocation(prog, 'e2')!, px: gl.getUniformLocation(prog, 'px')!, rings: gl.getUniformLocation(prog, 'rings')! };
   } catch {
     shared = null;
   }
@@ -103,7 +113,7 @@ function setup(): Gl | null {
 const MAX_SIDE = 3840;
 
 /** Runs the picture through the grading shader. Returns the shared graded canvas (use it at once), or null when WebGL is missing. */
-function grade(src: CanvasImageSource, w: number, h: number, g: Grade, fx: Fx): { img: CanvasImageSource; w: number; h: number } | null {
+function grade(src: CanvasImageSource, w: number, h: number, g: Grade, fx: Fx, hq: boolean): { img: CanvasImageSource; w: number; h: number } | null {
   const s = setup();
   if (!s) return null;
   const k = Math.min(1, MAX_SIDE / Math.max(w, h));
@@ -120,7 +130,9 @@ function grade(src: CanvasImageSource, w: number, h: number, g: Grade, fx: Fx): 
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, src as TexImageSource);
     gl.uniform4f(s.loc, g.brightness, g.contrast, g.saturation, g.warmth);
     gl.uniform4f(s.e1, fx.vignette, fx.blur, fx.glow, fx.sharpen);
-    gl.uniform4f(s.e2, fx.pixelate, fx.chroma, 0, 0);
+    gl.uniform4f(s.e2, fx.pixelate, fx.chroma, fx.emboss, 0);
+    // the preview blurs with few samples to stay fast; the export uses 2x (light blur) to 4x (strong blur) as many
+    gl.uniform1f(s.rings, hq ? Math.round(2 * (2 + 2 * Math.max(fx.blur, fx.glow))) : 2);
     gl.uniform2f(s.px, 1 / gw, 1 / gh);
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
     return { img: s.canvas as CanvasImageSource, w: gw, h: gh };
@@ -133,6 +145,8 @@ export interface LayerLook {
   opacity?: number;
   grade?: Grade;
   fx?: Fx;
+  /** export quality: more blur samples */
+  hq?: boolean;
   crop?: Clip['crop'];
 }
 
@@ -141,7 +155,7 @@ export function drawLayer(ctx: Ctx2D, src: CanvasImageSource, sw: number, sh: nu
   const opts: DrawOptions = { ...o, alpha: look.opacity ?? 1, crop: look.crop };
   // the shader runs only when a grade or an effect is set; effects at 0 cost nothing
   if (isGraded(look.grade) || isFx(look.fx)) {
-    const r = grade(src, sw, sh, look.grade ?? NO_GRADE, look.fx ?? NO_FX);
+    const r = grade(src, sw, sh, look.grade ?? NO_GRADE, look.fx ?? NO_FX, !!look.hq);
     if (r) {
       drawFrame(ctx, r.img, sw, sh, { ...opts, srcW: r.w, srcH: r.h });
       return;

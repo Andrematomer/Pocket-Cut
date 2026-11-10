@@ -40,6 +40,8 @@ export interface State {
   drawer: Tool | null;
   /** an empty stretch picked on the timeline (red box with a trash icon) */
   gap: Gap | null;
+  /** the interface is held still for a moment (after Optimize timeline) so the change can be seen */
+  locked: boolean;
   /** the selected strip shows its trim handles */
   handles: boolean;
   /** the crop handles are shown on the preview */
@@ -101,6 +103,7 @@ let state: State = {
   preparing: false,
   drawer: null,
   gap: null,
+  locked: false,
   handles: false,
   boxMode: false,
   textEdit: null,
@@ -389,20 +392,13 @@ export function duplicateClip(index: number): void {
   if (picked.length === 1) set({ selected: state.project.clips.length - 1 });
 }
 
-/** Deletes the selected strip, or every strip of the multi-selection. Later strips close up like after removing a gap. */
+/** Deletes the selected strip, or every strip of the multi-selection. What came after stays where it is. */
 export function deleteClip(index: number): void {
   const ids = (state.multi.length > 0 ? targets() : [index]).map((i) => state.project.clips[i]?.id).filter((x): x is string => !!x);
   if (ids.length === 0) return;
   // the file stays in memory and storage while undo could still bring the clip back.
-  edit((p) => {
-    let clips = p.clips;
-    for (const id of ids) {
-      const c = clips.find((x) => x.id === id);
-      if (!c) continue;
-      clips = removeGapFrom(clips.filter((x) => x.id !== id), { track: c.track, from: c.at, to: clipEnd(c) });
-    }
-    return { ...p, clips };
-  });
+  // the space stays empty: closing a gap is one tap on it, so the person decides
+  edit((p) => ({ ...p, clips: p.clips.filter((x) => !ids.includes(x.id)) }));
   set({ drawer: null, boxMode: false, handles: false, selected: -1, multi: [], gap: null });
 }
 
@@ -764,6 +760,16 @@ export function optimizeTimeline(): number {
   if (r.moved === 0) return 0;
   edit((p) => ({ ...p, clips: optimizeLanes(p.clips).clips }));
   return r.moved;
+}
+
+/** Closes the sheet, holds the interface still for a moment, runs Optimize timeline, and lets the strips glide to their new lanes. */
+export function optimizeWithFeedback(): void {
+  set({ sheet: 'none', drawer: null, locked: true });
+  window.setTimeout(() => {
+    const n = optimizeTimeline();
+    toast(n === 0 ? 'The lanes are already as tight as they can be.' : `${n} strip${n === 1 ? '' : 's'} moved to a tighter lane.`);
+    window.setTimeout(() => set({ locked: false }), 500);
+  }, 450);
 }
 
 export { laneRemovable };

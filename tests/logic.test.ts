@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { IDENTITY_VIEW, baseScale, clampView, snapEightCropped, dragView, fillZoom, fitZoom, frameTransform, nearestAspect, snapEight, normAngle, outputSize, pinchView, quarterTurned, snapView } from '../src/geometry.ts';
 import { gradePixel } from '../src/layers.ts';
-import { activeAt, endOfTrack, freeTrack, gapAt, laneRemovable, optimizeLanes, removeGap, removeLane, resolveOverlaps, settleAt, planParts, sourceAt, totalOf } from '../src/timeline.ts';
+import { clipEnd, activeAt, endOfTrack, freeTrack, gapAt, laneRemovable, optimizeLanes, removeGap, removeLane, resolveOverlaps, settleAt, planParts, sourceAt, totalOf } from '../src/timeline.ts';
 import { resample, timeStretch } from '../src/stretch.ts';
 import { MAX_MBPS, MIN_MBPS, RATE_STOPS, autoBitrate, estimateBytes, fmtMbps, videoBitrate } from '../src/bitrate.ts';
 import { emptyProject, type Clip } from '../src/types.ts';
@@ -356,17 +356,20 @@ test('laneRemovable / removeLane: only an empty lane between used ones, the far 
   assert.deepEqual(up.map((c) => c.track), [0, 2]);
 });
 
-test('optimizeLanes: strips drop toward 0 only into free lanes, never past a clash', () => {
+test('optimizeLanes: fewest lanes, same order of every overlapping pair', () => {
   const mk = (id: string, track: number, at: number, end = 2) => ({ id, mediaId: 'm', start: 0, end, speed: 1, view: { x: 0, y: 0, zoom: 1, rot: 0 }, volume: 1, keepPitch: true, at, track });
-  // lane 0 busy 0..10, lane 1 early strip, lane 2 late strip with nothing under it on lane 1
-  const r = optimizeLanes([mk('base', 0, 0, 10), mk('early', 1, 0), mk('late', 2, 6)]);
-  assert.equal(r.clips.find((c) => c.id === 'late')!.track, 1);
-  assert.equal(r.clips.find((c) => c.id === 'early')!.track, 1);
-  assert.equal(r.moved, 1);
-  // a strip over another one keeps its place above it
-  const k = optimizeLanes([mk('base', 0, 0, 10), mk('over', 3, 1)]);
-  assert.equal(k.clips.find((c) => c.id === 'over')!.track, 1);
-  // sound lanes stop at -1
-  const s = optimizeLanes([mk('x', -4, 0)]);
-  assert.equal(s.clips[0]!.track, -1);
+  // a late strip high up with nothing under it drops next to the early ones; a strip over another keeps its place above it
+  const r = optimizeLanes([mk('base', 0, 0, 10), mk('early', 1, 0), mk('late', 5, 6), mk('over', 9, 1)]);
+  const t = (id: string) => r.clips.find((c) => c.id === id)!.track;
+  assert.ok(t('over') > t('base') && t('over') > t('early'));
+  assert.ok(t('late') > t('base'));
+  assert.equal(new Set(r.clips.map((c) => c.track)).size, 3); // base, early/late share, over
+  // overlapping strips never share a lane
+  for (const a of r.clips) for (const b of r.clips) if (a.id !== b.id && a.track === b.track) assert.ok(a.at >= clipEnd(b) - 1e-6 || b.at >= clipEnd(a) - 1e-6);
+  // strips spread over many lanes but never overlapping collapse into one lane
+  const flat = optimizeLanes([mk('a', 3, 0), mk('b', -4, 3), mk('c', 7, 6)]);
+  assert.equal(new Set(flat.clips.map((c) => c.track)).size, 1);
+  // three stacked strips over time keep their depth
+  const stack = optimizeLanes([mk('a', 1, 0), mk('b', 2, 0), mk('c', 3, 0)]);
+  assert.deepEqual(stack.clips.map((c) => c.track), [1, 2, 3]);
 });

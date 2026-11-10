@@ -223,26 +223,32 @@ export function removeLane(clips: Clip[], track: number): Clip[] {
 }
 
 /**
- * Packs the lanes toward 0 without changing what is drawn over what: a strip moves one lane closer to 0 (picture
- * lanes stop at 0, sound lanes at -1) only when that lane is free for its whole length, and this repeats until
- * nothing moves. Returns the new strips and how many moved.
+ * Uses as few lanes as possible without changing what is drawn over what. Two strips that overlap in time keep their
+ * order (the one that was higher stays higher); strips that never overlap may share a lane. Each strip goes to the
+ * lowest lane its overlapping lower neighbours allow, which is the fewest lanes there can be. The whole stack is
+ * then shifted to sit as near its old place as it can. Returns the new strips and how many changed lane.
  */
 export function optimizeLanes(clips: Clip[]): { clips: Clip[]; moved: number } {
-  const out = clips.map((c) => ({ ...c }));
-  const moved = new Set<string>();
-  const hit = (a: Clip, b: Clip) => a.id !== b.id && a.at < clipEnd(b) - 1e-6 && b.at < clipEnd(a) - 1e-6;
-  for (let pass = 0; pass < 400; pass++) {
-    let changed = false;
-    const order = [...out].sort((a, b) => Math.abs(a.track) - Math.abs(b.track) || a.at - b.at);
-    for (const c of order) {
-      const goal = c.track > 0 ? c.track - 1 : c.track < -1 ? c.track + 1 : null;
-      if (goal === null) continue;
-      if (out.some((o) => o.track === goal && hit(c, o))) continue;
-      c.track = goal;
-      moved.add(c.id);
-      changed = true;
+  if (clips.length === 0) return { clips, moved: 0 };
+  const hit = (a: Clip, b: Clip) => a.at < clipEnd(b) - 1e-6 && b.at < clipEnd(a) - 1e-6;
+  const order = [...clips].sort((a, b) => a.track - b.track || a.at - b.at);
+  const depth = new Map<string, number>();
+  order.forEach((c, i) => {
+    let d = 0;
+    for (let j = 0; j < i; j++) {
+      const o = order[j]!;
+      if (o.track < c.track && hit(c, o)) d = Math.max(d, depth.get(o.id)! + 1);
     }
-    if (!changed) break;
-  }
-  return { clips: out, moved: moved.size };
+    depth.set(c.id, d);
+  });
+  // shift: the median of (old lane - new depth), so most strips stay where they were
+  const offs = clips.map((c) => c.track - depth.get(c.id)!).sort((a, b) => a - b);
+  const shift = offs[Math.floor(offs.length / 2)]!;
+  let moved = 0;
+  const out = clips.map((c) => {
+    const track = depth.get(c.id)! + shift;
+    if (track !== c.track) moved++;
+    return track === c.track ? c : { ...c, track };
+  });
+  return { clips: out, moved };
 }

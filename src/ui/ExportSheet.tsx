@@ -267,6 +267,21 @@ function Done({ result, note, setNote, onBack }: { result: ExportResult; note: s
   const sharing = useRef(false);
   const mark = (name: string) => setSaved((o) => new Set(o).add(name));
 
+  // Phones: one button that opens the share sheet (Save Video, Save to Files, Drive...). It is the only way a web
+  // app can reach the gallery, and it avoids the browser's own download viewer, which traps iPhone home-screen apps.
+  // Computers: one button that downloads. Sharing stays available as a small second choice where the system has it.
+  const phone = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches;
+  const canShare = typeof navigator.canShare === 'function' && navigator.canShare({ files: parts.map((p) => new File([p.blob], p.name, { type: 'video/mp4' })) });
+  const viaSheet = phone && canShare;
+
+  const download = () => {
+    parts.forEach((p, i) =>
+      setTimeout(() => {
+        saveBlob(p.name, p.blob);
+        mark(p.name);
+      }, i * 500),
+    );
+  };
   const shareAll = async () => {
     if (sharing.current) return; // a second tap while the share sheet is opening would send everything twice
     sharing.current = true;
@@ -277,17 +292,13 @@ function Done({ result, note, setNote, onBack }: { result: ExportResult; note: s
         setNote('');
       } else if (r === 'unsupported') {
         setNote('Sharing is not available here, so the files are being downloaded.');
-        parts.forEach((p, i) =>
-          setTimeout(() => {
-            saveBlob(p.name, p.blob);
-            mark(p.name);
-          }, i * 500),
-        );
+        download();
       }
     } finally {
       setTimeout(() => (sharing.current = false), 800);
     }
   };
+  const n = parts.length;
   return (
     <>
       <ul class="results">
@@ -299,16 +310,7 @@ function Done({ result, note, setNote, onBack }: { result: ExportResult; note: s
                 {fmtTime(p.seconds, 1)} · {fmtBytes(p.blob.size)}
               </span>
             </div>
-            <button
-              class={`btn small ${saved.has(p.name) ? 'done' : ''}`}
-              onClick={() => {
-                saveBlob(p.name, p.blob);
-                mark(p.name);
-              }}
-              aria-label={`Download ${p.name}`}
-            >
-              {saved.has(p.name) ? <Check /> : <Download />} {saved.has(p.name) ? 'Saved' : 'Save'}
-            </button>
+            {saved.has(p.name) && <Check />}
           </li>
         ))}
       </ul>
@@ -317,16 +319,29 @@ function Done({ result, note, setNote, onBack }: { result: ExportResult; note: s
           {w}
         </p>
       ))}
-      {saved.size > 0 && <p class="hint">Saved files go to your Files or Downloads. To put them in your photo gallery, use the share button below and choose Save Video.</p>}
       {note && <p class="hint">{note}</p>}
+      {viaSheet && <p class="hint">In the sheet, choose Save Video for your gallery or Save to Files. Sharing again adds copies.</p>}
       {shared > 0 && (
         <p class="ok" role="status">
-          <Check /> Sent to the share sheet{shared > 1 ? ` (${shared} times)` : ''}. If you chose Save Video, {parts.length > 1 ? `all ${parts.length} are` : 'it is'} in your gallery now. Sharing again adds copies.
+          <Check /> Sent to the share sheet{shared > 1 ? ` (${shared} times)` : ''}.
         </p>
       )}
-      <button class={`cta ${shared > 0 ? 'again' : ''}`} onClick={shareAll}>
-        {shared > 0 ? <Check /> : <Share />} {shared > 0 ? 'Shared. Share again' : parts.length > 1 ? `Share or save all ${parts.length}` : 'Share or save'}
-      </button>
+      {viaSheet ? (
+        <button class={`cta ${shared > 0 ? 'again' : ''}`} onClick={shareAll}>
+          {shared > 0 ? <Check /> : <Share />} {shared > 0 ? 'Done. Save again' : n > 1 ? `Save or share all ${n}` : 'Save or share'}
+        </button>
+      ) : (
+        <>
+          <button class={`cta ${saved.size > 0 ? 'again' : ''}`} onClick={download}>
+            {saved.size > 0 ? <Check /> : <Download />} {saved.size > 0 ? 'Saved. Download again' : n > 1 ? `Download all ${n}` : 'Download'}
+          </button>
+          {canShare && (
+            <button class="btn" onClick={shareAll}>
+              <Share /> Share…
+            </button>
+          )}
+        </>
+      )}
       <button class="btn" onClick={onBack}>
         Back to settings
       </button>

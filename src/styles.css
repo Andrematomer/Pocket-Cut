@@ -2597,14 +2597,14 @@ button.tl-time {
   font-family: inherit;
   cursor: pointer;
 }
-/* the whole area right of the dashed line, the full height of the bar, is the pane divider */
+/* same look as ever; only the invisible hit area around the grip is larger */
 .tl-grip {
-  flex: 1 1 30px;
-  min-width: 30px;
-  align-self: stretch;
-  height: auto;
-  margin: -2px -8px -6px 2px;
-  padding-right: 8px;
+  position: relative;
+}
+.tl-grip::before {
+  content: '';
+  position: absolute;
+  inset: -5px -8px -9px -2px;
 }
 .tbox.group polygon {
   stroke-dasharray: 7 4;
@@ -2662,4 +2662,18 @@ button.tl-time {
 /* the ruler with the times stays on top when the lanes scroll up and down */
 .tl-inner {
   overflow: clip;
+}
+
+/* a tap on a button never zooms or shifts the page (iOS double-tap) */
+* {
+  touch-action: manipulation;
+}
+.app.locked .strip-clip {
+  transition: top 0.4s ease;
+}
+.lock-veil {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  background: transparent;
 }
