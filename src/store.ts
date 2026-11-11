@@ -384,12 +384,18 @@ export function duplicateClip(index: number): void {
   const idx = state.multi.length > 0 ? targets() : [index];
   const picked = idx.map((i) => state.project.clips[i]).filter((c): c is Clip => !!c);
   if (picked.length === 0) return;
-  // the copy sits at the same time, one layer out: it goes to the next lane, and a strip it lands on is pushed out in turn
-  edit((p) => {
-    const fresh = picked.map((c) => ({ ...c, id: newId() }));
-    return { ...p, clips: resolveOverlaps([...p.clips, ...fresh], fresh.map((c) => c.id)) };
-  });
-  if (picked.length === 1) set({ selected: state.project.clips.length - 1 });
+  // the copies sit at the same time and keep their order and spacing: the whole group moves out by the fewest lanes
+  // that leave every copy on free ground (up from lane 0, down when everything picked is below it)
+  const dir = picked.every((c) => c.track < 0) ? -1 : 1;
+  const fresh = picked.map((c) => ({ ...c, id: newId() }));
+  const hit = (a: Clip, b: Clip) => a.at < clipEnd(b) - 1e-6 && b.at < clipEnd(a) - 1e-6;
+  let d = 1;
+  while (d < 200 && fresh.some((f) => state.project.clips.some((o) => o.track === f.track + dir * d && hit({ ...f, track: f.track + dir * d }, o)))) d++;
+  const copies = fresh.map((f) => ({ ...f, track: f.track + dir * d }));
+  edit((p) => ({ ...p, clips: [...p.clips, ...copies] }));
+  const first = state.project.clips.length - copies.length;
+  if (copies.length === 1) set({ selected: first });
+  else set({ selected: first, multi: copies.map((c) => c.id) });
 }
 
 /** Deletes the selected strip, or every strip of the multi-selection. What came after stays where it is. */

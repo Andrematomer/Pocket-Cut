@@ -32,13 +32,13 @@ const VERT = `attribute vec2 p;varying vec2 uv;void main(){uv=vec2(p.x*.5+.5,.5-
 const FRAG = `precision mediump float;varying vec2 uv;uniform sampler2D tex;uniform vec4 g;uniform vec4 e1;uniform vec4 e2;uniform vec2 px;uniform float rings;
 const vec3 W=vec3(.2126,.7152,.0722);
 vec4 S(vec2 p){return texture2D(tex,p);}
-vec4 B(vec2 p,float r){vec4 s=S(p);float n=1.;vec2 k=vec2(1.,px.x/px.y);
+vec4 B(vec2 p,float r){vec4 s=S(p);float n=1.;vec2 k=vec2(1.,px.y/px.x);
 for(int j=0;j<8;j++){if(float(j)>=rings)break;float rr=r*float(j+1)/rings;float off=float(j)*.4;
 for(int i=0;i<8;i++){float a=float(i)*.785398+off;s+=S(p+vec2(cos(a),sin(a))*k*rr);n+=1.;}}
 return s/n;}
 vec4 T(vec2 q){return e1.y>0.?B(q,e1.y*.06):S(q);}
 void main(){
-vec2 k=vec2(1.,px.x/px.y);
+vec2 k=vec2(1.,px.y/px.x);
 vec2 p=uv;
 if(e2.x>0.){float n=mix(220.,10.,sqrt(e2.x));vec2 cells=vec2(n,n*px.x/px.y);p=(floor(p*cells)+.5)/cells;}
 vec4 c;

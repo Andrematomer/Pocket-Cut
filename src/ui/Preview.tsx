@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { engine } from '../engine.ts';
-import { baseScale, clampView, clampZoom, dragView, fitZoom, normAngle, outputSize, pinchView, snapEightCropped, snapView, type Pt } from '../geometry.ts';
+import { baseScale, clampView, fitSegment, shownBox, tapTarget, clampZoom, dragView, fitZoom, normAngle, outputSize, pinchView, snapEightCropped, snapView, snapViewCropped, type Pt } from '../geometry.ts';
 import { getState, selectClip, set, setCrop, setViews, updateClip, useStore } from '../store.ts';
 import { localPoint } from '../turn.ts';
 import { activeAt, fmtTime, totalOf } from '../timeline.ts';
@@ -126,6 +126,7 @@ function Gestures({ boxW, boxH }: { boxW: number; boxH: number }) {
   const root = useRef<HTMLDivElement>(null);
   const guideV = useRef<HTMLDivElement>(null);
   const guideH = useRef<HTMLDivElement>(null);
+  const edgeEls = useRef<Record<string, HTMLElement | null>>({});
   const badge = useRef<HTMLDivElement>(null);
   const pts = useRef(new Map<number, Pt>());
   const arm = useRef(new Map<number, Pt>());
@@ -163,6 +164,7 @@ function Gestures({ boxW, boxH }: { boxW: number; boxH: number }) {
   const guides = (s: ReturnType<typeof snapView> | null) => {
     guideV.current?.classList.toggle('on', !!s?.x);
     guideH.current?.classList.toggle('on', !!s?.y);
+    for (const k of ['l', 'r', 't', 'b'] as const) edgeEls.current[k]?.classList.toggle('on', !!s?.edges[k]);
     if (fine.current) return;
     showBadge(s ? (s.zoom === 'fit' ? 'Fit' : s.zoom === 'fill' ? 'Fill' : s.rot !== null ? fmtDeg(s.rot) : s.edge ? 'Edge' : '') : '');
   };
@@ -378,6 +380,13 @@ function Gestures({ boxW, boxH }: { boxW: number; boxH: number }) {
       scale = Math.max(0.05, Math.hypot(b1.x - a1.x, b1.y - a1.y) / (Math.hypot(b.b.x - b.a.x, b.b.y - b.a.y) || 1));
       dr = Math.atan2(b1.y - a1.y, b1.x - a1.x) - Math.atan2(b.b.y - b.a.y, b.b.x - b.a.x);
     }
+    // a quarter turn is a magnet for the group too (not in fine mode)
+    if (b.b && !fine.current) {
+      const r0 = members[0]!.v.rot;
+      const target = r0 + (dr * 180) / Math.PI;
+      const q = Math.round(target / 90) * 90;
+      if (Math.abs(target - q) < 4) dr = ((q - r0) * Math.PI) / 180;
+    }
     const zs = members.map((m) => m.v.zoom);
     scale = Math.max(clampZoom(0) / Math.min(...zs), Math.min(scale, clampZoom(1e9) / Math.max(...zs)));
     const cos = Math.cos(dr);
@@ -410,7 +419,7 @@ function Gestures({ boxW, boxH }: { boxW: number; boxH: number }) {
       live.current = v;
       engine.live = { index: getState().selected, view: v };
     } else {
-      const sn = snapView(v, { sw: c.media.width, sh: c.media.height, W, H });
+      const sn = snapViewCropped(v, { sw: c.media.width, sh: c.media.height, W, H }, inkCrop(c.clip, c.media));
       live.current = sn.view;
       engine.live = { index: getState().selected, view: sn.view };
       guides(sn);
@@ -480,19 +489,21 @@ function Gestures({ boxW, boxH }: { boxW: number; boxH: number }) {
     const w = x1 - x0;
     const h = y1 - y0;
     if (!(w > 1) || !(h > 1)) return;
-    const sFit = Math.min(W / w, H / h);
-    const sFill = Math.max(W / w, H / h);
-    const near = (a: number) => Math.abs(a - 1) < 0.02;
-    // already fitted: fill. Anything else: fit
-    const fitted = near(sFit) && Math.abs(x0 + w / 2 - W / 2) < 2 && Math.abs(y0 + h / 2 - H / 2) < 2;
+    // as with one strip: the part of the canvas the group covers is where it fits (a quarter, a half or all of it)
+    const T = tapTarget({ x: x0, y: y0, w, h }, W, H);
+    const sFit = Math.min(T.w / w, T.h / h);
+    const sFill = Math.max(T.w / w, T.h / h);
+    const tcx = T.x + T.w / 2;
+    const tcy = T.y + T.h / 2;
+    const fitted = Math.abs(sFit - 1) < 0.02 && Math.abs(x0 + w / 2 - tcx) < 2 && Math.abs(y0 + h / 2 - tcy) < 2;
     const s = fitted && sFill / sFit > 1.02 ? sFill : sFit;
     const ux = x0 + w / 2;
     const uy = y0 + h / 2;
     const out: [number, View][] = info.map(({ i, v }) => {
       const cx = W / 2 + v.x * W;
       const cy = H / 2 + v.y * H;
-      const nx = W / 2 + s * (cx - ux);
-      const ny = H / 2 + s * (cy - uy);
+      const nx = tcx + s * (cx - ux);
+      const ny = tcy + s * (cy - uy);
       return [i, { ...v, x: (nx - W / 2) / W, y: (ny - H / 2) / H, zoom: v.zoom * s }];
     });
     setViews(out);
@@ -512,6 +523,18 @@ function Gestures({ boxW, boxH }: { boxW: number; boxH: number }) {
     const inset = media.textBox;
     const sc = clip.crop;
     const crop = media.solid !== undefined || !inset ? sc : { l: Math.max(sc?.l ?? 0, inset.l), t: Math.max(sc?.t ?? 0, inset.t), r: Math.max(sc?.r ?? 0, inset.r), b: Math.max(sc?.b ?? 0, inset.b) };
+    // the part of the canvas the picture covers decides what it fits into: a quarter, a half, or the whole canvas
+    const target = tapTarget(shownBox(clip.view, crop, media.width, media.height, W, H), W, H);
+    if (target.w < W - 0.5 || target.h < H - 0.5) {
+      const base = media.solid === undefined ? media.textBox : undefined;
+      const r = fitSegment(clip.view, crop, base, media.width, media.height, W, H, target);
+      const rc = r.crop;
+      const plain = !rc || (rc.l === (base?.l ?? 0) && rc.t === (base?.t ?? 0) && rc.r === (base?.r ?? 0) && rc.b === (base?.b ?? 0));
+      updateClip(i, { view: r.view, crop: plain ? undefined : rc });
+      showBadge(r.mode);
+      window.setTimeout(() => !fine.current && showBadge(''), 700);
+      return;
+    }
     const v = clampView(snapEightCropped(clip.view, crop, media.width, media.height, W, H), { sw: media.width, sh: media.height, W, H });
     updateClip(i, { view: v });
     const cw = media.width * (1 - (crop?.l ?? 0) - (crop?.r ?? 0));
@@ -527,7 +550,7 @@ function Gestures({ boxW, boxH }: { boxW: number; boxH: number }) {
     if (!c) return;
     e.preventDefault();
     const z = c.clip.view.zoom * Math.exp(-e.deltaY / 500);
-    const s = snapView(clampView({ ...c.clip.view, zoom: z }, { sw: c.media.width, sh: c.media.height, W: boxW, H: boxH }), { sw: c.media.width, sh: c.media.height, W: boxW, H: boxH });
+    const s = snapViewCropped(clampView({ ...c.clip.view, zoom: z }, { sw: c.media.width, sh: c.media.height, W: boxW, H: boxH }), { sw: c.media.width, sh: c.media.height, W: boxW, H: boxH }, inkCrop(c.clip, c.media));
     updateClip(getState().selected, { view: s.view });
   };
 
@@ -535,9 +558,20 @@ function Gestures({ boxW, boxH }: { boxW: number; boxH: number }) {
     <div class="gestures" ref={root} key={selected} onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up} onWheel={wheel}>
       <div class="guide v" ref={guideV} />
       <div class="guide h" ref={guideH} />
+      {(['l', 'r', 't', 'b'] as const).map((k) => (
+        <div key={k} class={`guide edge-${k}`} ref={(el) => void (edgeEls.current[k] = el)} />
+      ))}
       <div class="gesture-badge num" ref={badge} />
     </div>
   );
+}
+
+/** the part of a picture that is really there: its crop, and for a text the letters without the empty margin around them */
+function inkCrop(clip: Clip0, media: { textBox?: Crop; solid?: string }): Crop | undefined {
+  const c = clip.crop;
+  const i = media.solid === undefined ? media.textBox : undefined;
+  if (!i) return c;
+  return { l: Math.max(c?.l ?? 0, i.l), t: Math.max(c?.t ?? 0, i.t), r: Math.max(c?.r ?? 0, i.r), b: Math.max(c?.b ?? 0, i.b) };
 }
 
 type Handle = 'tl' | 'tr' | 'br' | 'bl' | 'l' | 't' | 'r' | 'b' | 'rot';

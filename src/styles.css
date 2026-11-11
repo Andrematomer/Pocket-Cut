@@ -2103,21 +2103,21 @@ label.cta {
 .toast {
   z-index: 70;
 }
-/* button feedback, the chunky way: a solid edge under the button, and a press pushes the button down onto it.
-   Letting go springs it back up with a small overshoot. Uses `translate` so it never fights a button's own transform. */
-button:not(:disabled) {
-  transition: translate 0.24s cubic-bezier(0.34, 1.7, 0.64, 1), box-shadow 0.24s cubic-bezier(0.34, 1.7, 0.64, 1);
-}
+/* button feedback, the chunky way (no animation at all): at rest a button shows its face with a darker lip of its own
+   colour underneath. While touched the face sits down on the lip, so the lip is gone; letting go shows the lip again. */
 button:not(:disabled):active {
   translate: 0 2px;
-  transition-duration: 0.04s;
 }
 .cta,
 .btn,
 .play,
 .tl-add,
 .tl-btn {
-  box-shadow: 0 3px 0 rgba(0, 0, 0, 0.42);
+  --lip: color-mix(in srgb, var(--raised) 45%, #000);
+  box-shadow: 0 3px 0 var(--lip);
+}
+.cta {
+  --lip: color-mix(in srgb, var(--accent) 58%, #000);
 }
 .cta:not(:disabled):active,
 .btn:not(:disabled):active,
@@ -2125,29 +2125,11 @@ button:not(:disabled):active {
 .tl-add:not(:disabled):active,
 .tl-btn:not(:disabled):active {
   translate: 0 3px;
-  box-shadow: 0 0 0 rgba(0, 0, 0, 0.42);
+  box-shadow: 0 0 0 var(--lip);
 }
-/* a button whose answer is slow (iOS color picker) still gets the same press, run once */
+/* a button whose answer is slow (iOS color picker) shows the pressed face for a moment */
 .tap {
-  animation: tap-press 0.36s ease-out;
-}
-@keyframes tap-press {
-  0% {
-    translate: 0 0;
-  }
-  18% {
-    translate: 0 3px;
-  }
-  100% {
-    translate: 0 0;
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  button,
-  .tap {
-    transition: none !important;
-    animation: none;
-  }
+  translate: 0 3px;
 }
 .drop-hint {
   position: fixed;
@@ -2721,4 +2703,29 @@ button.tl-time {
 }
 .drawer-scrim {
   display: none;
+}
+
+.guide.edge-l,
+.guide.edge-r {
+  top: 0;
+  bottom: 0;
+  width: 1px;
+}
+.guide.edge-l {
+  left: 0;
+}
+.guide.edge-r {
+  right: 0;
+}
+.guide.edge-t,
+.guide.edge-b {
+  left: 0;
+  right: 0;
+  height: 1px;
+}
+.guide.edge-t {
+  top: 0;
+}
+.guide.edge-b {
+  bottom: 0;
 }

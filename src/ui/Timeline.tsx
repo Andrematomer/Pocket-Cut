@@ -43,15 +43,16 @@ const isAudio = (m: MediaInfo | undefined) => m?.kind === 'audio';
  * The lanes shown, top to bottom. Picture and video lanes count up from lane 0, sound lanes down from
  * -1. One empty lane is open beyond the last used one on each side, so a clip cannot get lost far away.
  */
-export function lanesFor(clips: Clip[]): number[] {
-  let hi = 0;
-  let lo = 0;
+export function lanesFor(clips: Clip[], extra = { hi: 0, lo: 0 }): number[] {
+  // only the lanes between the first and the last strip, plus one free lane on each side (more while a strip is being held out there)
+  let hi = clips.length ? -Infinity : 0;
+  let lo = clips.length ? Infinity : 0;
   for (const c of clips) {
-    if (c.track >= 0) hi = Math.max(hi, c.track);
-    else lo = Math.min(lo, c.track);
+    hi = Math.max(hi, c.track);
+    lo = Math.min(lo, c.track);
   }
   const out: number[] = [];
-  for (let t = hi + 1; t >= lo - 1; t--) out.push(t);
+  for (let t = hi + 1 + extra.hi; t >= lo - 1 - extra.lo; t--) out.push(t);
   return out;
 }
 
@@ -83,13 +84,14 @@ export function Timeline() {
   const [trim, setTrim] = useState<Trim | null>(null);
   const [viewW, setViewW] = useState(360);
   const scroller = useRef<HTMLDivElement>(null);
-  const st = useRef<{ id: number; i: number; x0: number; y0: number; x: number; y: number; at0: number; track0: number; scroll0: number; scrollTop0: number; timer: number; active: boolean; raf: number } | null>(null);
+  const st = useRef<{ id: number; i: number; x0: number; y0: number; x: number; y: number; at0: number; track0: number; scroll0: number; scrollTop0: number; timer: number; active: boolean; raf: number; grab?: number; edge?: 'top' | 'bottom' | null; edgeAt?: number } | null>(null);
   const swallow = useRef(false);
 
   const prefRow = useStore((s) => s.prefs.rowScale);
   const rowAuto = useStore((s) => s.prefs.rowAuto);
   const [viewH, setViewH] = useState(200);
-  const lanes = lanesFor(clips);
+  const [ext, setExt] = useState({ hi: 0, lo: 0 });
+  const lanes = lanesFor(clips, ext);
   // auto: every lane that is shown fits the height of the timeline (between half and double the normal height)
   const autoScale = Math.min(2, Math.max(0.5, ((viewH - RULER - 6) / lanes.length - GAP) / ROW0));
   const rowScale = rowAuto ? autoScale : prefRow;
@@ -339,11 +341,21 @@ export function Timeline() {
     const raw = s.at0 + (s.x - s.x0 + (el.scrollLeft - s.scroll0)) / k;
     const sn = snap(s.i, raw, clipDuration(clip));
     const at = sn.at;
-    const baseRow = ln.indexOf(s.track0);
-    const top = Math.max(RULER, Math.min(h - ROW - 4, RULER + baseRow * (ROW + GAP) + (s.y - s.y0) + (el.scrollTop - s.scrollTop0)));
+    // the strip follows the finger; held on the free lane at the top or bottom edge, more lanes open one by one
+    const fingerY = s.y - r.top + el.scrollTop;
+    const top = Math.max(RULER, Math.min(h - ROW - 4, fingerY - (s.grab ?? 0.5) * ROW));
     let row = Math.round((top - RULER) / (ROW + GAP));
     row = Math.max(0, Math.min(ln.length - 1, row));
     const track = ln[row]!;
+    const zone = row === 0 ? 'top' : row === ln.length - 1 ? 'bottom' : null;
+    const now = performance.now();
+    if (zone !== s.edge) (s.edge = zone), (s.edgeAt = now);
+    else if (zone && now - (s.edgeAt ?? now) > 420) {
+      s.edgeAt = now;
+      setExt((x) => (zone === 'top' ? { ...x, hi: x.hi + 1 } : { ...x, lo: x.lo + 1 }));
+      // a new lane at the bottom comes into view by scrolling down to it
+      if (zone === 'bottom') requestAnimationFrame(() => requestAnimationFrame(() => (el.scrollTop = el.scrollHeight)));
+    }
     setMove({ index: s.i, at, track, top, guide: sn.guide });
     s.raf = requestAnimationFrame(frame);
   };
@@ -354,6 +366,7 @@ export function Timeline() {
     clearTimeout(s.timer);
     cancelAnimationFrame(s.raf);
     st.current = null;
+    setExt({ hi: 0, lo: 0 });
     if (s.active) {
       swallow.current = true;
       setTimeout(() => (swallow.current = false), 0);
@@ -373,7 +386,7 @@ export function Timeline() {
     const clip = clips[i];
     if (!el || !clip) return;
     const target = e.currentTarget as HTMLElement;
-    const s = { id: e.pointerId, i, x0: e.clientX, y0: e.clientY, x: e.clientX, y: e.clientY, at0: clip.at, track0: clip.track, scroll0: el.scrollLeft, scrollTop0: el.scrollTop, timer: 0, active: false, raf: 0 };
+    const s: NonNullable<typeof st.current> = { id: e.pointerId, i, x0: e.clientX, y0: e.clientY, x: e.clientX, y: e.clientY, at0: clip.at, track0: clip.track, scroll0: el.scrollLeft, scrollTop0: el.scrollTop, timer: 0, active: false, raf: 0 };
     st.current = s;
     s.timer = window.setTimeout(() => {
       s.active = true;
@@ -394,6 +407,7 @@ export function Timeline() {
         /* not supported */
       }
       const row = live.current.lanes.indexOf(clip.track);
+      s.grab = (s.y0 - el.getBoundingClientRect().top + el.scrollTop - rowTop(row)) / ROW;
       setMove({ index: i, at: clip.at, track: clip.track, top: rowTop(row), guide: null });
       s.raf = requestAnimationFrame(frame);
     }, HOLD_MS);

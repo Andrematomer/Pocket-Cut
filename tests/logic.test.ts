@@ -382,3 +382,35 @@ test('removeGap: a gap that starts at an odd time never bounces the next strip t
     assert.ok(Math.abs(out.find((c) => c.id === 'b')!.at - end) < 1e-3);
   }
 });
+
+test('tapTarget: one quarter, a half, or the whole canvas; a one-pixel touch does not count', async () => {
+  const { tapTarget } = await import('../src/geometry.ts');
+  const W = 1000;
+  const H = 600;
+  assert.deepEqual(tapTarget({ x: 520, y: 20, w: 300, h: 200 }, W, H), { x: 500, y: 0, w: 500, h: 300 });
+  assert.deepEqual(tapTarget({ x: 520, y: 20, w: 300, h: 500 }, W, H), { x: 500, y: 0, w: 500, h: 600 });
+  assert.deepEqual(tapTarget({ x: 100, y: 100, w: 800, h: 400 }, W, H), { x: 0, y: 0, w: W, h: H });
+  // exactly one quarter plus one pixel into the next: still that quarter
+  assert.deepEqual(tapTarget({ x: 0, y: 0, w: 501, h: 300 }, W, H), { x: 0, y: 0, w: 500, h: 300 });
+  // diagonal pair: whole canvas
+  assert.deepEqual(tapTarget({ x: 400, y: 200, w: 200, h: 200 }, W, H), { x: 0, y: 0, w: W, h: H });
+});
+
+test('fitSegment: fit, then fill and crop to exactly the rectangle, then back to fit', async () => {
+  const { fitSegment, shownBox } = await import('../src/geometry.ts');
+  const W = 1000;
+  const H = 600;
+  const T = { x: 500, y: 0, w: 500, h: 300 };
+  const v = { x: 0.3, y: -0.2, zoom: 0.4, rot: 0 };
+  const a = fitSegment(v, undefined, undefined, 400, 400, W, H, T);
+  assert.equal(a.mode, 'Fit');
+  const ba = shownBox(a.view, a.crop, 400, 400, W, H);
+  assert.ok(Math.abs(ba.h - 300) < 0.5 && ba.x >= 500 - 0.5 && ba.x + ba.w <= 1000 + 0.5);
+  const b = fitSegment(a.view, a.crop, undefined, 400, 400, W, H, T);
+  assert.equal(b.mode, 'Fill');
+  const bb = shownBox(b.view, b.crop, 400, 400, W, H);
+  assert.ok(Math.abs(bb.x - 500) < 0.5 && Math.abs(bb.y) < 0.5 && Math.abs(bb.w - 500) < 0.5 && Math.abs(bb.h - 300) < 0.5, JSON.stringify(bb));
+  const c = fitSegment(b.view, b.crop, undefined, 400, 400, W, H, T);
+  assert.equal(c.mode, 'Fit');
+  assert.equal(c.crop, undefined);
+});

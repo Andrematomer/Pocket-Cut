@@ -162,6 +162,8 @@ export interface Snap {
   zoom: 'fit' | 'fill' | null;
   /** a side of the picture sits exactly on a side of the frame */
   edge: boolean;
+  /** which sides of the frame the picture's sides sit on */
+  edges: { l: boolean; r: boolean; t: boolean; b: boolean };
 }
 
 export interface SnapEnv {
@@ -181,7 +183,7 @@ export interface SnapEnv {
 export function snapView(raw: View, e: SnapEnv): Snap {
   let { x, y, zoom, rot } = raw;
   rot = normAngle(rot);
-  const out: Snap = { view: raw, x: false, y: false, rot: null, zoom: null, edge: false };
+  const out: Snap = { view: raw, x: false, y: false, rot: null, zoom: null, edge: false, edges: { l: false, r: false, t: false, b: false } };
   const q = Math.round(rot / 90) * 90;
   if (Math.abs(rot - q) <= (e.rotDeg ?? 4)) {
     rot = q === 180 ? 180 : q === -180 ? 180 : q;
@@ -202,12 +204,12 @@ export function snapView(raw: View, e: SnapEnv): Snap {
   const hw = (bz.w * sc) / 2;
   const hh = (bz.h * sc) / 2;
   if (!out.x) {
-    if (Math.abs(x * e.W - hw + e.W / 2) <= cp) (x = (hw - e.W / 2) / e.W), (out.edge = true);
-    else if (Math.abs(x * e.W + hw - e.W / 2) <= cp) (x = (e.W / 2 - hw) / e.W), (out.edge = true);
+    if (Math.abs(x * e.W - hw + e.W / 2) <= cp) (x = (hw - e.W / 2) / e.W), (out.edge = true), (out.edges.l = true);
+    else if (Math.abs(x * e.W + hw - e.W / 2) <= cp) (x = (e.W / 2 - hw) / e.W), (out.edge = true), (out.edges.r = true);
   }
   if (!out.y) {
-    if (Math.abs(y * e.H - hh + e.H / 2) <= cp) (y = (hh - e.H / 2) / e.H), (out.edge = true);
-    else if (Math.abs(y * e.H + hh - e.H / 2) <= cp) (y = (e.H / 2 - hh) / e.H), (out.edge = true);
+    if (Math.abs(y * e.H - hh + e.H / 2) <= cp) (y = (hh - e.H / 2) / e.H), (out.edge = true), (out.edges.t = true);
+    else if (Math.abs(y * e.H + hh - e.H / 2) <= cp) (y = (e.H / 2 - hh) / e.H), (out.edge = true), (out.edges.b = true);
   }
   out.view = { x, y, zoom, rot };
   return out;
@@ -317,4 +319,155 @@ export function snapEightCropped(v: View, crop: Crop | undefined, sw: number, sh
   const zoom = s.zoom * k;
   const o2 = shift(zoom, s.rot);
   return { x: s.x - o2.x / W, y: s.y - o2.y / H, zoom, rot: s.rot };
+}
+
+
+/**
+ * snapView for a picture with margins (a crop, or the empty space around the letters of a text): the magnets
+ * work on the part that is really there, so the letters snap to the middle and the sides of the frame, not their margins.
+ */
+export function snapViewCropped(raw: View, e: SnapEnv, crop?: Crop): Snap {
+  const l = crop?.l ?? 0;
+  const t = crop?.t ?? 0;
+  const r = crop?.r ?? 0;
+  const b = crop?.b ?? 0;
+  if (!l && !t && !r && !b) return snapView(raw, e);
+  const cw = e.sw * (1 - l - r);
+  const ch = e.sh * (1 - t - b);
+  const k = baseScale(cw, ch, e.W, e.H) / baseScale(e.sw, e.sh, e.W, e.H);
+  const shift = (zoom: number, rot: number) => {
+    const sc = baseScale(e.sw, e.sh, e.W, e.H) * zoom;
+    const lx = ((l - r) / 2) * e.sw * sc;
+    const ly = ((t - b) / 2) * e.sh * sc;
+    const a = rot * RAD;
+    return { x: lx * Math.cos(a) - ly * Math.sin(a), y: lx * Math.sin(a) + ly * Math.cos(a) };
+  };
+  const o = shift(raw.zoom, raw.rot);
+  const cur: View = { x: raw.x + o.x / e.W, y: raw.y + o.y / e.H, zoom: raw.zoom / k, rot: raw.rot };
+  const s = snapView(cur, { ...e, sw: cw, sh: ch });
+  const zoom = s.view.zoom * k;
+  const o2 = shift(zoom, s.view.rot);
+  return { ...s, view: { x: s.view.x - o2.x / e.W, y: s.view.y - o2.y / e.H, zoom, rot: s.view.rot } };
+}
+
+export interface Rect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+/** Bounding box (canvas units) of the part of a picture that shows: its view, with the crop applied. */
+export function shownBox(v: View, crop: Crop | undefined, sw: number, sh: number, W: number, H: number): Rect {
+  const l = crop?.l ?? 0;
+  const t = crop?.t ?? 0;
+  const r = crop?.r ?? 0;
+  const b = crop?.b ?? 0;
+  const sc = baseScale(sw, sh, W, H) * v.zoom;
+  const pw = sw * sc;
+  const ph = sh * sc;
+  const a = v.rot * RAD;
+  const cx = W / 2 + v.x * W;
+  const cy = H / 2 + v.y * H;
+  let x0 = Infinity;
+  let y0 = Infinity;
+  let x1 = -Infinity;
+  let y1 = -Infinity;
+  for (const [lx, ly] of [
+    [-pw / 2 + l * pw, -ph / 2 + t * ph],
+    [pw / 2 - r * pw, -ph / 2 + t * ph],
+    [pw / 2 - r * pw, ph / 2 - b * ph],
+    [-pw / 2 + l * pw, ph / 2 - b * ph],
+  ] as [number, number][]) {
+    const px = cx + lx * Math.cos(a) - ly * Math.sin(a);
+    const py = cy + lx * Math.sin(a) + ly * Math.cos(a);
+    x0 = Math.min(x0, px);
+    x1 = Math.max(x1, px);
+    y0 = Math.min(y0, py);
+    y1 = Math.max(y1, py);
+  }
+  return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+}
+
+/**
+ * Which part of the canvas a double-tap aims at. The canvas is cut into four equal rectangles; the ones the shown
+ * picture really covers (more than a sliver, so a one-pixel touch does not count) decide: one rectangle is the
+ * target, two next to each other make a half, and anything else (three, four, a diagonal pair, none) is the whole canvas.
+ */
+export function tapTarget(box: Rect, W: number, H: number): Rect {
+  const hw = W / 2;
+  const hh = H / 2;
+  const eps = Math.max(1.5, 0.02 * Math.min(hw, hh));
+  const hit = [0, 1, 2, 3].map((q) => {
+    const qx = (q % 2) * hw;
+    const qy = Math.floor(q / 2) * hh;
+    return Math.min(box.x + box.w, qx + hw) - Math.max(box.x, qx) > eps && Math.min(box.y + box.h, qy + hh) - Math.max(box.y, qy) > eps;
+  });
+  const n = hit.filter(Boolean).length;
+  const whole = { x: 0, y: 0, w: W, h: H };
+  if (n === 1) {
+    const q = hit.indexOf(true);
+    return { x: (q % 2) * hw, y: Math.floor(q / 2) * hh, w: hw, h: hh };
+  }
+  if (n === 2) {
+    if (hit[0] && hit[1]) return { x: 0, y: 0, w: W, h: hh };
+    if (hit[2] && hit[3]) return { x: 0, y: hh, w: W, h: hh };
+    if (hit[0] && hit[2]) return { x: 0, y: 0, w: hw, h: H };
+    if (hit[1] && hit[3]) return { x: hw, y: 0, w: hw, h: H };
+  }
+  return whole;
+}
+
+/**
+ * Double-tap on a picture that aims at part of the canvas: first it fits the shown part into that rectangle,
+ * then it fills the rectangle and crops what sticks out, so it is exactly the size of the rectangle; a third tap
+ * un-crops and fits again. The picture is turned to the nearest quarter turn first (a crop can only follow the picture's own sides).
+ */
+export function fitSegment(v: View, crop: Crop | undefined, base: Crop | undefined, sw: number, sh: number, W: number, H: number, T: Rect): { view: View; crop: Crop | undefined; mode: 'Fit' | 'Fill' } {
+  const q = ((Math.round(normAngle(v.rot) / 90) % 4) + 4) % 4;
+  const rot = q * 90;
+  const odd = q % 2 === 1;
+  const place = (zoom: number, c: Crop | undefined): View => {
+    const l = c?.l ?? 0;
+    const t = c?.t ?? 0;
+    const r = c?.r ?? 0;
+    const b = c?.b ?? 0;
+    const sc = baseScale(sw, sh, W, H) * zoom;
+    const lx = ((l - r) / 2) * sw * sc;
+    const ly = ((t - b) / 2) * sh * sc;
+    const a = rot * RAD;
+    const ox = lx * Math.cos(a) - ly * Math.sin(a);
+    const oy = lx * Math.sin(a) + ly * Math.cos(a);
+    return { x: (T.x + T.w / 2 - ox - W / 2) / W, y: (T.y + T.h / 2 - oy - H / 2) / H, zoom, rot };
+  };
+  const keptAt = (zoom: number, c: Crop | undefined) => {
+    const sc = baseScale(sw, sh, W, H) * zoom;
+    const kw = sw * (1 - (c?.l ?? 0) - (c?.r ?? 0)) * sc;
+    const kh = sh * (1 - (c?.t ?? 0) - (c?.b ?? 0)) * sc;
+    return odd ? { w: kh, h: kw } : { w: kw, h: kh };
+  };
+  const cur = shownBox(v, crop, sw, sh, W, H);
+  const tol = 0.01 * Math.max(T.w, T.h) + 0.5;
+  const centered = Math.abs(cur.x + cur.w / 2 - (T.x + T.w / 2)) < tol && Math.abs(cur.y + cur.h / 2 - (T.y + T.h / 2)) < tol;
+  const exact = centered && Math.abs(cur.w - T.w) < tol && Math.abs(cur.h - T.h) < tol;
+  const fitted = centered && cur.w <= T.w + tol && cur.h <= T.h + tol && (Math.abs(cur.w - T.w) < tol || Math.abs(cur.h - T.h) < tol);
+  const fitTo = (c: Crop | undefined) => {
+    const k = keptAt(1, c);
+    const zoom = Math.min(T.w / k.w, T.h / k.h);
+    return { view: place(zoom, c), crop: c, mode: 'Fit' as const };
+  };
+  const same = (a?: Crop, b?: Crop) => (a?.l ?? 0) === (b?.l ?? 0) && (a?.t ?? 0) === (b?.t ?? 0) && (a?.r ?? 0) === (b?.r ?? 0) && (a?.b ?? 0) === (b?.b ?? 0);
+  if (exact && !same(crop, base)) return fitTo(base); // cropped to the rectangle: undo the crop and fit again
+  if (!fitted || exact) return fitTo(crop);
+  // fitted: grow to cover the rectangle and cut off what sticks out
+  const k = keptAt(1, crop);
+  const zoom = Math.max(T.w / k.w, T.h / k.h);
+  const kz = keptAt(zoom, crop);
+  const sc = baseScale(sw, sh, W, H) * zoom;
+  const overX = Math.max(0, (kz.w - T.w) / 2); // canvas units off each side, left and right
+  const overY = Math.max(0, (kz.h - T.h) / 2);
+  const dl = (odd ? overY : overX) / sc / sw; // as a share of the picture's own width
+  const dt = (odd ? overX : overY) / sc / sh;
+  const c: Crop = { l: (crop?.l ?? 0) + dl, r: (crop?.r ?? 0) + dl, t: (crop?.t ?? 0) + dt, b: (crop?.b ?? 0) + dt };
+  return { view: place(zoom, c), crop: c, mode: 'Fill' };
 }
