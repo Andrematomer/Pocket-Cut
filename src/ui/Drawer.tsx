@@ -157,6 +157,9 @@ export function Drawer() {
   const clip = useStore((s) => s.project.clips[s.selected]);
   const media = useStore((s) => (s.project.clips[s.selected] ? s.project.media[s.project.clips[s.selected]!.mediaId] : undefined));
   const close = () => set({ drawer: null });
+  // the outline slider follows the finger at once; the picture catches up and may lag behind, but the thumb never replays old positions
+  const [ow, setOw] = useState<number | null>(null);
+  const owSeq = useRef(0);
   const each = (fn: (i: number) => void) => (targets().length > 1 ? targets() : [index]).forEach(fn);
   // the panel stays for a moment after it is closed, so it can slide out
   const [last, setLast] = useState<Tool | null>(null);
@@ -218,7 +221,7 @@ export function Drawer() {
   const opacity = Math.round((clip.opacity ?? 1) * 100);
   const textColor = media.textColor ?? '#ffffff';
   const outlineColor = media.textOutline ?? autoOutline(textColor);
-  const outlineWidth = media.textWidth ?? 14;
+  const outlineWidth = ow ?? media.textWidth ?? 14;
 
   const row = (label: string, value: string, reset: () => void, slider: preact.JSX.Element) => (
     <div class="drow">
@@ -237,7 +240,6 @@ export function Drawer() {
 
   return (
     <>
-      {tool && <div class="drawer-scrim" onPointerDown={close} />}
       <div class={`drawer ${leaving ? 'out' : ''}`} role="region" aria-label={`${tab} options`}>
         <div class={sw.cls}>
         <div class="drawer-head">
@@ -274,7 +276,14 @@ export function Drawer() {
 
         {tab === 'outline' && (
           <section>
-            {row('Thickness', `${outlineWidth}`, () => each((i) => void editText(i, { width: 14 })), <Slider label="Outline thickness" value={outlineWidth} min={0} max={40} step={1} fineStep={0.5} snaps={[0, 14]} snapPx={10} valueText={`${outlineWidth}`} onChange={(v) => each((i) => void editText(i, { width: Math.round(v) }))} />)}
+            {row('Thickness', `${outlineWidth}`, () => each((i) => void editText(i, { width: 14 })), <Slider label="Outline thickness" value={outlineWidth} min={0} max={40} step={1} fineStep={0.5} snaps={[0, 14]} snapPx={10} valueText={`${outlineWidth}`} onChange={(v) => {
+              const w = Math.round(v);
+              const my = ++owSeq.current;
+              setOw(w);
+              void Promise.all(
+                (targets().length > 1 ? targets() : [index]).map((i) => editText(i, { width: w })),
+              ).then(() => owSeq.current === my && setOw(null));
+            }} />)}
             <ColorRow label="Outline color" value={outlineColor} onPick={(c) => each((i) => void editText(i, { outline: c }))} />
           </section>
         )}

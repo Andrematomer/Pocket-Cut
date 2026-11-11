@@ -26,9 +26,6 @@ export function CanvasSheet({ onClose }: { onClose: () => void }) {
       <Fold title="Background color" hint={<>Tap the color to open your system's color picker. The color shows wherever no picture covers the canvas, in the preview and in the export.</>}>
         <ColorRow label="Background color" value={bg} onPick={(c) => setSettings({ background: c })} />
       </Fold>
-      <button class="cta" onClick={onClose}>
-        Done
-      </button>
     </Sheet>
   );
 }

@@ -118,11 +118,26 @@ export function App() {
       if (el?.closest?.('.tl-gap')) return;
       set({ gap: null });
     };
+    // a tool that is open (a sheet or a drawer) is put away by a touch anywhere outside it, and that same touch
+    // goes on to whatever is underneath: nothing sits in front of the app, so a swipe on the timeline still grabs it
+    const putAway = (e: PointerEvent) => {
+      const st = getState();
+      if (st.sheet === 'none' && !st.drawer) return;
+      const el = e.target as Element | null;
+      if (el?.closest?.('.sheet, .drawer, .tabbar, .toast, .lock-veil, header.top')) return;
+      if (st.sheet !== 'none') {
+        if (st.exporting) return; // an export that is running is never cancelled by a stray touch
+        set({ sheet: 'none' });
+      }
+      if (st.drawer) set({ drawer: null });
+    };
     window.addEventListener('click', tap);
     window.addEventListener('pointerdown', letGo, true);
+    window.addEventListener('pointerdown', putAway, true);
     return () => {
       window.removeEventListener('click', tap);
       window.removeEventListener('pointerdown', letGo, true);
+      window.removeEventListener('pointerdown', putAway, true);
     };
   }, []);
 
@@ -137,10 +152,10 @@ export function App() {
       {!hasClips && (
         <header class="top">
           <span class="title plain">Pocket Cut</span>
-          <button class="icon" onClick={() => set({ sheet: 'help' })} aria-label="How it works">
+          <button class="icon" onClick={() => set({ sheet: getState().sheet === 'help' ? 'none' : 'help' })} aria-label="How it works">
             <Help />
           </button>
-          <button class="icon" onClick={() => set({ sheet: 'settings' })} aria-label="Settings">
+          <button class="icon" onClick={() => set({ sheet: getState().sheet === 'settings' ? 'none' : 'settings' })} aria-label="Settings">
             <Gear />
           </button>
         </header>

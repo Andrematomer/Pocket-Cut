@@ -2103,17 +2103,49 @@ label.cta {
 .toast {
   z-index: 70;
 }
-/* a button that is touched grows for a moment, so a slow response (iOS color picker) still feels registered */
-.tap {
-  animation: tap-pop 0.3s ease-out;
+/* button feedback, the chunky way: a solid edge under the button, and a press pushes the button down onto it.
+   Letting go springs it back up with a small overshoot. Uses `translate` so it never fights a button's own transform. */
+button:not(:disabled) {
+  transition: translate 0.24s cubic-bezier(0.34, 1.7, 0.64, 1), box-shadow 0.24s cubic-bezier(0.34, 1.7, 0.64, 1);
 }
-@keyframes tap-pop {
-  35% {
-    scale: 1.1;
+button:not(:disabled):active {
+  translate: 0 2px;
+  transition-duration: 0.04s;
+}
+.cta,
+.btn,
+.play,
+.tl-add,
+.tl-btn {
+  box-shadow: 0 3px 0 rgba(0, 0, 0, 0.42);
+}
+.cta:not(:disabled):active,
+.btn:not(:disabled):active,
+.play:not(:disabled):active,
+.tl-add:not(:disabled):active,
+.tl-btn:not(:disabled):active {
+  translate: 0 3px;
+  box-shadow: 0 0 0 rgba(0, 0, 0, 0.42);
+}
+/* a button whose answer is slow (iOS color picker) still gets the same press, run once */
+.tap {
+  animation: tap-press 0.36s ease-out;
+}
+@keyframes tap-press {
+  0% {
+    translate: 0 0;
+  }
+  18% {
+    translate: 0 3px;
+  }
+  100% {
+    translate: 0 0;
   }
 }
 @media (prefers-reduced-motion: reduce) {
+  button,
   .tap {
+    transition: none !important;
     animation: none;
   }
 }
@@ -2676,4 +2708,17 @@ button.tl-time {
   inset: 0;
   z-index: 90;
   background: transparent;
+}
+
+/* sheets and drawers sit over the app without blocking it: touches outside them reach what is underneath */
+.scrim {
+  background: none;
+  pointer-events: none;
+}
+.scrim .sheet {
+  pointer-events: auto;
+  box-shadow: 0 -6px 24px rgba(0, 0, 0, 0.35);
+}
+.drawer-scrim {
+  display: none;
 }

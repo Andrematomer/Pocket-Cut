@@ -457,9 +457,19 @@ export async function addTextClip(): Promise<void> {
 }
 
 /** Changes the text, color, font or outline of a text clip. The picture is drawn again; its size on the canvas stays. */
-export function editText(index: number, patch: Partial<TextStyle> & { text?: string }): Promise<void> {
+const pendingText = new Map<string, Partial<TextStyle> & { text?: string }>();
+export function editText(index: number, patchIn: Partial<TextStyle> & { text?: string }): Promise<void> {
+  const target = state.project.clips[index];
+  if (!target) return chain;
+  // while a redraw is queued or running, newer changes are merged into one waiting job: dragging a slider
+  // quickly draws the picture for the last position, not once for every position on the way
+  const waiting = pendingText.has(target.id);
+  pendingText.set(target.id, { ...pendingText.get(target.id), ...patchIn });
+  if (waiting) return chain;
   chain = chain.then(async () => {
-    const c = state.project.clips[index];
+    const patch = pendingText.get(target.id) ?? patchIn;
+    pendingText.delete(target.id);
+    const c = state.project.clips.find((x) => x.id === target.id);
     const m = c && state.project.media[c.mediaId];
     if (!c || !m || m.text === undefined) return;
     const st: TextStyle = { color: m.textColor ?? '#ffffff', font: m.textFont ?? 'sans', outline: m.textOutline ?? autoOutline(m.textColor ?? '#ffffff'), width: m.textWidth ?? 14, ...patch };

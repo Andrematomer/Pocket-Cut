@@ -691,7 +691,7 @@ export function Timeline() {
               const lo = Math.max(bl, v0);
               const hi = Math.min(bl + bw, v0 + viewW);
               const mid = hi > lo ? (lo + hi) / 2 - bl : bw / 2;
-              const trashX = Math.max(20, Math.min(Math.max(20, bw - 20), mid));
+              const trashX = bw <= 40 ? bw / 2 : Math.max(20, Math.min(bw - 20, mid)); // a box narrower than the bin holds it dead centre
               return (
               <div class={`tl-gap ${gap.lane ? 'lane' : ''}`} style={{ left: `${padL + gap.from * pps}px`, width: `${(gap.to - gap.from) * pps}px`, top: `${rowTop(gapRow)}px`, height: `${ROW}px` }} onClick={gap.lane ? () => removeLane() : undefined}>
                 <button class="gap-trash" style={{ left: `${trashX}px` }} aria-label={gap.lane ? `Remove empty lane ${gap.track}` : `Remove the ${fmtTime(gap.to - gap.from)} gap`} onClick={(e) => (gap.lane ? (e.stopPropagation(), removeLane()) : removeGap())}>

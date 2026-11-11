@@ -440,35 +440,85 @@ function Gestures({ boxW, boxH }: { boxW: number; boxH: number }) {
     }
   };
   /** snaps to the closest of the eight tidy placements (quarter turn x fit/fill); again flips fit/fill */
-  const doubleTap = () => {
+  /** several strips picked: the whole composition (the box around all of them) is fitted into the canvas or made to fill it, as one piece */
+  const doubleTapGroup = (members: number[]) => {
     const st = getState();
     const { boxW: W, boxH: H } = sizes.current;
-    const members = groupMembers();
-    const idx = members.length > 1 ? members : [st.selected];
-    const entries: [number, View][] = [];
-    let badgeText = '';
-    for (const i of idx) {
-      const clip = st.project.clips[i];
-      const media = clip && st.project.media[clip.mediaId];
-      if (!clip || !media || media.kind === 'audio') continue;
-      // the box a person sees hugs the letters of a text, so fit and fill use that box, not the whole picture with its margins
-      const inset = media.textBox;
-      const sc = clip.crop;
-      const crop = media.solid !== undefined || !inset ? sc : { l: Math.max(sc?.l ?? 0, inset.l), t: Math.max(sc?.t ?? 0, inset.t), r: Math.max(sc?.r ?? 0, inset.r), b: Math.max(sc?.b ?? 0, inset.b) };
-      const v = clampView(snapEightCropped(clip.view, crop, media.width, media.height, W, H), { sw: media.width, sh: media.height, W, H });
-      entries.push([i, v]);
-      if (!badgeText) {
-        const cw = media.width * (1 - (crop?.l ?? 0) - (crop?.r ?? 0));
-        const ch = media.height * (1 - (crop?.t ?? 0) - (crop?.b ?? 0));
-        const k = baseScale(cw, ch, W, H) / baseScale(media.width, media.height, W, H);
-        const fit = fitZoom(cw, ch, v.rot, W, H) * k;
-        badgeText = Math.abs(v.zoom - fit) / fit < 0.02 ? 'Fit' : 'Fill';
+    let x0 = Infinity;
+    let y0 = Infinity;
+    let x1 = -Infinity;
+    let y1 = -Infinity;
+    const info: { i: number; v: View }[] = [];
+    for (const i of members) {
+      const clip = st.project.clips[i]!;
+      const m = st.project.media[clip.mediaId]!;
+      const v = clip.view;
+      const inset = m.textBox;
+      const cr = clip.crop;
+      const crop = m.solid !== undefined || !inset ? (cr ?? { l: 0, t: 0, r: 0, b: 0 }) : { l: Math.max(cr?.l ?? 0, inset.l), t: Math.max(cr?.t ?? 0, inset.t), r: Math.max(cr?.r ?? 0, inset.r), b: Math.max(cr?.b ?? 0, inset.b) };
+      const sc = baseScale(m.width, m.height, W, H) * v.zoom;
+      const pw = m.width * sc;
+      const ph = m.height * sc;
+      const a = (v.rot * Math.PI) / 180;
+      const cx = W / 2 + v.x * W;
+      const cy = H / 2 + v.y * H;
+      for (const [lx, ly] of [
+        [-pw / 2 + crop.l * pw, -ph / 2 + crop.t * ph],
+        [pw / 2 - crop.r * pw, -ph / 2 + crop.t * ph],
+        [pw / 2 - crop.r * pw, ph / 2 - crop.b * ph],
+        [-pw / 2 + crop.l * pw, ph / 2 - crop.b * ph],
+      ] as [number, number][]) {
+        const px = cx + lx * Math.cos(a) - ly * Math.sin(a);
+        const py = cy + lx * Math.sin(a) + ly * Math.cos(a);
+        x0 = Math.min(x0, px);
+        x1 = Math.max(x1, px);
+        y0 = Math.min(y0, py);
+        y1 = Math.max(y1, py);
       }
+      info.push({ i, v });
     }
-    if (!entries.length) return;
-    if (entries.length === 1) updateClip(entries[0]![0], { view: entries[0]![1] });
-    else setViews(entries);
-    showBadge(badgeText);
+    const w = x1 - x0;
+    const h = y1 - y0;
+    if (!(w > 1) || !(h > 1)) return;
+    const sFit = Math.min(W / w, H / h);
+    const sFill = Math.max(W / w, H / h);
+    const near = (a: number) => Math.abs(a - 1) < 0.02;
+    // already fitted: fill. Anything else: fit
+    const fitted = near(sFit) && Math.abs(x0 + w / 2 - W / 2) < 2 && Math.abs(y0 + h / 2 - H / 2) < 2;
+    const s = fitted && sFill / sFit > 1.02 ? sFill : sFit;
+    const ux = x0 + w / 2;
+    const uy = y0 + h / 2;
+    const out: [number, View][] = info.map(({ i, v }) => {
+      const cx = W / 2 + v.x * W;
+      const cy = H / 2 + v.y * H;
+      const nx = W / 2 + s * (cx - ux);
+      const ny = H / 2 + s * (cy - uy);
+      return [i, { ...v, x: (nx - W / 2) / W, y: (ny - H / 2) / H, zoom: v.zoom * s }];
+    });
+    setViews(out);
+    showBadge(s === sFit ? 'Fit' : 'Fill');
+    window.setTimeout(() => !fine.current && showBadge(''), 700);
+  };
+  const doubleTap = () => {
+    const members = groupMembers();
+    if (members.length > 1) return doubleTapGroup(members);
+    const st = getState();
+    const { boxW: W, boxH: H } = sizes.current;
+    const i = st.selected;
+    const clip = st.project.clips[i];
+    const media = clip && st.project.media[clip.mediaId];
+    if (!clip || !media || media.kind === 'audio') return;
+    // the box a person sees hugs the letters of a text, so fit and fill use that box, not the whole picture with its margins
+    const inset = media.textBox;
+    const sc = clip.crop;
+    const crop = media.solid !== undefined || !inset ? sc : { l: Math.max(sc?.l ?? 0, inset.l), t: Math.max(sc?.t ?? 0, inset.t), r: Math.max(sc?.r ?? 0, inset.r), b: Math.max(sc?.b ?? 0, inset.b) };
+    const v = clampView(snapEightCropped(clip.view, crop, media.width, media.height, W, H), { sw: media.width, sh: media.height, W, H });
+    updateClip(i, { view: v });
+    const cw = media.width * (1 - (crop?.l ?? 0) - (crop?.r ?? 0));
+    const ch = media.height * (1 - (crop?.t ?? 0) - (crop?.b ?? 0));
+    const k = baseScale(cw, ch, W, H) / baseScale(media.width, media.height, W, H);
+    const fit = fitZoom(cw, ch, v.rot, W, H) * k;
+    showBadge(Math.abs(v.zoom - fit) / fit < 0.02 ? 'Fit' : 'Fill');
     window.setTimeout(() => !fine.current && showBadge(''), 700);
   };
   const wheel = (e: WheelEvent) => {

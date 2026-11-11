@@ -21,8 +21,10 @@ export function Fold({ title, hint, children }: { title: string; hint: Component
 }
 
 /** A heading whose whole content folds open and shut. */
-export function Collapse({ title, children }: { title: string; children: ComponentChildren }) {
-  const [open, setOpen] = useState(false);
+export function Collapse({ title, children, open: ctl, onToggle }: { title: string; children: ComponentChildren; open?: boolean; onToggle?: () => void }) {
+  const [own, setOwn] = useState(false);
+  const open = ctl ?? own;
+  const setOpen = (_: boolean) => (onToggle ? onToggle() : setOwn(!own));
   return (
     <div class="collapse">
       <button class="fold-title big" aria-expanded={open} onClick={() => setOpen(!open)}>
