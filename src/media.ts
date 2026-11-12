@@ -13,6 +13,8 @@ interface Entry {
   proxy: Blob | null;
   proxyUrl: string;
   bitmap: ImageBitmap | null;
+  /** a smaller copy of a big picture for the preview (the export uses the full one) */
+  preview: ImageBitmap | null;
 }
 const entries = new Map<string, Entry>();
 
@@ -28,8 +30,22 @@ export function registerMedia(id: string, blob: Blob, thumb: Blob | null, extra:
     proxy,
     proxyUrl: proxy ? URL.createObjectURL(proxy) : '',
     bitmap: extra.bitmap ?? null,
+    preview: null,
   });
+  // a phone photo is 12 megapixels: drawing that every frame is what makes playback stutter, so the preview gets a smaller copy
+  const bmp = extra.bitmap;
+  if (bmp && Math.max(bmp.width, bmp.height) > PREVIEW_PX) {
+    const k = PREVIEW_PX / Math.max(bmp.width, bmp.height);
+    void createImageBitmap(bmp, { resizeWidth: Math.max(1, Math.round(bmp.width * k)), resizeHeight: Math.max(1, Math.round(bmp.height * k)), resizeQuality: 'high' })
+      .then((small) => {
+        const e = entries.get(id);
+        if (e && e.bitmap === bmp) e.preview = small;
+        else small.close();
+      })
+      .catch(() => undefined);
+  }
 }
+const PREVIEW_PX = 1280;
 
 /** Attaches the small preview copy once it has been made. Returns false if the clip was removed meanwhile. */
 export function setProxy(id: string, proxy: Blob): boolean {
@@ -50,11 +66,13 @@ export function clearProxy(id: string): boolean {
   return true;
 }
 export const mediaEntry = (id: string): Entry | undefined => entries.get(id);
+export const mediaPreviewBitmap = (id: string): ImageBitmap | undefined => entries.get(id)?.preview ?? entries.get(id)?.bitmap ?? undefined;
 export const mediaBitmap = (id: string): ImageBitmap | undefined => entries.get(id)?.bitmap ?? undefined;
 
 export function dropMedia(id: string): void {
   const e = entries.get(id);
   if (!e) return;
+  e.preview?.close();
   URL.revokeObjectURL(e.url);
   if (e.proxyUrl) URL.revokeObjectURL(e.proxyUrl);
   e.bitmap?.close();

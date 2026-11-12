@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { IDENTITY_VIEW, baseScale, clampView, snapEightCropped, dragView, fillZoom, fitZoom, frameTransform, nearestAspect, snapEight, normAngle, outputSize, pinchView, quarterTurned, snapView } from '../src/geometry.ts';
 import { gradePixel } from '../src/layers.ts';
-import { clipEnd, activeAt, endOfTrack, freeTrack, gapAt, laneRemovable, optimizeLanes, removeGap, removeLane, resolveOverlaps, settleAt, planParts, sourceAt, totalOf } from '../src/timeline.ts';
+import { overwriteOverlaps, clipEnd, activeAt, endOfTrack, freeTrack, gapAt, laneRemovable, optimizeLanes, removeGap, removeLane, resolveOverlaps, settleAt, planParts, sourceAt, totalOf } from '../src/timeline.ts';
 import { resample, timeStretch } from '../src/stretch.ts';
 import { MAX_MBPS, MIN_MBPS, RATE_STOPS, autoBitrate, estimateBytes, fmtMbps, videoBitrate } from '../src/bitrate.ts';
 import { emptyProject, type Clip } from '../src/types.ts';
@@ -383,17 +383,17 @@ test('removeGap: a gap that starts at an odd time never bounces the next strip t
   }
 });
 
-test('tapTarget: one quarter, a half, or the whole canvas; a one-pixel touch does not count', async () => {
-  const { tapTarget } = await import('../src/geometry.ts');
-  const W = 1000;
+test('tapCell: the 3x3 grid picks the whole canvas, a half or a quarter', async () => {
+  const { tapCell } = await import('../src/geometry.ts');
+  const W = 900;
   const H = 600;
-  assert.deepEqual(tapTarget({ x: 520, y: 20, w: 300, h: 200 }, W, H), { x: 500, y: 0, w: 500, h: 300 });
-  assert.deepEqual(tapTarget({ x: 520, y: 20, w: 300, h: 500 }, W, H), { x: 500, y: 0, w: 500, h: 600 });
-  assert.deepEqual(tapTarget({ x: 100, y: 100, w: 800, h: 400 }, W, H), { x: 0, y: 0, w: W, h: H });
-  // exactly one quarter plus one pixel into the next: still that quarter
-  assert.deepEqual(tapTarget({ x: 0, y: 0, w: 501, h: 300 }, W, H), { x: 0, y: 0, w: 500, h: 300 });
-  // diagonal pair: whole canvas
-  assert.deepEqual(tapTarget({ x: 400, y: 200, w: 200, h: 200 }, W, H), { x: 0, y: 0, w: W, h: H });
+  assert.deepEqual(tapCell(450, 300, W, H), { x: 0, y: 0, w: W, h: H }); // 5
+  assert.deepEqual(tapCell(800, 300, W, H), { x: 450, y: 0, w: 450, h: H }); // 6: right half
+  assert.deepEqual(tapCell(100, 300, W, H), { x: 0, y: 0, w: 450, h: H }); // 4: left half
+  assert.deepEqual(tapCell(450, 20, W, H), { x: 0, y: 0, w: W, h: 300 }); // 2: top half
+  assert.deepEqual(tapCell(450, 590, W, H), { x: 0, y: 300, w: W, h: 300 }); // 8: bottom half
+  assert.deepEqual(tapCell(20, 590, W, H), { x: 0, y: 300, w: 450, h: 300 }); // 7: bottom left quarter
+  assert.deepEqual(tapCell(880, 10, W, H), { x: 450, y: 0, w: 450, h: 300 }); // 3: top right quarter
 });
 
 test('fitSegment: fit, then fill and crop to exactly the rectangle, then back to fit', async () => {
@@ -413,4 +413,26 @@ test('fitSegment: fit, then fill and crop to exactly the rectangle, then back to
   const c = fitSegment(b.view, b.crop, undefined, 400, 400, W, H, T);
   assert.equal(c.mode, 'Fit');
   assert.equal(c.crop, undefined);
+});
+
+test('overwriteOverlaps: a dropped strip trims, splits or removes what is under it', () => {
+  let n = 0;
+  const id = () => `n${++n}`;
+  const under = mk('u', 0, 10, 0);
+  // covers the end
+  let out = overwriteOverlaps([under, mk('m', 8, 5, 0)], ['m'], id);
+  assert.equal(out.length, 2);
+  assert.ok(Math.abs(clipEnd(out.find((c) => c.id === 'u')!) - 8) < 1e-6);
+  // covers the start
+  out = overwriteOverlaps([under, mk('m', -2, 5, 0)], ['m'], id);
+  const u = out.find((c) => c.id === 'u')!;
+  assert.ok(Math.abs(u.at - 3) < 1e-6 && Math.abs(u.start - 3) < 1e-6 && Math.abs(clipEnd(u) - 10) < 1e-6);
+  // in the middle: cut in two
+  out = overwriteOverlaps([under, mk('m', 4, 2, 0)], ['m'], id);
+  assert.equal(out.length, 3);
+  const parts = out.filter((c) => c.id !== 'm').sort((a, b) => a.at - b.at);
+  assert.ok(Math.abs(clipEnd(parts[0]!) - 4) < 1e-6 && Math.abs(parts[1]!.at - 6) < 1e-6 && Math.abs(parts[1]!.start - 6) < 1e-6 && Math.abs(clipEnd(parts[1]!) - 10) < 1e-6);
+  // covered completely: gone; other lanes untouched
+  out = overwriteOverlaps([under, mk('o', 0, 10, 1), mk('m', -1, 12, 0)], ['m'], id);
+  assert.deepEqual(out.map((c) => c.id).sort(), ['m', 'o']);
 });

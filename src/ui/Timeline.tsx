@@ -340,7 +340,7 @@ export function Timeline() {
     if (vy) el.scrollTop += vy;
     const raw = s.at0 + (s.x - s.x0 + (el.scrollLeft - s.scroll0)) / k;
     const sn = snap(s.i, raw, clipDuration(clip));
-    const at = sn.at;
+    let at = sn.at;
     // the strip follows the finger; held on the free lane at the top or bottom edge, more lanes open one by one
     const fingerY = s.y - r.top + el.scrollTop;
     const top = Math.max(RULER, Math.min(h - ROW - 4, fingerY - (s.grab ?? 0.5) * ROW));
@@ -591,7 +591,7 @@ export function Timeline() {
   return (
     <div class={`tl ${move ? 'dragging' : ''}`}>
       <div class="tl-bar" onPointerDown={barDown} onPointerMove={barMove} onPointerUp={barUp} onPointerCancel={barUp}>
-        <button class="play" onClick={() => (playing ? engine.pause() : void engine.play())} aria-label={playing ? 'Pause' : 'Play'}>
+        <button class="play" onClick={() => (playing ? engine.pause() : (deselect(), void engine.play()))} aria-label={playing ? 'Pause' : 'Play'}>
           {playing ? <Pause /> : <Play />}
         </button>
         <div class="tl-left">

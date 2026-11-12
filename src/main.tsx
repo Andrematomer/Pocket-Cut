@@ -1,3 +1,4 @@
+import { startPills } from './pill.ts';
 import { Component, render, type ComponentChildren } from 'preact';
 import './styles.css';
 import { toast } from './store.ts';
@@ -59,6 +60,7 @@ window.addEventListener(
   },
   true,
 );
+startPills();
 document.addEventListener('animationend', (e) => (e.target as Element).classList?.remove('tap'), true);
 
 render(

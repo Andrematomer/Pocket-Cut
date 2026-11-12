@@ -171,6 +171,42 @@ export function resolveOverlaps(clips: Clip[], ids: string[]): Clip[] {
 }
 
 /**
+ * Dropping strips onto other strips (dragging only) cuts the strips underneath instead of pushing anything aside:
+ * the part that is covered is trimmed away, a strip that is covered completely disappears, and a strip with a
+ * dropped one in its middle is cut in two.
+ */
+export function overwriteOverlaps(clips: Clip[], ids: string[], mkId: () => string): Clip[] {
+  const eps = 1e-6;
+  const moved = clips.filter((c) => ids.includes(c.id));
+  const out: Clip[] = [];
+  for (const o0 of clips) {
+    if (ids.includes(o0.id)) {
+      out.push(o0);
+      continue;
+    }
+    // pieces of this strip that survive, cut by every dropped strip on its lane in turn
+    let pieces: Clip[] = [o0];
+    for (const m of moved) {
+      if (m.track !== o0.track) continue;
+      const next: Clip[] = [];
+      for (const o of pieces) {
+        const mEnd = clipEnd(m);
+        const oEnd = clipEnd(o);
+        if (!(m.at < oEnd - eps && o.at < mEnd - eps)) {
+          next.push(o);
+          continue;
+        }
+        if (m.at > o.at + eps) next.push({ ...o, end: o.start + (m.at - o.at) * o.speed }); // what is left before the dropped strip
+        if (mEnd < oEnd - eps) next.push({ ...o, id: m.at > o.at + eps ? mkId() : o.id, at: mEnd, start: o.start + (mEnd - o.at) * o.speed }); // what is left after it
+      }
+      pieces = next;
+    }
+    for (const p of pieces) if ((p.end - p.start) / p.speed >= 0.05) out.push(p);
+  }
+  return out;
+}
+
+/**
  * The track a clip can sit on at its place: the wanted one if nothing is there, otherwise the next one
  * further out (up from 0, down below 0). `others` must not contain the clip itself.
  */

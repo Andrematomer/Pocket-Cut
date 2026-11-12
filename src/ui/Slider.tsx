@@ -92,11 +92,11 @@ export function Slider(p: SliderProps) {
     if (!d || e.pointerId !== d.id) return;
     d.last = e.clientX;
     if (d.fine) return void emit(pick(d.anchorF + ((e.clientX - d.anchorX) / width()) * FINE, true));
-    // moving restarts the hold timer, so holding still anywhere along the way gives fine control
+    // dragging ends the chance of fine control: it only starts from a hold on the thumb
     if (Math.abs(e.clientX - d.armX) > JITTER) {
       d.armX = e.clientX;
       d.wobbled = true;
-      arm(d);
+      clearTimeout(d.timer);
     }
     if (d.wobbled) emit(pick(fracAt(e.clientX) + d.offset, false));
   };

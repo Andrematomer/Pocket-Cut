@@ -6,7 +6,7 @@ import { setAwakeMode } from './wake.ts';
 import { computePeaks } from './wave.ts';
 import { onProxyProgress, onProxyWork, queueProxy, requeueAllProxies, setProxyOrder } from './proxy.ts';
 import { clearSaved, loadSaved, requestPersistence, saveMedia, saveProject } from './persist.ts';
-import { activeAt, clipDuration, clipEnd, endOfTrack, freeTrack, laneRemovable, optimizeLanes, removeLane as removeLaneFrom, resolveOverlaps, settleAt, MAX_SPEED, MIN_CLIP, MIN_SPEED, removeGap as removeGapFrom, totalOf, type Gap } from './timeline.ts';
+import { activeAt, clipDuration, clipEnd, endOfTrack, overwriteOverlaps, freeTrack, laneRemovable, optimizeLanes, removeLane as removeLaneFrom, resolveOverlaps, settleAt, MAX_SPEED, MIN_CLIP, MIN_SPEED, removeGap as removeGapFrom, totalOf, type Gap } from './timeline.ts';
 import { DEFAULT_SETTINGS, emptyProject, type Clip, type ExportSettings, type MediaInfo, type Project, type View } from './types.ts';
 
 export type Tool = 'speed' | 'sound' | 'look' | 'effects' | 'clip' | 'text' | 'color' | 'font' | 'outline';
@@ -315,7 +315,10 @@ export function moveClipTo(index: number, at: number, track: number): void {
   const next = { at: flush ?? when, track };
   if (next.at === c.at && next.track === c.track) return;
   // dropped on another strip: this one goes to the next lane out, and whatever it lands on is pushed out in turn
-  edit((p) => ({ ...p, clips: resolveOverlaps(p.clips.map((x, i) => (i === index ? { ...x, ...next } : x)), [c.id]) }), { key: `move:${index}` });
+  // dropped on another strip: the strip underneath is trimmed (dragging cuts, it does not push)
+  edit((p) => ({ ...p, clips: overwriteOverlaps(p.clips.map((x, i) => (i === index ? { ...x, ...next } : x)), [c.id], newId) }), { key: `move:${index}` });
+  const ni = state.project.clips.findIndex((x) => x.id === c.id);
+  if (ni !== index && ni >= 0) set({ selected: ni }); // strips that were covered are gone: the index moved
 }
 
 export function deselect(): void {
@@ -336,8 +339,11 @@ export function moveMulti(index: number, at: number, track: number): void {
   edit((p) => {
     const order = [...group].sort((a, b) => Math.abs(a.track) - Math.abs(b.track) || a.at - b.at).map((c) => c.id);
     const moved = p.clips.map((c) => (ids.includes(c.id) ? { ...c, at: Math.max(0, Math.round((c.at + dAt) * 100) / 100), track: c.track + dTrack } : c));
-    return { ...p, clips: resolveOverlaps(moved, order) };
+    void order;
+    return { ...p, clips: overwriteOverlaps(moved, ids, newId) };
   }, { key: 'move:multi' });
+  const ni = state.project.clips.findIndex((x) => x.id === lead.id);
+  if (ni >= 0 && ni !== state.selected) set({ selected: ni });
 }
 
 /** Selects a clip and brings the position marker into it, so it shows in the preview. */

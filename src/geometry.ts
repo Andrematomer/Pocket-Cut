@@ -173,7 +173,7 @@ export interface SnapEnv {
   H: number;
   /** px (canvas units) within which the center snaps */
   centerPx?: number;
-  /** degrees within which rotation snaps to a multiple of 90 */
+  /** degrees within which rotation snaps to a multiple of 45 */
   rotDeg?: number;
   /** relative distance within which zoom snaps to fit or fill */
   zoomRel?: number;
@@ -184,7 +184,7 @@ export function snapView(raw: View, e: SnapEnv): Snap {
   let { x, y, zoom, rot } = raw;
   rot = normAngle(rot);
   const out: Snap = { view: raw, x: false, y: false, rot: null, zoom: null, edge: false, edges: { l: false, r: false, t: false, b: false } };
-  const q = Math.round(rot / 90) * 90;
+  const q = Math.round(rot / 45) * 45;
   if (Math.abs(rot - q) <= (e.rotDeg ?? 4)) {
     rot = q === 180 ? 180 : q === -180 ? 180 : q;
     out.rot = normAngle(q);
@@ -390,32 +390,18 @@ export function shownBox(v: View, crop: Crop | undefined, sw: number, sh: number
 }
 
 /**
- * Which part of the canvas a double-tap aims at. The canvas is cut into four equal rectangles; the ones the shown
- * picture really covers (more than a sliver, so a one-pixel touch does not count) decide: one rectangle is the
- * target, two next to each other make a half, and anything else (three, four, a diagonal pair, none) is the whole canvas.
+ * Which part of the canvas a double-tap aims at. The canvas is cut into a 3x3 grid, numbered 1 to 9 from the top left
+ * (1 2 3 / 4 5 6 / 7 8 9) and the cell that was tapped decides: the middle (5) is the whole canvas, the middle of a side
+ * (2, 4, 6, 8) is that half, and a corner (1, 3, 7, 9) is that quarter.
  */
-export function tapTarget(box: Rect, W: number, H: number): Rect {
-  const hw = W / 2;
-  const hh = H / 2;
-  const eps = Math.max(1.5, 0.02 * Math.min(hw, hh));
-  const hit = [0, 1, 2, 3].map((q) => {
-    const qx = (q % 2) * hw;
-    const qy = Math.floor(q / 2) * hh;
-    return Math.min(box.x + box.w, qx + hw) - Math.max(box.x, qx) > eps && Math.min(box.y + box.h, qy + hh) - Math.max(box.y, qy) > eps;
-  });
-  const n = hit.filter(Boolean).length;
-  const whole = { x: 0, y: 0, w: W, h: H };
-  if (n === 1) {
-    const q = hit.indexOf(true);
-    return { x: (q % 2) * hw, y: Math.floor(q / 2) * hh, w: hw, h: hh };
-  }
-  if (n === 2) {
-    if (hit[0] && hit[1]) return { x: 0, y: 0, w: W, h: hh };
-    if (hit[2] && hit[3]) return { x: 0, y: hh, w: W, h: hh };
-    if (hit[0] && hit[2]) return { x: 0, y: 0, w: hw, h: H };
-    if (hit[1] && hit[3]) return { x: hw, y: 0, w: hw, h: H };
-  }
-  return whole;
+export function tapCell(px: number, py: number, W: number, H: number): Rect {
+  const col = Math.max(0, Math.min(2, Math.floor((px / W) * 3)));
+  const row = Math.max(0, Math.min(2, Math.floor((py / H) * 3)));
+  const x = col === 0 ? 0 : col === 2 ? W / 2 : 0;
+  const y = row === 0 ? 0 : row === 2 ? H / 2 : 0;
+  const w = col === 1 ? W : W / 2;
+  const h = row === 1 ? H : H / 2;
+  return { x, y, w, h };
 }
 
 /**

@@ -2103,33 +2103,19 @@ label.cta {
 .toast {
   z-index: 70;
 }
-/* button feedback, the chunky way (no animation at all): at rest a button shows its face with a darker lip of its own
-   colour underneath. While touched the face sits down on the lip, so the lip is gone; letting go shows the lip again. */
-button:not(:disabled):active {
-  translate: 0 2px;
-}
-.cta,
-.btn,
-.play,
-.tl-add,
-.tl-btn {
-  --lip: color-mix(in srgb, var(--raised) 45%, #000);
-  box-shadow: 0 3px 0 var(--lip);
-}
-.cta {
-  --lip: color-mix(in srgb, var(--accent) 58%, #000);
-}
-.cta:not(:disabled):active,
-.btn:not(:disabled):active,
-.play:not(:disabled):active,
-.tl-add:not(:disabled):active,
-.tl-btn:not(:disabled):active {
-  translate: 0 3px;
-  box-shadow: 0 0 0 var(--lip);
-}
-/* a button whose answer is slow (iOS color picker) shows the pressed face for a moment */
+/* a button that is touched grows for a moment, so a slow response (iOS color picker) still feels registered */
 .tap {
-  translate: 0 3px;
+  animation: tap-pop 0.3s ease-out;
+}
+@keyframes tap-pop {
+  35% {
+    scale: 1.1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tap {
+    animation: none;
+  }
 }
 .drop-hint {
   position: fixed;
@@ -2728,4 +2714,48 @@ button.tl-time {
 }
 .guide.edge-b {
   bottom: 0;
+}
+
+/* segmented values: one yellow piece that slides to the picked value (see pill.ts) */
+.seg,
+.sheet .chips {
+  position: relative;
+}
+.seg::before,
+.sheet .chips::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: var(--pw, 0px);
+  height: var(--ph, 0px);
+  transform: translate(var(--px, 0px), var(--py, 0px));
+  border-radius: var(--pr, 10px);
+  background: var(--accent);
+  opacity: 0;
+  pointer-events: none;
+}
+.seg.pill::before,
+.sheet .chips.pill::before {
+  opacity: 1;
+}
+.seg.pill-ready::before,
+.sheet .chips.pill-ready::before {
+  transition: transform 0.34s cubic-bezier(0.3, 1.35, 0.4, 1), width 0.34s cubic-bezier(0.3, 1.35, 0.4, 1), height 0.34s cubic-bezier(0.3, 1.35, 0.4, 1);
+}
+.seg > button,
+.sheet .chips > .chip {
+  position: relative;
+  z-index: 1;
+}
+.seg.pill > button.on,
+.sheet .chips.pill > .chip.on {
+  background: transparent;
+  color: var(--accent-ink);
+}
+@media (prefers-reduced-motion: reduce) {
+  .seg.pill-ready::before,
+  .sheet .chips.pill-ready::before {
+    transition: none;
+  }
 }

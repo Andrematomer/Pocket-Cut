@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { engine } from '../engine.ts';
-import { baseScale, clampView, fitSegment, shownBox, tapTarget, clampZoom, dragView, fitZoom, normAngle, outputSize, pinchView, snapEightCropped, snapView, snapViewCropped, type Pt } from '../geometry.ts';
-import { getState, selectClip, set, setCrop, setViews, updateClip, useStore } from '../store.ts';
+import { baseScale, clampView, fitSegment, shownBox, tapCell, clampZoom, dragView, fitZoom, normAngle, outputSize, pinchView, snapEightCropped, snapView, snapViewCropped, type Pt } from '../geometry.ts';
+import { deselect, getState, selectClip, set, setCrop, setViews, updateClip, useStore } from '../store.ts';
 import { localPoint } from '../turn.ts';
 import { activeAt, fmtTime, totalOf } from '../timeline.ts';
 import type { Crop, View } from '../types.ts';
@@ -142,7 +142,7 @@ function Gestures({ boxW, boxH }: { boxW: number; boxH: number }) {
   };
   const fine = useRef(false);
   const tap = useRef<{ t: number; x: number; y: number; moved: boolean; multi: boolean } | null>(null);
-  const lastTap = useRef<{ t: number; x: number; y: number } | null>(null);
+  const lastTap = useRef<{ t: number; x: number; y: number; prev: number } | null>(null);
   const timer = useRef(0);
   const cropTimer = useRef(0);
   const frame = useRef(0);
@@ -166,7 +166,7 @@ function Gestures({ boxW, boxH }: { boxW: number; boxH: number }) {
     guideH.current?.classList.toggle('on', !!s?.y);
     for (const k of ['l', 'r', 't', 'b'] as const) edgeEls.current[k]?.classList.toggle('on', !!s?.edges[k]);
     if (fine.current) return;
-    showBadge(s ? (s.zoom === 'fit' ? 'Fit' : s.zoom === 'fill' ? 'Fill' : s.rot !== null ? fmtDeg(s.rot) : s.edge ? 'Edge' : '') : '');
+    showBadge(s ? (s.zoom === 'fit' ? 'Fit' : s.zoom === 'fill' ? 'Fill' : s.rot !== null ? fmtDeg(s.rot) : '') : '');
   };
   const setFineLook = (on: boolean) => {
     fine.current = on;
@@ -189,6 +189,7 @@ function Gestures({ boxW, boxH }: { boxW: number; boxH: number }) {
   /** (re)starts the hold timer: still fingers for this long switch to fine control from where they are */
   const startTimer = () => {
     clearTimeout(timer.current);
+    if (tap.current?.moved) return; // once the finger has dragged, fine control is off for this touch
     arm.current = new Map(pts.current);
     timer.current = window.setTimeout(() => {
       if (pts.current.size === 0 || fine.current) return;
@@ -271,6 +272,34 @@ function Gestures({ boxW, boxH }: { boxW: number; boxH: number }) {
     const p = localPoint(r, cx, cy);
     return { x: p.x - sizes.current.boxW / 2, y: p.y - sizes.current.boxH / 2 };
   };
+  /** a tap on the picture selects the top-most strip under the finger (a drag never changes the selection) */
+  const pickAt = (cx: number, cy: number) => {
+    const st0 = getState();
+    if (st0.multi.length > 0) return;
+    const visible = activeAt(st0.project.clips, st0.playhead);
+    const q = relClient(cx, cy);
+    const { boxW: W, boxH: H } = sizes.current;
+    for (const i of [...visible].reverse()) {
+      const c = st0.project.clips[i]!;
+      const m = st0.project.media[c.mediaId];
+      if (!m || m.kind === 'audio') continue;
+      const inset = m.textBox ?? { l: 0, t: 0, r: 0, b: 0 };
+      const cr = c.crop ?? { l: 0, t: 0, r: 0, b: 0 };
+      const k = m.solid !== undefined ? cr : { l: Math.max(cr.l, inset.l), t: Math.max(cr.t, inset.t), r: Math.max(cr.r, inset.r), b: Math.max(cr.b, inset.b) };
+      const sc = baseScale(m.width, m.height, W, H) * c.view.zoom;
+      const a = (c.view.rot * Math.PI) / 180;
+      const dx = q.x - c.view.x * W;
+      const dy = q.y - c.view.y * H;
+      const lx = dx * Math.cos(a) + dy * Math.sin(a);
+      const ly = -dx * Math.sin(a) + dy * Math.cos(a);
+      const pw = m.width * sc;
+      const ph = m.height * sc;
+      if (lx >= -pw / 2 + k.l * pw && lx <= pw / 2 - k.r * pw && ly >= -ph / 2 + k.t * ph && ly <= ph / 2 - k.b * ph) {
+        if (i !== st0.selected) selectClip(i, { keepPlayhead: true });
+        return;
+      }
+    }
+  };
   const lastEv = useRef<Event | null>(null);
   const winMove = useRef(false);
   /** The transform box saw a second finger: both fingers now belong to the picture (pinch), wherever they landed. */
@@ -297,31 +326,6 @@ function Gestures({ boxW, boxH }: { boxW: number; boxH: number }) {
     // work on the clip that is on screen (playback may have moved on from the selected one)
     const st0 = getState();
     const visible = activeAt(st0.project.clips, st0.playhead);
-    // a finger put on the picture picks the top-most strip under it, whatever was selected before
-    if (pts.current.size === 0 && st0.multi.length === 0) {
-      const q = rel(e);
-      const { boxW: W, boxH: H } = sizes.current;
-      for (const i of [...visible].reverse()) {
-        const c = st0.project.clips[i]!;
-        const m = st0.project.media[c.mediaId];
-        if (!m || m.kind === 'audio') continue;
-        const inset = m.textBox ?? { l: 0, t: 0, r: 0, b: 0 };
-        const cr = c.crop ?? { l: 0, t: 0, r: 0, b: 0 };
-        const k = m.solid !== undefined ? cr : { l: Math.max(cr.l, inset.l), t: Math.max(cr.t, inset.t), r: Math.max(cr.r, inset.r), b: Math.max(cr.b, inset.b) };
-        const sc = baseScale(m.width, m.height, W, H) * c.view.zoom;
-        const a = (c.view.rot * Math.PI) / 180;
-        const dx = q.x - c.view.x * W;
-        const dy = q.y - c.view.y * H;
-        const lx = dx * Math.cos(a) + dy * Math.sin(a);
-        const ly = -dx * Math.sin(a) + dy * Math.cos(a);
-        const pw = m.width * sc;
-        const ph = m.height * sc;
-        if (lx >= -pw / 2 + k.l * pw && lx <= pw / 2 - k.r * pw && ly >= -ph / 2 + k.t * ph && ly <= ph / 2 - k.b * ph) {
-          if (i !== st0.selected) selectClip(i, { keepPlayhead: true });
-          break;
-        }
-      }
-    }
     if (!visible.includes(getState().selected)) {
       const shown = engine.currentIndex();
       if (shown >= 0) set({ selected: shown });
@@ -356,7 +360,7 @@ function Gestures({ boxW, boxH }: { boxW: number; boxH: number }) {
       // any finger moving more than a wobble restarts the hold timer
       for (const [id, p] of pts.current) {
         const q = arm.current.get(id);
-        if (!q || Math.hypot(p.x - q.x, p.y - q.y) > JITTER) return void (startTimer(), step(b, c));
+        if (!q || Math.hypot(p.x - q.x, p.y - q.y) > JITTER) return void (clearTimeout(timer.current), step(b, c));
       }
     }
     step(b, c);
@@ -380,13 +384,15 @@ function Gestures({ boxW, boxH }: { boxW: number; boxH: number }) {
       scale = Math.max(0.05, Math.hypot(b1.x - a1.x, b1.y - a1.y) / (Math.hypot(b.b.x - b.a.x, b.b.y - b.a.y) || 1));
       dr = Math.atan2(b1.y - a1.y, b1.x - a1.x) - Math.atan2(b.b.y - b.a.y, b.b.x - b.a.x);
     }
-    // a quarter turn is a magnet for the group too (not in fine mode)
+    // every 45 degrees is a magnet for the group too (not in fine mode), with the same capsule as for one picture
+    let snapped: number | null = null;
     if (b.b && !fine.current) {
       const r0 = members[0]!.v.rot;
       const target = r0 + (dr * 180) / Math.PI;
-      const q = Math.round(target / 90) * 90;
-      if (Math.abs(target - q) < 4) dr = ((q - r0) * Math.PI) / 180;
+      const q = Math.round(target / 45) * 45;
+      if (Math.abs(target - q) < 4) (dr = ((q - r0) * Math.PI) / 180), (snapped = normAngle(q));
     }
+    if (!fine.current) showBadge(snapped !== null ? fmtDeg(snapped) : '');
     const zs = members.map((m) => m.v.zoom);
     scale = Math.max(clampZoom(0) / Math.min(...zs), Math.min(scale, clampZoom(1e9) / Math.max(...zs)));
     const cos = Math.cos(dr);
@@ -431,7 +437,6 @@ function Gestures({ boxW, boxH }: { boxW: number; boxH: number }) {
     if (pts.current.size > 0) {
       // a finger lifted or was added: carry on from where the picture is now
       rebase();
-      startTimer();
       return;
     }
     const tp = tap.current;
@@ -442,15 +447,19 @@ function Gestures({ boxW, boxH }: { boxW: number; boxH: number }) {
       if (lt && tp.t - lt.t < 400 && Math.hypot(tp.x - lt.x, tp.y - lt.y) < 40) {
         lastTap.current = null;
         clearTimeout(cropTimer.current);
-        doubleTap();
+        // a double tap works on what was selected before it: the first touch of the pair must not have switched the selection
+        if (getState().selected !== lt.prev) (lt.prev >= 0 ? selectClip(lt.prev, { keepPlayhead: true }) : deselect());
+        doubleTap(lt.x, lt.y);
       } else {
-        lastTap.current = { t: tp.t, x: tp.x, y: tp.y };
+        const prev = getState().selected;
+        pickAt(tp.x, tp.y);
+        lastTap.current = { t: tp.t, x: tp.x, y: tp.y, prev };
       }
     }
   };
   /** snaps to the closest of the eight tidy placements (quarter turn x fit/fill); again flips fit/fill */
   /** several strips picked: the whole composition (the box around all of them) is fitted into the canvas or made to fill it, as one piece */
-  const doubleTapGroup = (members: number[]) => {
+  const doubleTapGroup = (members: number[], T: { x: number; y: number; w: number; h: number }) => {
     const st = getState();
     const { boxW: W, boxH: H } = sizes.current;
     let x0 = Infinity;
@@ -489,8 +498,7 @@ function Gestures({ boxW, boxH }: { boxW: number; boxH: number }) {
     const w = x1 - x0;
     const h = y1 - y0;
     if (!(w > 1) || !(h > 1)) return;
-    // as with one strip: the part of the canvas the group covers is where it fits (a quarter, a half or all of it)
-    const T = tapTarget({ x: x0, y: y0, w, h }, W, H);
+    // as with one strip: where the tap landed decides what the group fits into (a quarter, a half or all of the canvas)
     const sFit = Math.min(T.w / w, T.h / h);
     const sFill = Math.max(T.w / w, T.h / h);
     const tcx = T.x + T.w / 2;
@@ -510,11 +518,14 @@ function Gestures({ boxW, boxH }: { boxW: number; boxH: number }) {
     showBadge(s === sFit ? 'Fit' : 'Fill');
     window.setTimeout(() => !fine.current && showBadge(''), 700);
   };
-  const doubleTap = () => {
+  const doubleTap = (cx: number, cy: number) => {
     const members = groupMembers();
-    if (members.length > 1) return doubleTapGroup(members);
-    const st = getState();
     const { boxW: W, boxH: H } = sizes.current;
+    const q = relClient(cx, cy);
+    // where the tap landed (cell 1 to 9 of a 3x3 grid) is the part of the canvas the picture goes to
+    const target = tapCell(q.x + W / 2, q.y + H / 2, W, H);
+    if (members.length > 1) return doubleTapGroup(members, target);
+    const st = getState();
     const i = st.selected;
     const clip = st.project.clips[i];
     const media = clip && st.project.media[clip.mediaId];
@@ -523,8 +534,6 @@ function Gestures({ boxW, boxH }: { boxW: number; boxH: number }) {
     const inset = media.textBox;
     const sc = clip.crop;
     const crop = media.solid !== undefined || !inset ? sc : { l: Math.max(sc?.l ?? 0, inset.l), t: Math.max(sc?.t ?? 0, inset.t), r: Math.max(sc?.r ?? 0, inset.r), b: Math.max(sc?.b ?? 0, inset.b) };
-    // the part of the canvas the picture covers decides what it fits into: a quarter, a half, or the whole canvas
-    const target = tapTarget(shownBox(clip.view, crop, media.width, media.height, W, H), W, H);
     if (target.w < W - 0.5 || target.h < H - 0.5) {
       const base = media.solid === undefined ? media.textBox : undefined;
       const r = fitSegment(clip.view, crop, base, media.width, media.height, W, H, target);
@@ -574,6 +583,14 @@ function inkCrop(clip: Clip0, media: { textBox?: Crop; solid?: string }): Crop |
   return { l: Math.max(c?.l ?? 0, i.l), t: Math.max(c?.t ?? 0, i.t), r: Math.max(c?.r ?? 0, i.r), b: Math.max(c?.b ?? 0, i.b) };
 }
 
+/** the capsule on the preview while a handle is turned: the angle when it sits on a 45 degree step */
+function turnBadge(frame: HTMLElement | null | undefined, deg: number | null): void {
+  const b = frame?.querySelector('.gesture-badge');
+  if (!b || b.textContent === 'FINE') return;
+  b.textContent = deg === null ? '' : fmtDeg(deg);
+  b.classList.toggle('on', deg !== null);
+}
+
 type Handle = 'tl' | 'tr' | 'br' | 'bl' | 'l' | 't' | 'r' | 'b' | 'rot';
 
 /** fingers on the screen right now (any element), and whether one of them is on the transform box */
@@ -595,6 +612,19 @@ function TransformBox({ boxW: W, boxH: H }: { boxW: number; boxH: number }) {
   const media = useStore((s) => (s.project.clips[s.selected] ? s.project.media[s.project.clips[s.selected]!.mediaId] : undefined));
   const [drag, setDrag] = useState<{ view: View; crop: Crop } | null>(null);
   const [quiet, setQuiet] = useState(false);
+  // while fingers work on the picture the outline stays and follows it; only the handles step aside
+  const [liveV, setLiveV] = useState<View | null>(null);
+  useEffect(() => {
+    if (!quiet) return void setLiveV(null);
+    let raf = 0;
+    const tick = () => {
+      const l = engine.live;
+      setLiveV(l && l.index === getState().selected ? l.view : null);
+      raf = requestAnimationFrame(tick);
+    };
+    tick();
+    return () => cancelAnimationFrame(raf);
+  }, [quiet]);
   const st = useRef<{ id: number; h: Handle; p0: Pt; view0: View; crop0: Crop; last: Pt; anchor: Pt; fineRaw: Pt; fineEff: Pt; fine: boolean; timer: number; frame: HTMLElement | null } | null>(null);
 
   const endFine = () => {
@@ -603,7 +633,7 @@ function TransformBox({ boxW: W, boxH: H }: { boxW: number; boxH: number }) {
     clearTimeout(d.timer);
     d.frame?.classList.remove('fine');
     const b = d.frame?.querySelector('.gesture-badge');
-    if (b && b.textContent === 'FINE') (b.textContent = ''), b.classList.remove('on');
+    if (b && (b.textContent === 'FINE' || b.textContent?.endsWith('°'))) (b.textContent = ''), b.classList.remove('on');
   };
   const cancel = () => {
     if (!st.current) return;
@@ -657,8 +687,8 @@ function TransformBox({ boxW: W, boxH: H }: { boxW: number; boxH: number }) {
   // a different clip was selected: forget a drag in progress
   useEffect(cancel, [selected]);
 
-  if (!on || quiet || !clip || !media || media.kind === 'audio') return null;
-  const view = drag?.view ?? clip.view;
+  if (!on || !clip || !media || media.kind === 'audio') return null;
+  const view = drag?.view ?? (quiet ? liveV : null) ?? clip.view;
   // text: the box hugs the letters, so each side starts where the ink starts
   const inset: Crop = media.textBox ?? { l: 0, t: 0, r: 0, b: 0 };
   const stored: Crop = drag?.crop ?? clip.crop ?? { l: 0, t: 0, r: 0, b: 0 };
@@ -734,7 +764,7 @@ function TransformBox({ boxW: W, boxH: H }: { boxW: number; boxH: number }) {
     if (d.fine) return { x: d.fineEff.x + (raw.x - d.fineRaw.x) * 0.1, y: d.fineEff.y + (raw.y - d.fineRaw.y) * 0.1 };
     if (Math.hypot(raw.x - d.anchor.x, raw.y - d.anchor.y) > 10) {
       d.anchor = raw;
-      (d as { arm?: () => void }).arm?.();
+      clearTimeout(d.timer); // dragging ends the chance of fine control: it only starts from a hold
     }
     return raw;
   };
@@ -776,7 +806,9 @@ function TransformBox({ boxW: W, boxH: H }: { boxW: number; boxH: number }) {
       const ang = (p: Pt) => Math.atan2(p.y - Cc.y, p.x - Cc.x);
       let rot = v0.rot + ((ang(P) - ang(d.p0)) * 180) / Math.PI;
       const q = Math.round(rot / 45) * 45;
-      if (Math.abs(rot - q) < 3) rot = q; // a small magnet at every 45 degrees
+      const hit = Math.abs(rot - q) < 3;
+      if (hit) rot = q; // a small magnet at every 45 degrees
+      if (!d.fine) turnBadge(d.frame, hit ? normAngle(q) : null);
       const dr = ((rot - v0.rot) * Math.PI) / 180;
       const vx = C0.x - Cc.x;
       const vy = C0.y - Cc.y;
@@ -835,15 +867,15 @@ function TransformBox({ boxW: W, boxH: H }: { boxW: number; boxH: number }) {
         <polygon points={poly} />
         <line x1={at(xm, y0).x} y1={at(xm, y0).y} x2={pos.rot.x} y2={pos.rot.y} />
       </svg>
-      {handle('t', `side h ${stretch ? 'stretch' : ''}`)}
-      {handle('b', `side h ${stretch ? 'stretch' : ''}`)}
-      {handle('l', `side v ${stretch ? 'stretch' : ''}`)}
-      {handle('r', `side v ${stretch ? 'stretch' : ''}`)}
-      {handle('tl', 'corner')}
-      {handle('tr', 'corner')}
-      {handle('br', 'corner')}
-      {handle('bl', 'corner')}
-      {handle('rot', 'rotor')}
+      {!quiet && handle('t', `side h ${stretch ? 'stretch' : ''}`)}
+      {!quiet && handle('b', `side h ${stretch ? 'stretch' : ''}`)}
+      {!quiet && handle('l', `side v ${stretch ? 'stretch' : ''}`)}
+      {!quiet && handle('r', `side v ${stretch ? 'stretch' : ''}`)}
+      {!quiet && handle('tl', 'corner')}
+      {!quiet && handle('tr', 'corner')}
+      {!quiet && handle('br', 'corner')}
+      {!quiet && handle('bl', 'corner')}
+      {!quiet && handle('rot', 'rotor')}
     </>
   );
 }
@@ -894,7 +926,7 @@ function GroupBox({ boxW: W, boxH: H }: { boxW: number; boxH: number }) {
     clearTimeout(d.timer);
     d.frame?.classList.remove('fine');
     const b = d.frame?.querySelector('.gesture-badge');
-    if (b && b.textContent === 'FINE') (b.textContent = ''), b.classList.remove('on');
+    if (b && (b.textContent === 'FINE' || b.textContent?.endsWith('°'))) (b.textContent = ''), b.classList.remove('on');
   };
   const cancel = () => {
     if (!st.current) return;
@@ -979,7 +1011,7 @@ function GroupBox({ boxW: W, boxH: H }: { boxW: number; boxH: number }) {
     if (d.fine) return { x: d.fineEff.x + (raw.x - d.fineRaw.x) * 0.1, y: d.fineEff.y + (raw.y - d.fineRaw.y) * 0.1 };
     if (Math.hypot(raw.x - d.anchor.x, raw.y - d.anchor.y) > 10) {
       d.anchor = raw;
-      (d as { arm?: () => void }).arm?.();
+      clearTimeout(d.timer); // dragging ends the chance of fine control: it only starts from a hold
     }
     return raw;
   };
@@ -992,7 +1024,9 @@ function GroupBox({ boxW: W, boxH: H }: { boxW: number; boxH: number }) {
       const ang = (p: Pt) => Math.atan2(p.y - C.y, p.x - C.x);
       let deg = ((ang(P) - ang(d.p0)) * 180) / Math.PI;
       const q = Math.round(deg / 45) * 45;
-      if (Math.abs(deg - q) < 3) deg = q;
+      const hit = Math.abs(deg - q) < 3;
+      if (hit) deg = q;
+      if (!d.fine) turnBadge(d.frame, hit ? normAngle(q) : null);
       return { f: 1, dr: (deg * Math.PI) / 180, P: C };
     }
     const corner = (k: string): Pt => ({ x: k.includes('l') ? b.l : b.r, y: k.includes('t') ? b.t : b.b });
