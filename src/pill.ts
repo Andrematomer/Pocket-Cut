@@ -3,7 +3,7 @@
  * value you pick, with a little spring at the end. The buttons themselves stay plain; this only measures where the
  * selected one is and hands the numbers to the CSS (see `.pill::before`).
  */
-const SELECTOR = '.seg, .sheet .chips';
+const SELECTOR = '.seg, .sheet .chips, .tabbar';
 
 function place(c: HTMLElement): void {
   const on = c.querySelector(':scope > .on') as HTMLElement | null;

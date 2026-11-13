@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { keyOf } from '../bake.ts';
 import { engine } from '../engine.ts';
 import { thumbUrl } from '../media.ts';
+import { hold, release as releaseHud, say } from '../hud.ts';
 import { addSolid, addTextClip, deleteClip, deselect, duplicateClip, getState, moveClipTo, moveMulti, redo, removeGap, removeLane, selectClip, set, setMulti, splitAtPlayhead, toast, toggleMulti, undo, updateClip, useStore } from '../store.ts';
 import { PEAKS_PER_SEC } from '../wave.ts';
 import { MIN_CLIP, activeAt, clipDuration, clipEnd, fmtTime, gapAt, laneRemovable, totalOf } from '../timeline.ts';
@@ -71,6 +72,14 @@ export function Timeline() {
   const progress = useStore((s) => s.proxyProgress);
   const gap = useStore((s) => s.gap);
   const handles = useStore((s) => s.handles);
+  const fps = useStore((s) => s.project.settings.fps);
+  const [showFrames, setShowFrames] = useState(() => {
+    try {
+      return localStorage.getItem('wren:frames') === '1';
+    } catch {
+      return false;
+    }
+  });
   const multi = useStore((s) => s.multi);
   const waves = useStore((s) => s.waves);
   const bakes = useStore((s) => s.bakeProgress);
@@ -250,6 +259,7 @@ export function Timeline() {
         /* the pointer is gone */
       }
       setBox({ x0: b.x0, y0: b.y0, x1: b.x1, y1: b.y1 });
+      hold('Box select');
       b.raf = requestAnimationFrame(boxFrame);
     }, HOLD_MS);
   };
@@ -277,6 +287,7 @@ export function Timeline() {
     cancelAnimationFrame(b.raf);
     boxRef.current = null;
     if (!b.active) return;
+    releaseHud();
     setBox(null);
     swallow.current = true;
     setTimeout(() => (swallow.current = false), 0);
@@ -297,6 +308,11 @@ export function Timeline() {
     if (hits.length === 0) return;
     // a second box adds to what is already picked
     const ids = [...new Set([...(getState().multi.length ? getState().multi : []), ...hits.map((c) => c.id)])];
+    // a box that catches a single strip just picks it: multi-selection starts with two
+    if (ids.length === 1) {
+      const k1 = cs.findIndex((c) => c.id === ids[0]);
+      if (k1 >= 0) return selectClip(k1, { keepPlayhead: true });
+    }
     setMulti(ids);
   };
 
@@ -489,6 +505,7 @@ export function Timeline() {
     if (!t || e.pointerId !== t.id) return;
     t.cur = solveTrim(t, e.clientX - t.x0);
     setTrim(t.cur);
+    hold(`Trim ${fmtTime((t.cur.end - t.cur.start) / (live.current.clips[t.i]?.speed ?? 1), 2)}`);
     setTrimGuide(t.guide ?? null);
     engine.scrubSource(t.i, t.side === 'left' ? t.cur.start : Math.max(t.cur.start, t.cur.end - 0.05), false);
   };
@@ -496,6 +513,7 @@ export function Timeline() {
     const t = trimRef.current;
     if (!t || e.pointerId !== t.id) return;
     trimRef.current = null;
+    releaseHud();
     setTrim(null);
     setTrimGuide(null);
     const c = t.cur;
@@ -590,10 +608,11 @@ export function Timeline() {
   };
   /** Play deselects everything first; the layout settles for a couple of frames (the timeline would read that as a hand scroll and stop) and then it plays */
   const startStop = () => {
-    if (getState().playing) return engine.pause();
+    if (getState().playing) return say('Pause'), engine.pause();
     const g = getState();
     const needs = g.selected >= 0 || g.multi.length > 0 || !!g.gap || !!g.drawer;
-    if (!needs) return void engine.play();
+    say('Play');
+      if (!needs) return void engine.play();
     deselect();
     requestAnimationFrame(() => requestAnimationFrame(() => void engine.play()));
   };
@@ -769,7 +788,7 @@ export function Timeline() {
                     if (swallow.current) return;
                     engine.pause();
                     if (getState().multi.length > 0) toggleMulti(i);
-                    else if (on) set({ handles: !getState().handles });
+                    else if (on) (say(getState().handles ? 'Select mode' : 'Edit mode'), set({ handles: !getState().handles }));
                     else selectClip(i);
                   }}
                 >
@@ -806,15 +825,18 @@ export function Timeline() {
         <button
           class="tl-time num"
           style={{ left: `${padL}px` }}
-          aria-label="Select every strip under the yellow line"
+          aria-label={showFrames ? 'Show time as minutes and seconds' : 'Show time as frame number'}
           onClick={() => {
-            const ids = activeAt(clips, playhead).map((i) => clips[i]!.id);
-            if (ids.length === 0) return toast('No strip is under the yellow line.');
-            engine.pause();
-            setMulti(ids);
+            const v = !showFrames;
+            setShowFrames(v);
+            try {
+              localStorage.setItem('wren:frames', v ? '1' : '0');
+            } catch {
+              /* storage blocked */
+            }
           }}
         >
-          {fmtTime(playhead, 2)}
+          {showFrames ? Math.round(playhead * fps) : fmtTime(playhead, 2)}
         </button>
         <div class="tl-playhead" style={{ left: `${padL}px` }} />
       </div>

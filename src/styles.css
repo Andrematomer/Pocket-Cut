@@ -2769,3 +2769,42 @@ button.tl-time {
   background: color-mix(in srgb, var(--accent) 18%, transparent);
   border-radius: 3px;
 }
+
+/* picked strips glow in the preview too, like their strips in the timeline */
+.tbox.glow {
+  pointer-events: none;
+}
+.tbox.glow polygon {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 2px;
+  filter: drop-shadow(0 0 5px rgba(240, 198, 74, 0.9));
+}
+
+/* the bottom tabs: the same sliding piece, in the raised grey, under the picked tab */
+.tabbar::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: var(--pw, 0px);
+  height: var(--ph, 0px);
+  transform: translate(var(--px, 0px), var(--py, 0px));
+  border-radius: var(--pr, 10px);
+  background: var(--raised);
+  opacity: 0;
+  pointer-events: none;
+}
+.tabbar.pill::before {
+  opacity: 1;
+}
+.tabbar.pill-ready::before {
+  transition: transform 0.34s cubic-bezier(0.3, 1.35, 0.4, 1), width 0.34s cubic-bezier(0.3, 1.35, 0.4, 1), height 0.34s cubic-bezier(0.3, 1.35, 0.4, 1);
+}
+.tabbar > .tab {
+  position: relative;
+  z-index: 1;
+}
+.tabbar.pill > .tab.on {
+  background: transparent;
+}

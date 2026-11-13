@@ -1,3 +1,4 @@
+import { say } from './hud.ts';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { ASPECT_VALUE, IDENTITY_VIEW, baseScale, fillZoom, nearestAspect, normAngle, outputSize } from './geometry.ts';
 import { autoOutline, renderSolid, renderText } from './text.ts';
@@ -222,6 +223,7 @@ function restoreSnapshot(s: Snapshot): void {
 }
 
 export function undo(): void {
+  say('Undo');
   const s = past.pop();
   if (!s) return;
   future.push(snap(state.project));
@@ -229,6 +231,7 @@ export function undo(): void {
 }
 
 export function redo(): void {
+  say('Redo');
   const s = future.pop();
   if (!s) return;
   past.push(snap(state.project));
@@ -387,6 +390,7 @@ export function targets(): number[] {
 }
 
 export function duplicateClip(index: number): void {
+  say('Duplicate');
   const idx = state.multi.length > 0 ? targets() : [index];
   const picked = idx.map((i) => state.project.clips[i]).filter((c): c is Clip => !!c);
   if (picked.length === 0) return;
@@ -406,6 +410,7 @@ export function duplicateClip(index: number): void {
 
 /** Deletes the selected strip, or every strip of the multi-selection. What came after stays where it is. */
 export function deleteClip(index: number): void {
+  say('Delete');
   const ids = (state.multi.length > 0 ? targets() : [index]).map((i) => state.project.clips[i]?.id).filter((x): x is string => !!x);
   if (ids.length === 0) return;
   // the file stays in memory and storage while undo could still bring the clip back.
@@ -553,6 +558,7 @@ export function splitAtPlayhead(): boolean {
     cuts.set(id, cut);
   }
   if (cuts.size === 0) return false;
+  say('Split');
   let secondId = '';
   edit((p) => ({
     ...p,
@@ -758,6 +764,7 @@ setProxyOrder(() => {
 
 /** Closes the picked gap: later clips move earlier, and the ones that would collide hop to the next free lane. */
 export function removeGap(): void {
+  say('Gap removed');
   const g = state.gap;
   if (!g) return;
   const sel = state.project.clips[state.selected]?.id;
@@ -768,6 +775,7 @@ export function removeGap(): void {
 
 /** Takes the picked empty lane out of the stack (strips on the far side move one lane toward 0). */
 export function removeLane(): void {
+  say('Lane removed');
   const g = state.gap;
   if (!g || !g.lane) return;
   const sel = state.project.clips[state.selected]?.id;

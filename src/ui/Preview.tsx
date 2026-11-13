@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { engine } from '../engine.ts';
+import { hold, release as releaseHud, say } from '../hud.ts';
 import { baseScale, clampView, fitSegment, shownBox, tapCell, clampZoom, dragView, fitZoom, normAngle, outputSize, pinchView, snapEightCropped, snapView, snapViewCropped, type Pt } from '../geometry.ts';
 import { deselect, getState, selectClip, set, setCrop, setMulti, setViews, toggleMulti, updateClip, useStore } from '../store.ts';
 import { localPoint } from '../turn.ts';
@@ -160,8 +161,9 @@ function Gestures({ boxW, boxH }: { boxW: number; boxH: number }) {
   const showBadge = (text: string) => {
     const b = badge.current;
     if (!b) return;
-    b.textContent = text;
-    b.classList.toggle('on', !!text);
+    if (text) return say(text);
+    b.textContent = '';
+    b.classList.remove('on');
   };
   const guides = (s: ReturnType<typeof snapView> | null) => {
     guideV.current?.classList.toggle('on', !!s?.x);
@@ -354,15 +356,11 @@ function Gestures({ boxW, boxH }: { boxW: number; boxH: number }) {
       const c = st.project.clips[i]!;
       const m = st.project.media[c.mediaId];
       if (!m || m.kind === 'audio') continue;
-      const sc = baseScale(m.width, m.height, W, H) * c.view.zoom;
-      const a = (c.view.rot * Math.PI) / 180;
-      const hw = (m.width * sc) / 2;
-      const hh = (m.height * sc) / 2;
-      const ex = Math.abs(hw * Math.cos(a)) + Math.abs(hh * Math.sin(a));
-      const ey = Math.abs(hw * Math.sin(a)) + Math.abs(hh * Math.cos(a));
-      const cx = c.view.x * W;
-      const cy = c.view.y * H;
-      if (cx + ex >= bx0 && cx - ex <= bx1 && cy + ey >= by0 && cy - ey <= by1) out.push(c.id);
+      // what counts is the part that shows (cropped, letters only for a text), not the whole picture behind it
+      const r = shownBox(c.view, inkCrop(c, m), m.width, m.height, W, H);
+      const x0 = r.x - W / 2;
+      const y0 = r.y - H / 2;
+      if (x0 + r.w >= bx0 && x0 <= bx1 && y0 + r.h >= by0 && y0 <= by1) out.push(c.id);
     }
     return out;
   };
@@ -393,7 +391,7 @@ function Gestures({ boxW, boxH }: { boxW: number; boxH: number }) {
     const st0 = getState();
     const selBefore = st0.selected;
     const visible = activeAt(st0.project.clips, st0.playhead);
-    if (!visible.includes(getState().selected)) {
+    if (selBefore >= 0 && !visible.includes(getState().selected)) {
       const shown = engine.currentIndex();
       if (shown >= 0) set({ selected: shown });
     }
@@ -426,6 +424,7 @@ function Gestures({ boxW, boxH }: { boxW: number; boxH: number }) {
           if (tap.current) tap.current.multi = true; // this touch was a hold, not a tap
           const p = relClient(x, y);
           band.current = { a: p, b: p };
+          hold('Box select');
           holdFrom.current = selBefore;
           paintBand();
           try {
@@ -539,6 +538,7 @@ function Gestures({ boxW, boxH }: { boxW: number; boxH: number }) {
       return;
     }
     if (band.current) {
+      releaseHud();
       const bd = band.current;
       const small = Math.hypot(bd.a.x - bd.b.x, bd.a.y - bd.b.y) < 12;
       const ids = bandPick();
@@ -555,8 +555,18 @@ function Gestures({ boxW, boxH }: { boxW: number; boxH: number }) {
         void mid;
         const all = new Set(keep);
         if (hit >= 0) all.add(st.project.clips[hit]!.id);
-        if (all.size > 0) setMulti([...all]);
-      } else if (ids.length > 0) setMulti([...new Set([...keep, ...ids])]);
+        if (all.size === 1) {
+          const k1 = st.project.clips.findIndex((c) => c.id === [...all][0]);
+          if (k1 >= 0) selectClip(k1, { keepPlayhead: true });
+        } else if (all.size > 1) setMulti([...all]);
+      } else if (ids.length > 0) {
+        const all = [...new Set([...keep, ...ids])];
+        // one picture is just selected; picking several starts multi-selection
+        if (all.length === 1) {
+          const k1 = st.project.clips.findIndex((c) => c.id === all[0]);
+          if (k1 >= 0) selectClip(k1, { keepPlayhead: true });
+        } else setMulti(all);
+      }
       return;
     }
     const tp = tap.current;
@@ -1199,6 +1209,11 @@ function GroupBox({ boxW: W, boxH: H }: { boxW: number; boxH: number }) {
   void top;
   return (
     <>
+      <svg class="tbox glow" width={W} height={H} aria-hidden="true">
+        {members.map((i) => (
+          <polygon key={clips[i]!.id} points={quadOf(clips[i]!, mediaMap[clips[i]!.mediaId]!, W, H).map((p) => `${p.x},${p.y}`).join(' ')} />
+        ))}
+      </svg>
       <svg class="tbox group" width={W} height={H} aria-hidden="true">
         <polygon points={poly} />
         <line x1={topMid.x} y1={topMid.y} x2={pos('rot').x} y2={pos('rot').y} />

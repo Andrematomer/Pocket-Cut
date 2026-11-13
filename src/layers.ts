@@ -29,7 +29,7 @@ export function gradePixel(rgb: [number, number, number], g: Grade): [number, nu
 }
 
 const VERT = `attribute vec2 p;varying vec2 uv;void main(){uv=vec2(p.x*.5+.5,.5-p.y*.5);gl_Position=vec4(p,0.,1.);}`;
-const FRAG = `precision mediump float;varying vec2 uv;uniform sampler2D tex;uniform vec4 g;uniform vec4 e1;uniform vec4 e2;uniform vec2 px;uniform float rings;
+const FRAG = `precision mediump float;varying vec2 uv;uniform sampler2D tex;uniform vec4 g;uniform vec4 e1;uniform vec4 e2;uniform vec4 cr;uniform vec2 px;uniform float rings;
 const vec3 W=vec3(.2126,.7152,.0722);
 vec4 S(vec2 p){return texture2D(tex,p);}
 vec4 B(vec2 p,float r){vec4 s=S(p);float n=1.;vec2 k=vec2(1.,px.y/px.x);
@@ -51,7 +51,7 @@ r=(r-.5)*(1.+g.y)+.5;
 float y=dot(r,W);
 r=clamp(vec3(y)+(r-vec3(y))*(1.+g.z),0.,1.);
 if(e2.z!=0.){vec2 eo=vec2(.0022)*k;float sg=e2.z>0.?1.:-1.;float am=abs(e2.z);float emb=(dot(S(p-eo).rgb,W)-dot(S(p+eo).rgb,W))*sg;r=clamp(mix(r,vec3(.5),am*.55)+vec3(emb*am*3.),0.,1.);}
-if(e1.x!=0.){float m=smoothstep(.2,1.,distance(uv,vec2(.5))*1.4142)*abs(e1.x)*.95;r=e1.x>0.?r*(1.-m):mix(r,vec3(1.),m);}
+if(e1.x!=0.){vec2 vu=(uv-cr.xy)/max(vec2(1.-cr.x-cr.z,1.-cr.y-cr.w),vec2(.001));float m=smoothstep(.2,1.,distance(vu,vec2(.5))*1.4142)*abs(e1.x)*.95;r=e1.x>0.?r*(1.-m):mix(r,vec3(1.),m);}
 gl_FragColor=vec4(r*c.a,c.a);}`;
 
 interface Gl {
@@ -61,6 +61,7 @@ interface Gl {
   loc: WebGLUniformLocation;
   e1: WebGLUniformLocation;
   e2: WebGLUniformLocation;
+  cr: WebGLUniformLocation;
   px: WebGLUniformLocation;
   rings: WebGLUniformLocation;
 }
@@ -100,7 +101,7 @@ function setup(): Gl | null {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
     gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true);
-    shared = { canvas, gl, tex, loc: gl.getUniformLocation(prog, 'g')!, e1: gl.getUniformLocation(prog, 'e1')!, e2: gl.getUniformLocation(prog, 'e2')!, px: gl.getUniformLocation(prog, 'px')!, rings: gl.getUniformLocation(prog, 'rings')! };
+    shared = { canvas, gl, tex, loc: gl.getUniformLocation(prog, 'g')!, e1: gl.getUniformLocation(prog, 'e1')!, e2: gl.getUniformLocation(prog, 'e2')!, cr: gl.getUniformLocation(prog, 'cr')!, px: gl.getUniformLocation(prog, 'px')!, rings: gl.getUniformLocation(prog, 'rings')! };
   } catch {
     shared = null;
   }
@@ -110,7 +111,7 @@ function setup(): Gl | null {
 const MAX_SIDE = 3840;
 
 /** Runs the picture through the grading shader. Returns the shared graded canvas (use it at once), or null when WebGL is missing. */
-function grade(src: CanvasImageSource, w: number, h: number, g: Grade, fx: Fx, hq: boolean): { img: CanvasImageSource; w: number; h: number } | null {
+function grade(src: CanvasImageSource, w: number, h: number, g: Grade, fx: Fx, hq: boolean, crop?: Clip['crop']): { img: CanvasImageSource; w: number; h: number } | null {
   const s = setup();
   if (!s) return null;
   const k = Math.min(1, MAX_SIDE / Math.max(w, h));
@@ -128,6 +129,8 @@ function grade(src: CanvasImageSource, w: number, h: number, g: Grade, fx: Fx, h
     gl.uniform4f(s.loc, g.brightness, g.contrast, g.saturation, g.warmth);
     gl.uniform4f(s.e1, fx.vignette, fx.blur, 0, fx.sharpen);
     gl.uniform4f(s.e2, fx.pixelate, fx.chroma, fx.emboss, 0);
+    // the vignette is measured on the part that stays after cropping, so a crop never cuts it away
+    gl.uniform4f(s.cr, crop?.l ?? 0, crop?.t ?? 0, crop?.r ?? 0, crop?.b ?? 0);
     // the preview blurs with few samples to stay fast; the export uses 2x (light blur) to 4x (strong blur) as many
     gl.uniform1f(s.rings, hq ? Math.round(2 * (2 + 2 * fx.blur)) : 2);
     gl.uniform2f(s.px, 1 / gw, 1 / gh);
@@ -152,7 +155,7 @@ export function drawLayer(ctx: Ctx2D, src: CanvasImageSource, sw: number, sh: nu
   const opts: DrawOptions = { ...o, alpha: look.opacity ?? 1, crop: look.crop };
   // the shader runs only when a grade or an effect is set; effects at 0 cost nothing
   if (isGraded(look.grade) || isFx(look.fx)) {
-    const r = grade(src, sw, sh, look.grade ?? NO_GRADE, look.fx ?? NO_FX, !!look.hq);
+    const r = grade(src, sw, sh, look.grade ?? NO_GRADE, look.fx ?? NO_FX, !!look.hq, look.crop);
     if (r) {
       drawFrame(ctx, r.img, sw, sh, { ...opts, srcW: r.w, srcH: r.h });
       return;
