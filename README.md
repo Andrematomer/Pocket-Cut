@@ -1,4 +1,8 @@
-# Pocket Cut
+# VideoWren
+
+<p align="center"><img src="public/icons/icon-192.png" width="128" alt="VideoWren"></p>
+
+**A full video editor that fits in your pocket.** Small, offline, free, and no trackers or analytics.
 
 > ## ⚠️ Work in progress. Not ready to use yet.
 >
@@ -11,14 +15,14 @@ Ever tried to send a video to Discord and been greeted by the **5 MB limit**? Or
 seconds out of a clip and ended up downloading a 2 GB video editor you will never open again? Or
 wanted to post a long video as Stories, only to find it cut off at the wrong second?
 
-Pocket Cut started as exactly that: a tiny quick-edit tool. This branch drifted far past it. It is now a
+VideoWren (formerly Pocket Cut) started as exactly that: a tiny quick-edit tool. This branch drifted far past it. It is now a
 **multi-lane non-linear editor (NLE)** that fits on a phone and weighs next to nothing: stack videos,
 pictures, text and sound on layers, place them freely in time, and export as one file or as several files of a
 fixed length (for example 60-second parts for Instagram Stories).
 
-Runs entirely in the browser. No account, no upload, no watermark, no ads.
+Runs entirely in the browser. No account, no upload, no watermark, no ads, and no trackers or analytics: nothing about you or your videos ever leaves the device.
 
-**Try it:** https://andrematomer.github.io/Pocket-Cut/
+**Try it:** https://videowren.web.app/
 
 It works as a normal web page. Installing it as an app is optional: that only adds offline use and
 full-screen mode.

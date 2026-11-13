@@ -152,7 +152,7 @@ export function App() {
       {locked && <div class="lock-veil" />}
       {!hasClips && (
         <header class="top">
-          <span class="title plain">Pocket Cut</span>
+          <span class="title plain">VideoWren</span>
           <button class="icon" onClick={() => set({ sheet: getState().sheet === 'help' ? 'none' : 'help' })} aria-label="How it works">
             <Help />
           </button>
@@ -216,13 +216,10 @@ export function App() {
 function Empty() {
   return (
     <main class="empty">
-      <div class="reel" aria-hidden="true">
-        <i />
-        <i />
-        <i />
-      </div>
-      <h1>A full video editor that fits in your pocket</h1>
-      <p>Stack videos, pictures, text and sound on layers, then trim, crop, grade and time them on a real timeline. Everything happens on this device: no upload, no account, no watermark.</p>
+      <img class="welcome-logo" src="./icons/icon.svg" alt="" width="132" height="132" />
+      <h1>VideoWren</h1>
+      <p class="slogan">A full video editor that fits in your pocket.</p>
+      <p>Stack videos, pictures, text and sound on layers, then trim, crop, grade and time them on a real timeline. Small, offline and free. Everything happens on this device: no upload, no account, no watermark, and no trackers or analytics.</p>
       <PickLabel class="cta">
         <Plus /> Choose videos or pictures
       </PickLabel>
@@ -234,7 +231,7 @@ function Empty() {
 function Unsupported() {
   return (
     <main class="fatal">
-      <h1>This browser can't run Pocket Cut yet</h1>
+      <h1>This browser can't run VideoWren yet</h1>
       <p>It needs video encoding (WebCodecs). On iPhone and iPad that means a recent iOS (16.4 or newer) with Safari. On Android, use a recent Chrome.</p>
       <ul class="checks">
         {support.rows.map((r) => (

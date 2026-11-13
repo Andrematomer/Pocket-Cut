@@ -1,7 +1,7 @@
 {
-  "name": "Pocket Cut NLE",
-  "short_name": "Cut NLE",
-  "description": "Trim, rotate, crop, speed up and join videos on your phone. Works offline.",
+  "name": "VideoWren",
+  "short_name": "VideoWren",
+  "description": "A full video editor that fits in your pocket. Small, offline, free, no trackers.",
   "id": "./",
   "start_url": "./",
   "scope": "./",

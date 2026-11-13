@@ -2842,3 +2842,16 @@ button.tl-time {
   pointer-events: none;
   z-index: 2;
 }
+
+.welcome-logo {
+  align-self: center;
+  width: 132px;
+  height: 132px;
+  filter: drop-shadow(0 8px 14px rgba(0, 0, 0, 0.5));
+  margin-bottom: 4px;
+}
+.empty .slogan {
+  font-weight: 700;
+  color: var(--accent);
+  margin: 0 0 10px;
+}
