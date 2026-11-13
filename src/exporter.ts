@@ -338,3 +338,52 @@ export async function exportProject(
   }
   return { parts: results, warnings };
 }
+
+/** The picture on screen at timeline time `t`, drawn at the full output size (same drawing code as the video export), as a PNG. */
+export async function exportFrame(project: Project, getBlob: (mediaId: string) => Blob | undefined, t: number): Promise<Blob> {
+  const { clips } = project;
+  if (clips.length === 0) throw new FriendlyError('Add a video first.');
+  const { w: outW, h: outH } = outputSize(project);
+  const canvas = document.createElement('canvas');
+  canvas.width = outW;
+  canvas.height = outH;
+  const ctx = canvas.getContext('2d', { alpha: false });
+  if (!ctx) throw new FriendlyError('Could not create a drawing surface.');
+  ctx.fillStyle = project.settings.background || '#000';
+  ctx.fillRect(0, 0, outW, outH);
+  const inputs: Input[] = [];
+  const readers: FrameReader[] = [];
+  try {
+    for (const i of activeAt(clips, t)) {
+      const clip = clips[i]!;
+      const media = project.media[clip.mediaId];
+      if (!media || media.kind === 'audio') continue;
+      const o = { outW, outH, view: clip.view, keepBackground: true };
+      const look = { opacity: clip.opacity, grade: clip.grade, fx: clip.fx, hq: true, crop: clip.crop };
+      if (media.kind === 'image') {
+        const image = mediaBitmap(clip.mediaId);
+        if (image) drawLayer(ctx, image, image.width, image.height, look, o);
+        continue;
+      }
+      const blob = getBlob(clip.mediaId);
+      if (!blob) throw new FriendlyError('A video file is missing. Remove that clip and add it again.');
+      const input = new Input({ source: new BlobSource(blob), formats: ALL_FORMATS });
+      inputs.push(input);
+      const vt = await input.getPrimaryVideoTrack();
+      if (!vt) continue;
+      const w = await vt.getDisplayWidth();
+      const h = await vt.getDisplayHeight();
+      const scale = Math.min(1, 3840 / Math.max(w, h));
+      const sink = new CanvasSink(vt, scale < 1 ? { width: Math.round(w * scale), height: Math.round(h * scale), fit: 'fill' } : {});
+      const srcT = sourceAt(clip, t);
+      const r = new FrameReader(sink, srcT, srcT + 1);
+      readers.push(r);
+      const f = await r.at(srcT);
+      if (f) drawLayer(ctx, f.canvas, f.canvas.width, f.canvas.height, look, o);
+    }
+  } finally {
+    for (const r of readers) await r.close().catch(() => {});
+    for (const i of inputs) (i as unknown as { dispose?: () => void }).dispose?.();
+  }
+  return new Promise((res, rej) => canvas.toBlob((b) => (b ? res(b) : rej(new FriendlyError('Could not make the picture.'))), 'image/png'));
+}

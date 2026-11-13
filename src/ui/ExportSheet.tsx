@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
-import { FriendlyError, exportProject, type ExportProgress, type ExportResult } from '../exporter.ts';
+import { FriendlyError, exportFrame, exportProject, type ExportProgress, type ExportResult } from '../exporter.ts';
 import { engine } from '../engine.ts';
 import { RATE_STOPS, estimateBytes, fmtMbps, videoBitrate } from '../bitrate.ts';
 import { fmtBytes, saveBlob, shareFiles } from '../files.ts';
@@ -47,6 +47,24 @@ export function ExportSheet({ onClose }: { onClose: () => void }) {
   const [customRate, setCustomRate] = useState(() => project.settings.bitrateMbps !== null);
   const abort = useRef<AbortController | null>(null);
   const [note, setNote] = useState('');
+  const [framing, setFraming] = useState(false);
+  const [frameNote, setFrameNote] = useState('');
+  /** the picture on screen at the playhead, at the full output size, as a PNG (share sheet on phones, download on computers) */
+  const saveFrame = async () => {
+    setFraming(true);
+    setFrameNote('');
+    try {
+      const blob = await exportFrame(getState().project, (id) => blobFor(id), getState().playhead);
+      const name = `${(project.name || 'frame').replace(/[^\p{L}\p{N}_-]+/gu, '_').slice(0, 40)}_${fmtTime(getState().playhead, 1).replace(/[^0-9]/g, '')}.png`;
+      const phone = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches;
+      const r = phone ? await shareFiles([{ name, blob }], 'image/png') : 'unsupported';
+      if (r === 'unsupported') saveBlob(name, blob);
+    } catch (e) {
+      setFrameNote(e instanceof FriendlyError ? e.message : 'Could not make the picture.');
+    } finally {
+      setFraming(false);
+    }
+  };
 
   const s = project.settings;
   const total = totalOf(project.clips);
@@ -97,6 +115,13 @@ export function ExportSheet({ onClose }: { onClose: () => void }) {
     <Sheet title={phase.name === 'done' ? 'Your videos' : 'Export'} onClose={close}>
       {phase.name === 'setup' && (
         <>
+          <section>
+            <h3>Picture</h3>
+            <button class="chip" disabled={framing} onClick={saveFrame}>
+              {framing ? 'Making the picture…' : 'Save the frame at the yellow line'}
+            </button>
+            {frameNote && <p class="hint">{frameNote}</p>}
+          </section>
           <section>
             <h3>File name</h3>
             <input class="name-field" value={project.name} onInput={(e) => setName((e.currentTarget as HTMLInputElement).value)} aria-label="File name" maxLength={60} autocomplete="off" />

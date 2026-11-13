@@ -85,7 +85,7 @@ export function Preview() {
   if (!has) return <div class="stage" ref={wrap} />;
 
   return (
-    <div class="stage" ref={wrap}>
+    <div class="stage" ref={wrap} onClick={(e) => e.target === e.currentTarget && deselect()}>
       <div class="frame" style={{ width: `${box.w}px`, height: `${box.h}px` }}>
         <canvas ref={canvas} style={{ width: `${box.w}px`, height: `${box.h}px` }} />
         {box.w > 0 && <Gestures boxW={box.w} boxH={box.h} />}
@@ -323,6 +323,49 @@ function Gestures({ boxW, boxH }: { boxW: number; boxH: number }) {
       /* not supported */
     }
   };
+  /** the rubber band of a box selection (hold, then drag): corners in canvas-relative points */
+  const holdFrom = useRef(-1);
+  const band = useRef<{ a: Pt; b: Pt } | null>(null);
+  const bandEl = useRef<HTMLDivElement>(null);
+  const paintBand = () => {
+    const el = bandEl.current;
+    const bd = band.current;
+    if (!el) return;
+    if (!bd) return void (el.style.display = 'none');
+    const { boxW: W, boxH: H } = sizes.current;
+    el.style.display = 'block';
+    el.style.left = `${Math.min(bd.a.x, bd.b.x) + W / 2}px`;
+    el.style.top = `${Math.min(bd.a.y, bd.b.y) + H / 2}px`;
+    el.style.width = `${Math.abs(bd.a.x - bd.b.x)}px`;
+    el.style.height = `${Math.abs(bd.a.y - bd.b.y)}px`;
+  };
+  /** every strip on screen whose picture the band touches */
+  const bandPick = () => {
+    const bd = band.current;
+    const st = getState();
+    if (!bd) return [] as string[];
+    const bx0 = Math.min(bd.a.x, bd.b.x);
+    const bx1 = Math.max(bd.a.x, bd.b.x);
+    const by0 = Math.min(bd.a.y, bd.b.y);
+    const by1 = Math.max(bd.a.y, bd.b.y);
+    const { boxW: W, boxH: H } = sizes.current;
+    const out: string[] = [];
+    for (const i of activeAt(st.project.clips, st.playhead)) {
+      const c = st.project.clips[i]!;
+      const m = st.project.media[c.mediaId];
+      if (!m || m.kind === 'audio') continue;
+      const sc = baseScale(m.width, m.height, W, H) * c.view.zoom;
+      const a = (c.view.rot * Math.PI) / 180;
+      const hw = (m.width * sc) / 2;
+      const hh = (m.height * sc) / 2;
+      const ex = Math.abs(hw * Math.cos(a)) + Math.abs(hh * Math.sin(a));
+      const ey = Math.abs(hw * Math.sin(a)) + Math.abs(hh * Math.cos(a));
+      const cx = c.view.x * W;
+      const cy = c.view.y * H;
+      if (cx + ex >= bx0 && cx - ex <= bx1 && cy + ey >= by0 && cy - ey <= by1) out.push(c.id);
+    }
+    return out;
+  };
   const lastEv = useRef<Event | null>(null);
   const winMove = useRef(false);
   /** The transform box saw a second finger: both fingers now belong to the picture (pinch), wherever they landed. */
@@ -381,7 +424,15 @@ function Gestures({ boxW, boxH }: { boxW: number; boxH: number }) {
           if (pts.current.size !== 1 || fine.current || tap.current?.moved) return;
           clearTimeout(timer.current);
           if (tap.current) tap.current.multi = true; // this touch was a hold, not a tap
-          holdPick(x, y, selBefore);
+          const p = relClient(x, y);
+          band.current = { a: p, b: p };
+          holdFrom.current = selBefore;
+          paintBand();
+          try {
+            navigator.vibrate?.(12);
+          } catch {
+            /* not supported */
+          }
         }, MULTI_HOLD_MS);
       }
     }
@@ -392,6 +443,10 @@ function Gestures({ boxW, boxH }: { boxW: number; boxH: number }) {
     if (!pts.current.has(e.pointerId)) return;
     if (e.pointerType === 'mouse' && e.buttons === 0) return flush(); // button released somewhere we did not see
     pts.current.set(e.pointerId, rel(e));
+    if (band.current) {
+      band.current.b = rel(e);
+      return void paintBand();
+    }
     const tp = tap.current;
     if (tp && Math.hypot(e.clientX - tp.x, e.clientY - tp.y) > JITTER) (tp.moved = true), clearTimeout(holdTimer.current);
     const b = base.current;
@@ -473,11 +528,35 @@ function Gestures({ boxW, boxH }: { boxW: number; boxH: number }) {
     }
     if (!frame.current) frame.current = requestAnimationFrame(paint);
   };
+  const lastUp = useRef({ x: 0, y: 0 });
   const up = (e: PointerEvent) => {
+    lastUp.current = { x: e.clientX, y: e.clientY };
     if (!pts.current.delete(e.pointerId)) return;
+    if (band.current && pts.current.size > 0) pts.current.clear();
     if (pts.current.size > 0) {
       // a finger lifted or was added: carry on from where the picture is now
       rebase();
+      return;
+    }
+    if (band.current) {
+      const bd = band.current;
+      const small = Math.hypot(bd.a.x - bd.b.x, bd.a.y - bd.b.y) < 12;
+      const ids = bandPick();
+      band.current = null;
+      paintBand();
+      tap.current = null;
+      flush();
+      const st = getState();
+      const keep = st.multi.length > 0 ? st.multi : holdFrom.current >= 0 && st.project.clips[holdFrom.current] ? [st.project.clips[holdFrom.current]!.id] : [];
+      if (small) {
+        // held and let go without dragging: the picture under the finger joins
+        const mid = bd.a;
+        const hit = hitAt(lastUp.current.x, lastUp.current.y);
+        void mid;
+        const all = new Set(keep);
+        if (hit >= 0) all.add(st.project.clips[hit]!.id);
+        if (all.size > 0) setMulti([...all]);
+      } else if (ids.length > 0) setMulti([...new Set([...keep, ...ids])]);
       return;
     }
     const tp = tap.current;
@@ -613,6 +692,7 @@ function Gestures({ boxW, boxH }: { boxW: number; boxH: number }) {
       {(['l', 'r', 't', 'b'] as const).map((k) => (
         <div key={k} class={`guide edge-${k}`} ref={(el) => void (edgeEls.current[k] = el)} />
       ))}
+      <div class="rubber" ref={bandEl} />
       <div class="gesture-badge num" ref={badge} />
     </div>
   );

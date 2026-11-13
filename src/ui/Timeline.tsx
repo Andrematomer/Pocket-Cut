@@ -341,6 +341,12 @@ export function Timeline() {
     const raw = s.at0 + (s.x - s.x0 + (el.scrollLeft - s.scroll0)) / k;
     const sn = snap(s.i, raw, clipDuration(clip));
     let at = sn.at;
+    // a picked group moves as one: the front-most member stops at 0 and so does everyone else, while the finger keeps moving
+    const ms = getState().multi;
+    if (ms.includes(clip.id)) {
+      const first = cs.reduce((m, c) => (ms.includes(c.id) ? Math.min(m, c.at) : m), Infinity);
+      if (Number.isFinite(first)) at = Math.max(at, clip.at - first);
+    }
     // the strip follows the finger; held on the free lane at the top or bottom edge, more lanes open one by one
     const fingerY = s.y - r.top + el.scrollTop;
     const top = Math.max(RULER, Math.min(h - ROW - 4, fingerY - (s.grab ?? 0.5) * ROW));

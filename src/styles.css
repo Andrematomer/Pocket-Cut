@@ -2759,3 +2759,13 @@ button.tl-time {
     transition: none;
   }
 }
+
+/* box selection on the preview */
+.rubber {
+  display: none;
+  position: absolute;
+  pointer-events: none;
+  border: 1.5px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  border-radius: 3px;
+}

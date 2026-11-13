@@ -46,8 +46,8 @@ export function saveBlob(name: string, blob: Blob): void {
 export type ShareResult = 'shared' | 'cancelled' | 'unsupported';
 
 /** Opens the system share sheet with all files at once (on phones this offers "Save to Photos"). */
-export async function shareFiles(files: { name: string; blob: Blob }[]): Promise<ShareResult> {
-  const list = files.map((f) => new File([f.blob], f.name, { type: 'video/mp4' }));
+export async function shareFiles(files: { name: string; blob: Blob }[], type = 'video/mp4'): Promise<ShareResult> {
+  const list = files.map((f) => new File([f.blob], f.name, { type }));
   if (!navigator.canShare?.({ files: list })) return 'unsupported';
   try {
     await navigator.share({ files: list });
