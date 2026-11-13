@@ -91,6 +91,9 @@ export function Timeline() {
   const [pps, setPps] = useState(36); // pixels per second
   const [move, setMove] = useState<Move | null>(null);
   const [trim, setTrim] = useState<Trim | null>(null);
+  // edit mode: dragging the picked strip sideways slides the picture inside it (the strip keeps its place and length)
+  const slipRef = useRef<{ id: number; i: number; x0: number; y0: number; base: { start: number; end: number }; active: boolean; cur: { start: number; end: number } } | null>(null);
+  const [slip, setSlip] = useState<number | null>(null);
   const [viewW, setViewW] = useState(360);
   const scroller = useRef<HTMLDivElement>(null);
   const st = useRef<{ id: number; i: number; x0: number; y0: number; x: number; y: number; at0: number; track0: number; scroll0: number; scrollTop0: number; timer: number; active: boolean; raf: number; grab?: number; edge?: 'top' | 'bottom' | null; edgeAt?: number } | null>(null);
@@ -403,6 +406,14 @@ export function Timeline() {
   };
 
   const down = (i: number) => (e: PointerEvent) => {
+    {
+      const g = getState();
+      const c0 = clips[i];
+      if (g.handles && g.selected === i && g.multi.length === 0 && c0 && !(e.target as Element).closest('.trim-h')) {
+        slipRef.current = { id: e.pointerId, i, x0: e.clientX, y0: e.clientY, base: { start: c0.start, end: c0.end }, active: false, cur: { start: c0.start, end: c0.end } };
+        return;
+      }
+    }
     if (st.current) finish(false);
     const el = scroller.current;
     const clip = clips[i];
@@ -435,6 +446,33 @@ export function Timeline() {
     }, HOLD_MS);
   };
   const onMove = (e: PointerEvent) => {
+    const sp = slipRef.current;
+    if (sp && e.pointerId === sp.id) {
+      const dx = e.clientX - sp.x0;
+      if (!sp.active) {
+        if (Math.abs(dx) <= WOBBLE) return;
+        sp.active = true;
+        engine.pause();
+        try {
+          (e.currentTarget as HTMLElement).setPointerCapture(sp.id);
+        } catch {
+          /* the pointer is gone */
+        }
+      }
+      const clip = live.current.clips[sp.i];
+      const m = live.current.media[clip?.mediaId ?? ''];
+      if (!clip) return;
+      const len = sp.base.end - sp.base.start;
+      const dur = m?.duration ?? clip.end;
+      // the picture follows the finger: dragging right shows earlier parts of the file
+      const start = Math.max(0, Math.min(Math.max(0, dur - len), sp.base.start - (dx / live.current.pps) * clip.speed));
+      sp.cur = { start, end: start + len };
+      setTrim({ index: sp.i, at: clip.at, start, end: start + len });
+      setSlip(sp.i);
+      hold(`Offset ${fmtTime(start, 2)}`);
+      engine.scrubSource(sp.i, start, false);
+      return;
+    }
     const s = st.current;
     if (!s || e.pointerId !== s.id) return;
     s.x = e.clientX;
@@ -445,6 +483,20 @@ export function Timeline() {
     }
   };
   const up = (e: PointerEvent) => {
+    const sp = slipRef.current;
+    if (sp && e.pointerId === sp.id) {
+      slipRef.current = null;
+      if (sp.active) {
+        swallow.current = true;
+        setTimeout(() => (swallow.current = false), 0);
+        setTrim(null);
+        setSlip(null);
+        releaseHud();
+        if (e.type === 'pointerup' && (sp.cur.start !== sp.base.start || sp.cur.end !== sp.base.end)) updateClip(sp.i, { start: sp.cur.start, end: sp.cur.end });
+        void engine.showAt(getState().playhead);
+      }
+      return;
+    }
     const s = st.current;
     if (s && e.pointerId === s.id) finish(e.type === 'pointerup');
   };
@@ -751,6 +803,14 @@ export function Timeline() {
             {box && <div class="tl-box" style={{ left: `${Math.min(box.x0, box.x1)}px`, top: `${Math.min(box.y0, box.y1)}px`, width: `${Math.abs(box.x1 - box.x0)}px`, height: `${Math.abs(box.y1 - box.y0)}px` }} />}
             {trimGuide != null && <div class="snap-guide" style={{ left: `${padL + trimGuide * pps}px` }} />}
             {move?.guide != null && <div class="snap-guide" style={{ left: `${padL + move.guide * pps}px` }} />}
+            {slip != null && trim && clips[slip] && (() => {
+              const c = clips[slip]!;
+              const m = media[c.mediaId];
+              const row = lanes.indexOf(c.track);
+              if (row < 0) return null;
+              const dur = m?.duration ?? c.end;
+              return <div class="slip-ghost" style={{ left: `${padL + c.at * pps - (trim.start / c.speed) * pps}px`, top: `${rowTop(row)}px`, width: `${(dur / c.speed) * pps}px`, height: `${ROW}px` }} />;
+            })()}
             {clips.map((c, i) => {
               const m = media[c.mediaId];
               const lead = move ? clips[move.index] : undefined;
@@ -777,7 +837,7 @@ export function Timeline() {
                   key={c.id}
                   role="option"
                   aria-selected={on}
-                  class={`strip-clip ${on ? 'on' : ''} ${inMulti ? 'multi' : ''} ${moving ? 'lifted' : ''} ${audio ? 'audio' : ''} ${m?.text ? 'texty' : ''} ${m?.solid ? 'solid' : ''} ${baking !== undefined ? 'baking' : ''}`}
+                  class={`strip-clip ${on ? 'on' : ''} ${inMulti ? 'multi' : ''} ${moving ? 'lifted' : ''} ${audio ? 'audio' : ''} ${m?.text ? 'texty' : ''} ${m?.solid ? 'solid' : ''} ${baking !== undefined ? 'baking' : ''} ${on && handles && multi.length === 0 ? 'edit' : ''}`}
                   style={{ left: `${padL + at * pps}px`, top: `${top}px`, width: `${w}px`, height: `${ROW}px`, ...(m?.solid ? { background: m.solid } : {}) }}
                   onPointerDown={down(i)}
                   onPointerMove={onMove}
@@ -798,7 +858,7 @@ export function Timeline() {
                       <Pie value={baking} size={Math.max(14, Math.min(22, ROW - 10))} />
                     </span>
                   )}
-                  {url && !m?.text && <span class="strip-thumb" style={{ backgroundImage: `url("${url}")`, backgroundPosition: `${-((tr?.at ?? c.at) - c.at) * pps}px center` }} />}
+                  {url && !m?.text && <span class="strip-thumb" style={{ backgroundImage: `url("${url}")`, backgroundPosition: `${-((tr?.at ?? c.at) - c.at) * pps + ((c.start - start) / c.speed) * pps}px center` }} />}
                   {ROW >= 30 && (
                     <span class="strip-time num">
                       {c.speed !== 1 ? `${c.speed}× · ` : ''}

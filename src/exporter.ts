@@ -340,10 +340,13 @@ export async function exportProject(
 }
 
 /** The picture on screen at timeline time `t`, drawn at the full output size (same drawing code as the video export), as a PNG. */
-export async function exportFrame(project: Project, getBlob: (mediaId: string) => Blob | undefined, t: number): Promise<Blob> {
+export async function exportFrame(project: Project, getBlob: (mediaId: string) => Blob | undefined, t: number, maxShort = 1080): Promise<Blob> {
   const { clips } = project;
   if (clips.length === 0) throw new FriendlyError('Add a video first.');
-  const { w: outW, h: outH } = outputSize(project);
+  const full = outputSize(project);
+  const k = Math.min(1, maxShort / Math.min(full.w, full.h)); // 1080p at most: the short side of the canvas
+  const outW = Math.max(2, Math.round((full.w * k) / 2) * 2);
+  const outH = Math.max(2, Math.round((full.h * k) / 2) * 2);
   const canvas = document.createElement('canvas');
   canvas.width = outW;
   canvas.height = outH;

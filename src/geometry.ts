@@ -409,7 +409,7 @@ export function tapCell(px: number, py: number, W: number, H: number): Rect {
  * then it fills the rectangle and crops what sticks out, so it is exactly the size of the rectangle; a third tap
  * un-crops and fits again. The picture is turned to the nearest quarter turn first (a crop can only follow the picture's own sides).
  */
-export function fitSegment(v: View, crop: Crop | undefined, base: Crop | undefined, sw: number, sh: number, W: number, H: number, T: Rect): { view: View; crop: Crop | undefined; mode: 'Fit' | 'Fill' } {
+export function fitSegment(v: View, crop: Crop | undefined, base: Crop | undefined, sw: number, sh: number, W: number, H: number, T: Rect, force?: 'fill'): { view: View; crop: Crop | undefined; mode: 'Fit' | 'Fill' } {
   const q = ((Math.round(normAngle(v.rot) / 90) % 4) + 4) % 4;
   const rot = q * 90;
   const odd = q % 2 === 1;
@@ -443,8 +443,8 @@ export function fitSegment(v: View, crop: Crop | undefined, base: Crop | undefin
     return { view: place(zoom, c), crop: c, mode: 'Fit' as const };
   };
   const same = (a?: Crop, b?: Crop) => (a?.l ?? 0) === (b?.l ?? 0) && (a?.t ?? 0) === (b?.t ?? 0) && (a?.r ?? 0) === (b?.r ?? 0) && (a?.b ?? 0) === (b?.b ?? 0);
-  if (exact && !same(crop, base)) return fitTo(base); // cropped to the rectangle: undo the crop and fit again
-  if (!fitted || exact) return fitTo(crop);
+  if (!force && exact && !same(crop, base)) return fitTo(base); // cropped to the rectangle: undo the crop and fit again
+  if (!force && (!fitted || exact)) return fitTo(crop);
   // fitted: grow to cover the rectangle and cut off what sticks out
   const k = keptAt(1, crop);
   const zoom = Math.max(T.w / k.w, T.h / k.h);

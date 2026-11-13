@@ -2808,3 +2808,37 @@ button.tl-time {
 .tabbar.pill > .tab.on {
   background: transparent;
 }
+
+/* where a picture will go when the finger lets go at a side or corner of the canvas */
+.snap-ghost {
+  display: none;
+  position: absolute;
+  pointer-events: none;
+  border: 2px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  border-radius: 4px;
+  z-index: 2;
+}
+.guide.gx {
+  top: 0;
+  bottom: 0;
+  width: 1px;
+}
+.guide.gy {
+  left: 0;
+  right: 0;
+  height: 1px;
+}
+
+/* edit mode: a sideways drag slides the picture inside the strip, so the strip must not scroll the timeline */
+.strip-clip.edit {
+  touch-action: none;
+}
+.slip-ghost {
+  position: absolute;
+  border: 1.5px dashed var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border-radius: 8px;
+  pointer-events: none;
+  z-index: 2;
+}

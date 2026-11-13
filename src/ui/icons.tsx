@@ -182,3 +182,10 @@ export const Shrink = () => (
     <path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5" />
   </I>
 );
+
+export const Camera = () => (
+  <I>
+    <path d="M4 8h3l1.5-2h7L17 8h3v11H4z" />
+    <circle cx="12" cy="13.5" r="3.5" />
+  </I>
+);

@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { engine } from '../engine.ts';
 import { hold, release as releaseHud, say } from '../hud.ts';
-import { baseScale, clampView, fitSegment, shownBox, tapCell, clampZoom, dragView, fitZoom, normAngle, outputSize, pinchView, snapEightCropped, snapView, snapViewCropped, type Pt } from '../geometry.ts';
+import { type Rect, baseScale, clampView, fitSegment, shownBox, tapCell, clampZoom, dragView, fitZoom, normAngle, outputSize, pinchView, snapEightCropped, snapView, snapViewCropped, type Pt } from '../geometry.ts';
 import { deselect, getState, selectClip, set, setCrop, setMulti, setViews, toggleMulti, updateClip, useStore } from '../store.ts';
 import { localPoint } from '../turn.ts';
 import { activeAt, fmtTime, totalOf } from '../timeline.ts';
@@ -143,8 +143,18 @@ function Gestures({ boxW, boxH }: { boxW: number; boxH: number }) {
     return activeAt(st.project.clips, st.playhead).filter((i) => st.multi.includes(st.project.clips[i]!.id) && st.project.media[st.project.clips[i]!.mediaId]?.kind !== 'audio');
   };
   const fine = useRef(false);
+  // edit mode: the box stays where it is and the picture moves inside it, so the crop follows
+  const editRegion = useRef<{ cx: number; cy: number; hw: number; hh: number } | null>(null);
+  const editCrop = useRef<Crop | null>(null);
+  // half and quarter snaps: where the finger is held, and the part of the canvas the picture will fill
+  const zone = useRef<{ key: string; x: number; y: number } | null>(null);
+  const zoneTimer = useRef(0);
+  const snapT = useRef<Rect | null>(null);
+  const ghostEl = useRef<HTMLDivElement>(null);
+  const gx = useRef<HTMLDivElement>(null);
+  const gy = useRef<HTMLDivElement>(null);
   const tap = useRef<{ t: number; x: number; y: number; moved: boolean; multi: boolean } | null>(null);
-  const lastTap = useRef<{ t: number; x: number; y: number; prev: number; prevMulti: string[] } | null>(null);
+  const lastTap = useRef<{ t: number; x: number; y: number; prev: number; prevMulti: string[]; prevHandles: boolean } | null>(null);
   const timer = useRef(0);
   const cropTimer = useRef(0);
   const holdTimer = useRef(0);
@@ -172,6 +182,30 @@ function Gestures({ boxW, boxH }: { boxW: number; boxH: number }) {
     if (fine.current) return;
     showBadge(s ? (s.zoom === 'fit' ? 'Fit' : s.zoom === 'fill' ? 'Fill' : s.rot !== null ? fmtDeg(s.rot) : '') : '');
   };
+  /** extra snap lines (the edges and middles of other pictures), in canvas pixels from the top left */
+  const lines = (x: number | null, y: number | null) => {
+    const a = gx.current;
+    const b = gy.current;
+    if (a) (a.style.left = `${x ?? 0}px`), a.classList.toggle('on', x !== null);
+    if (b) (b.style.top = `${y ?? 0}px`), b.classList.toggle('on', y !== null);
+  };
+  /** every picture that is on screen except the moving ones, as snap targets: the sides and middles of what shows */
+  const targets = (skip: number[]) => {
+    const st = getState();
+    const { boxW: W, boxH: H } = sizes.current;
+    const xs = [0, W / 2, W];
+    const ys = [0, H / 2, H];
+    for (const i of activeAt(st.project.clips, st.playhead)) {
+      if (skip.includes(i)) continue;
+      const c = st.project.clips[i]!;
+      const m = st.project.media[c.mediaId];
+      if (!m || m.kind === 'audio') continue;
+      const r = shownBox(c.view, inkCrop(c, m), m.width, m.height, W, H);
+      xs.push(r.x, r.x + r.w / 2, r.x + r.w);
+      ys.push(r.y, r.y + r.h / 2, r.y + r.h);
+    }
+    return { xs, ys };
+  };
   const setFineLook = (on: boolean) => {
     fine.current = on;
     root.current?.parentElement?.classList.toggle('fine', on);
@@ -189,6 +223,22 @@ function Gestures({ boxW, boxH }: { boxW: number; boxH: number }) {
     const gm = groupMembers();
     groupBase.current = gm.length ? gm.map((i) => ({ i, v: groupLive.current?.find(([j]) => j === i)?.[1] ?? getState().project.clips[i]!.view })) : null;
     arm.current = new Map(pts.current);
+    if (!editRegion.current && getState().handles && getState().multi.length === 0 && c.media.solid === undefined && c.media.kind !== 'audio') {
+      const k = inkCrop(c.clip, c.media) ?? { l: 0, t: 0, r: 0, b: 0 };
+      const { boxW: W, boxH: H } = sizes.current;
+      const sc = baseScale(c.media.width, c.media.height, W, H) * c.clip.view.zoom;
+      const pw = c.media.width * sc;
+      const ph = c.media.height * sc;
+      const lx = ((k.l - k.r) / 2) * pw;
+      const ly = ((k.t - k.b) / 2) * ph;
+      const a = (c.clip.view.rot * Math.PI) / 180;
+      editRegion.current = {
+        cx: W / 2 + c.clip.view.x * W + lx * Math.cos(a) - ly * Math.sin(a),
+        cy: H / 2 + c.clip.view.y * H + lx * Math.sin(a) + ly * Math.cos(a),
+        hw: (pw * (1 - k.l - k.r)) / 2,
+        hh: (ph * (1 - k.t - k.b)) / 2,
+      };
+    }
   };
   /** (re)starts the hold timer: still fingers for this long switch to fine control from where they are */
   const startTimer = () => {
@@ -213,6 +263,7 @@ function Gestures({ boxW, boxH }: { boxW: number; boxH: number }) {
     clearTimeout(holdTimer.current);
     base.current = null;
     guides(null);
+    lines(null, null);
     setFineLook(false);
     groupBase.current = null;
     if (groupLive.current) {
@@ -225,11 +276,65 @@ function Gestures({ boxW, boxH }: { boxW: number; boxH: number }) {
     }
     const v = live.current;
     live.current = null;
+    const armed = snapT.current;
+    clearTimeout(zoneTimer.current);
+    zone.current = null;
+    snapT.current = null;
+    if (ghostEl.current) ghostEl.current.style.display = 'none';
+    const ec = editCrop.current;
+    editCrop.current = null;
+    editRegion.current = null;
+    if (ec && v) {
+      const c = current();
+      const inset = c?.media.textBox ?? { l: 0, t: 0, r: 0, b: 0 };
+      const z = (n: number, i: number) => (n <= i + 1e-6 ? 0 : n);
+      const k = { l: z(ec.l, inset.l), t: z(ec.t, inset.t), r: z(ec.r, inset.r), b: z(ec.b, inset.b) };
+      engine.cropLive = null;
+      engine.ghost = false;
+      engine.live = null;
+      updateClip(getState().selected, { view: v, crop: k.l || k.t || k.r || k.b ? k : undefined });
+      engine.draw();
+      releaseHud();
+      return;
+    }
+    if (armed && v) return void snapNow(armed, v);
     if (v && v !== getState().project.clips[getState().selected]?.view) {
       updateClip(getState().selected, { view: v });
       engine.live = null;
       engine.draw();
     }
+  };
+  /** the picture goes to fill half or a quarter of the canvas (cropped to it), sliding there */
+  const snapNow = (T: Rect, from: View) => {
+    const c = current();
+    if (!c) return;
+    const { boxW: W, boxH: H } = sizes.current;
+    const idx = getState().selected;
+    const inset = c.media.solid === undefined ? c.media.textBox : undefined;
+    const r = fitSegment(from, inkCrop(c.clip, c.media), inset, c.media.width, c.media.height, W, H, T, 'fill');
+    const base = inset ?? { l: 0, t: 0, r: 0, b: 0 };
+    const rc = r.crop ?? base;
+    const plain = rc.l === base.l && rc.t === base.t && rc.r === base.r && rc.b === base.b;
+    const c0: Crop = c.clip.crop ?? { l: 0, t: 0, r: 0, b: 0 };
+    const c1: Crop = plain ? { l: 0, t: 0, r: 0, b: 0 } : rc;
+    const dRot = normAngle(r.view.rot - from.rot);
+    const t0 = performance.now();
+    const T_MS = 260;
+    const tick = () => {
+      const k = Math.min(1, (performance.now() - t0) / T_MS);
+      const e = 1 - Math.pow(1 - k, 3);
+      const lerp = (a: number, b: number) => a + (b - a) * e;
+      engine.live = { index: idx, view: { x: lerp(from.x, r.view.x), y: lerp(from.y, r.view.y), zoom: lerp(from.zoom, r.view.zoom), rot: from.rot + dRot * e } };
+      engine.cropLive = { index: idx, crop: { l: lerp(c0.l, c1.l), t: lerp(c0.t, c1.t), r: lerp(c0.r, c1.r), b: lerp(c0.b, c1.b) } };
+      engine.draw();
+      if (k < 1) return void requestAnimationFrame(tick);
+      engine.live = null;
+      engine.cropLive = null;
+      updateClip(idx, { view: r.view, crop: plain ? undefined : rc });
+      engine.draw();
+      say(`${T.w < W - 0.5 && T.h < H - 0.5 ? 'Quarter' : 'Half'} · fill`);
+    };
+    requestAnimationFrame(tick);
   };
 
   useEffect(() => {
@@ -308,7 +413,11 @@ function Gestures({ boxW, boxH }: { boxW: number; boxH: number }) {
     const i = hitAt(cx, cy);
     if (i < 0) return deselect();
     if (st0.multi.length > 0) return toggleMulti(i);
-    if (i !== st0.selected) selectClip(i, { keepPlayhead: true });
+    if (i !== st0.selected) return selectClip(i, { keepPlayhead: true });
+    // tapping the picked picture again swaps select mode and edit mode (the timeline strip follows)
+    const edit = !st0.handles;
+    set({ handles: edit });
+    say(edit ? 'Edit mode' : 'Select mode');
   };
   /** a finger held still on empty canvas or on a strip that is not the picked one starts (or grows) a multi-selection */
   const holdPick = (cx: number, cy: number, selBefore: number) => {
@@ -515,15 +624,99 @@ function Gestures({ boxW, boxH }: { boxW: number; boxH: number }) {
     let v: View;
     if (b.b && raw2) v = pinchView(b.view, W, H, b.a, b.b, a1, f(raw2, b.b));
     else v = dragView(b.view, W, H, a1.x - b.a.x, a1.y - b.a.y);
+    const R = editRegion.current;
+    if (R) {
+      // edit mode: the frame stays, the picture moves and scales behind it (no turning), and the crop follows
+      v = { ...v, rot: b.view.rot };
+      const sc = baseScale(c.media.width, c.media.height, W, H) * v.zoom;
+      const pw = c.media.width * sc;
+      const ph = c.media.height * sc;
+      const a = (v.rot * Math.PI) / 180;
+      const dx = R.cx - (W / 2 + v.x * W);
+      const dy = R.cy - (H / 2 + v.y * H);
+      const lx = dx * Math.cos(a) + dy * Math.sin(a);
+      const ly = -dx * Math.sin(a) + dy * Math.cos(a);
+      const inset = c.media.textBox ?? { l: 0, t: 0, r: 0, b: 0 };
+      const room = 0.95;
+      const k: Crop = {
+        l: Math.min(room, Math.max(inset.l, (lx - R.hw + pw / 2) / pw)),
+        r: Math.min(room, Math.max(inset.r, 1 - (lx + R.hw + pw / 2) / pw)),
+        t: Math.min(room, Math.max(inset.t, (ly - R.hh + ph / 2) / ph)),
+        b: Math.min(room, Math.max(inset.b, 1 - (ly + R.hh + ph / 2) / ph)),
+      };
+      live.current = v;
+      editCrop.current = k;
+      engine.live = { index: getState().selected, view: v };
+      engine.cropLive = { index: getState().selected, crop: k };
+      engine.ghost = true;
+      hold('Crop');
+      if (!frame.current) frame.current = requestAnimationFrame(paint);
+      return;
+    }
     v = clampView(v, { sw: c.media.width, sh: c.media.height, W, H });
     if (fine.current) {
       live.current = v;
       engine.live = { index: getState().selected, view: v };
     } else {
-      const sn = snapViewCropped(v, { sw: c.media.width, sh: c.media.height, W, H }, inkCrop(c.clip, c.media));
-      live.current = sn.view;
-      engine.live = { index: getState().selected, view: sn.view };
+      const env = { sw: c.media.width, sh: c.media.height, W, H };
+      const ink = inkCrop(c.clip, c.media);
+      const sn = snapViewCropped(v, env, ink);
+      let nv = sn.view;
+      // sides and middles of the other pictures (and the canvas middle lines for the picture's own sides) pull too
+      let lineX: number | null = null;
+      let lineY: number | null = null;
+      if (!b.b) {
+        const box = shownBox(nv, ink, c.media.width, c.media.height, W, H);
+        const tg = targets([getState().selected]);
+        const pull = (edges: number[], list: number[]) => {
+          let best = 7;
+          let hit: { d: number; at: number } | null = null;
+          for (const e of edges) for (const t of list) if (Math.abs(t - e) < best) (best = Math.abs(t - e)), (hit = { d: t - e, at: t });
+          return hit;
+        };
+        if (!sn.x && !sn.edges.l && !sn.edges.r) {
+          const h = pull([box.x, box.x + box.w / 2, box.x + box.w], tg.xs);
+          if (h) (nv = { ...nv, x: nv.x + h.d / W }), (lineX = h.at);
+        }
+        if (!sn.y && !sn.edges.t && !sn.edges.b) {
+          const h = pull([box.y, box.y + box.h / 2, box.y + box.h], tg.ys);
+          if (h) (nv = { ...nv, y: nv.y + h.d / H }), (lineY = h.at);
+        }
+      }
+      live.current = nv;
+      engine.live = { index: getState().selected, view: nv };
       guides(sn);
+      lines(lineX, lineY);
+      // half / quarter snapping: the finger (not the picture) held at a side or corner of the canvas
+      if (!b.b && raw1) {
+        const px = raw1.x + W / 2;
+        const py = raw1.y + H / 2;
+        const sx = px < W * 0.1 ? -1 : px > W * 0.9 ? 1 : 0;
+        const sy = py < H * 0.1 ? -1 : py > H * 0.9 ? 1 : 0;
+        const key = `${sx},${sy}`;
+        const z = zone.current;
+        const moved = z ? Math.hypot(px - z.x, py - z.y) > 14 : false;
+        if (!z || z.key !== key || moved) {
+          clearTimeout(zoneTimer.current);
+          snapT.current = null;
+          if (ghostEl.current) ghostEl.current.style.display = 'none';
+          zone.current = { key, x: px, y: py };
+          if (sx !== 0 || sy !== 0) {
+            const T: Rect = { x: sx === 1 ? W / 2 : 0, y: sy === 1 ? H / 2 : 0, w: sx === 0 ? W : W / 2, h: sy === 0 ? H : H / 2 };
+            zoneTimer.current = window.setTimeout(() => {
+              snapT.current = T;
+              const g = ghostEl.current;
+              if (g) Object.assign(g.style, { display: 'block', left: `${T.x}px`, top: `${T.y}px`, width: `${T.w}px`, height: `${T.h}px` });
+              try {
+                navigator.vibrate?.(10);
+              } catch {
+                /* not supported */
+              }
+              hold(T.w < W - 0.5 && T.h < H - 0.5 ? 'Quarter' : 'Half');
+            }, 420);
+          } else releaseHud();
+        }
+      }
     }
     if (!frame.current) frame.current = requestAnimationFrame(paint);
   };
@@ -580,12 +773,14 @@ function Gestures({ boxW, boxH }: { boxW: number; boxH: number }) {
         // a double tap works on what was selected before it: the first touch of the pair must not have switched the selection
         if (lt.prevMulti.length > 0) setMulti(lt.prevMulti);
         else if (getState().selected !== lt.prev || getState().multi.length > 0) (lt.prev >= 0 ? selectClip(lt.prev, { keepPlayhead: true }) : deselect());
+        set({ handles: lt.prevHandles });
         doubleTap(lt.x, lt.y);
       } else {
         const prev = getState().selected;
         const prevMulti = getState().multi;
+        const prevHandles = getState().handles;
         pickAt(tp.x, tp.y);
-        lastTap.current = { t: tp.t, x: tp.x, y: tp.y, prev, prevMulti };
+        lastTap.current = { t: tp.t, x: tp.x, y: tp.y, prev, prevMulti, prevHandles };
       }
     }
   };
@@ -651,31 +846,28 @@ function Gestures({ boxW, boxH }: { boxW: number; boxH: number }) {
     window.setTimeout(() => !fine.current && showBadge(''), 700);
   };
   const doubleTap = (cx: number, cy: number) => {
+    void cx;
+    void cy;
     const members = groupMembers();
     const { boxW: W, boxH: H } = sizes.current;
-    const q = relClient(cx, cy);
-    // where the tap landed (cell 1 to 9 of a 3x3 grid) is the part of the canvas the picture goes to
-    const target = tapCell(q.x + W / 2, q.y + H / 2, W, H);
+    // the whole canvas: fit, fill, and the quarter turns (half and quarter placements come from dragging to a side or corner)
+    const target: Rect = { x: 0, y: 0, w: W, h: H };
     if (members.length > 1) return doubleTapGroup(members, target);
     const st = getState();
     const i = st.selected;
     const clip = st.project.clips[i];
     const media = clip && st.project.media[clip.mediaId];
     if (!clip || !media || media.kind === 'audio') return;
+    if (st.handles) {
+      // edit mode: a double tap gives the cut-off parts back
+      if (clip.crop) updateClip(i, { crop: undefined });
+      say('Crop reset');
+      return;
+    }
     // the box a person sees hugs the letters of a text, so fit and fill use that box, not the whole picture with its margins
     const inset = media.textBox;
     const sc = clip.crop;
     const crop = media.solid !== undefined || !inset ? sc : { l: Math.max(sc?.l ?? 0, inset.l), t: Math.max(sc?.t ?? 0, inset.t), r: Math.max(sc?.r ?? 0, inset.r), b: Math.max(sc?.b ?? 0, inset.b) };
-    if (target.w < W - 0.5 || target.h < H - 0.5) {
-      const base = media.solid === undefined ? media.textBox : undefined;
-      const r = fitSegment(clip.view, crop, base, media.width, media.height, W, H, target);
-      const rc = r.crop;
-      const plain = !rc || (rc.l === (base?.l ?? 0) && rc.t === (base?.t ?? 0) && rc.r === (base?.r ?? 0) && rc.b === (base?.b ?? 0));
-      updateClip(i, { view: r.view, crop: plain ? undefined : rc });
-      showBadge(r.mode);
-      window.setTimeout(() => !fine.current && showBadge(''), 700);
-      return;
-    }
     const v = clampView(snapEightCropped(clip.view, crop, media.width, media.height, W, H), { sw: media.width, sh: media.height, W, H });
     updateClip(i, { view: v });
     const cw = media.width * (1 - (crop?.l ?? 0) - (crop?.r ?? 0));
@@ -703,6 +895,9 @@ function Gestures({ boxW, boxH }: { boxW: number; boxH: number }) {
         <div key={k} class={`guide edge-${k}`} ref={(el) => void (edgeEls.current[k] = el)} />
       ))}
       <div class="rubber" ref={bandEl} />
+      <div class="snap-ghost" ref={ghostEl} />
+      <div class="guide gx" ref={gx} />
+      <div class="guide gy" ref={gy} />
       <div class="gesture-badge num" ref={badge} />
     </div>
   );
@@ -740,6 +935,7 @@ let onBox = 0;
  */
 function TransformBox({ boxW: W, boxH: H }: { boxW: number; boxH: number }) {
   const on = useStore((s) => s.multi.length === 0); // the box is simply there whenever one strip is selected
+  const editing = useStore((s) => s.handles); // select mode: every handle scales; edit mode: the handles crop
   const selected = useStore((s) => s.selected);
   const clip = useStore((s) => s.project.clips[s.selected]);
   const media = useStore((s) => (s.project.clips[s.selected] ? s.project.media[s.project.clips[s.selected]!.mediaId] : undefined));
@@ -758,7 +954,7 @@ function TransformBox({ boxW: W, boxH: H }: { boxW: number; boxH: number }) {
     tick();
     return () => cancelAnimationFrame(raf);
   }, [quiet]);
-  const st = useRef<{ id: number; h: Handle; p0: Pt; view0: View; crop0: Crop; last: Pt; anchor: Pt; fineRaw: Pt; fineEff: Pt; fine: boolean; timer: number; frame: HTMLElement | null } | null>(null);
+  const st = useRef<{ id: number; h: Handle; p0: Pt; view0: View; crop0: Crop; last: Pt; anchor: Pt; fineRaw: Pt; fineEff: Pt; fine: boolean; timer: number; frame: HTMLElement | null; edit: boolean } | null>(null);
 
   const endFine = () => {
     const d = st.current;
@@ -869,7 +1065,7 @@ function TransformBox({ boxW: W, boxH: H }: { boxW: number; boxH: number }) {
     }
     const p0 = frameBox(e);
     const frameEl = (e.currentTarget as HTMLElement).parentElement;
-    const d = { id: e.pointerId, h, p0, view0: clip.view, crop0: crop, last: p0, anchor: p0, fineRaw: p0, fineEff: p0, fine: false, timer: 0, frame: frameEl };
+    const d = { id: e.pointerId, h, p0, view0: clip.view, crop0: crop, last: p0, anchor: p0, fineRaw: p0, fineEff: p0, fine: false, timer: 0, frame: frameEl, edit: editing };
     st.current = d;
     // hold still on a handle and it moves ten times slower, for exact work
     const arm = () => {
@@ -902,6 +1098,22 @@ function TransformBox({ boxW: W, boxH: H }: { boxW: number; boxH: number }) {
     return raw;
   };
 
+  /** the sides (and for a corner, two sides) cut off along the picture's own axes */
+  const cropBy = (h: Handle, c0: Crop, P: Pt, p0: Pt, g: { w0: number; h0: number; co: number; si: number }): Crop => {
+    const dx = P.x - p0.x;
+    const dy = P.y - p0.y;
+    const lx = dx * g.co + dy * g.si;
+    const ly = -dx * g.si + dy * g.co;
+    const c = { ...c0 };
+    const room = 0.95;
+    const lo = (side: keyof Crop) => (stretch ? -3 : inset[side]);
+    if (h.includes('l')) c.l = Math.min(room - c.r, Math.max(lo('l'), c.l + lx / g.w0));
+    if (h.includes('r')) c.r = Math.min(room - c.l, Math.max(lo('r'), c.r - lx / g.w0));
+    if (h.includes('t')) c.t = Math.min(room - c.b, Math.max(lo('t'), c.t + ly / g.h0));
+    if (h.includes('b')) c.b = Math.min(room - c.t, Math.max(lo('b'), c.b - ly / g.h0));
+    return c;
+  };
+
   const solve = (e: PointerEvent): { view: View; crop: Crop } => {
     const d = st.current!;
     const P = point(e);
@@ -921,9 +1133,25 @@ function TransformBox({ boxW: W, boxH: H }: { boxW: number; boxH: number }) {
     const ey1 = h0 / 2 - c0.b * h0;
     const env = { sw: media.width, sh: media.height, W, H };
 
-    if (d.h === 'tl' || d.h === 'tr' || d.h === 'br' || d.h === 'bl') {
+    const isCorner = d.h === 'tl' || d.h === 'tr' || d.h === 'br' || d.h === 'bl';
+    const isSide = d.h === 'l' || d.h === 'r' || d.h === 't' || d.h === 'b';
+    if (d.edit && (isCorner || isSide)) return { view: v0, crop: cropBy(d.h, c0, P, d.p0, { w0, h0, co, si }) };
+    if (isSide) {
+      // select mode: a side scales the whole picture evenly, holding the opposite side in place (like the sides in OBS)
+      const mid = (k: string) => loc(k === 'l' ? ex0 : k === 'r' ? ex1 : (ex0 + ex1) / 2, k === 't' ? ey0 : k === 'b' ? ey1 : (ey0 + ey1) / 2);
+      const A = mid({ l: 'r', r: 'l', t: 'b', b: 't' }[d.h as 'l' | 'r' | 't' | 'b']);
+      const D = mid(d.h);
+      const vx = D.x - A.x;
+      const vy = D.y - A.y;
+      const k = ((P.x - A.x) * vx + (P.y - A.y) * vy) / (vx * vx + vy * vy || 1);
+      const zoom = clampZoom(v0.zoom * Math.max(0.05, k));
+      const f = zoom / v0.zoom;
+      const C = { x: A.x + f * (C0.x - A.x), y: A.y + f * (C0.y - A.y) };
+      return { view: clampView({ ...v0, x: (C.x - W / 2) / W, y: (C.y - H / 2) / H, zoom }, env), crop: c0 };
+    }
+    if (isCorner) {
       const corner = (k: string) => loc(k.includes('l') ? ex0 : ex1, k.includes('t') ? ey0 : ey1);
-      const opp = { tl: 'br', tr: 'bl', br: 'tl', bl: 'tr' }[d.h];
+      const opp = ({ tl: 'br', tr: 'bl', br: 'tl', bl: 'tr' } as Record<string, string>)[d.h]!;
       const A = corner(opp);
       const D = corner(d.h);
       const vx = D.x - A.x;
@@ -948,19 +1176,7 @@ function TransformBox({ boxW: W, boxH: H }: { boxW: number; boxH: number }) {
       const C = { x: Cc.x + vx * Math.cos(dr) - vy * Math.sin(dr), y: Cc.y + vx * Math.sin(dr) + vy * Math.cos(dr) };
       return { view: clampView({ ...v0, x: (C.x - W / 2) / W, y: (C.y - H / 2) / H, rot: normAngle(rot) }, env), crop: c0 };
     }
-    // a side: cut it off along the picture's own axes
-    const dx = P.x - d.p0.x;
-    const dy = P.y - d.p0.y;
-    const lx = dx * co + dy * si;
-    const ly = -dx * si + dy * co;
-    const c = { ...c0 };
-    const room = 0.95;
-    const lo = (side: keyof Crop) => (stretch ? -3 : inset[side]);
-    if (d.h === 'l') c.l = Math.min(room - c.r, Math.max(lo('l'), c.l + lx / w0));
-    if (d.h === 'r') c.r = Math.min(room - c.l, Math.max(lo('r'), c.r - lx / w0));
-    if (d.h === 't') c.t = Math.min(room - c.b, Math.max(lo('t'), c.t + ly / h0));
-    if (d.h === 'b') c.b = Math.min(room - c.t, Math.max(lo('b'), c.b - ly / h0));
-    return { view: v0, crop: c };
+    return { view: v0, crop: c0 };
   };
 
   const move = (e: PointerEvent) => {
@@ -969,7 +1185,8 @@ function TransformBox({ boxW: W, boxH: H }: { boxW: number; boxH: number }) {
     setDrag(r);
     engine.live = { index: selected, view: r.view };
     engine.cropLive = { index: selected, crop: r.crop };
-    engine.ghost = !stretch && st.current.h !== 'rot' && st.current.h.length === 1; // while cutting, the cut-off part shows faintly
+    engine.ghost = !stretch && st.current.edit && st.current.h !== 'rot'; // while cutting, the cut-off part shows faintly
+    if (st.current.h !== 'rot') hold(st.current.edit ? 'Crop' : `Scale ${Math.round(r.view.zoom * 100)}%`);
     engine.draw();
   };
   const up = (e: PointerEvent) => {
@@ -982,6 +1199,7 @@ function TransformBox({ boxW: W, boxH: H }: { boxW: number; boxH: number }) {
     engine.live = null;
     engine.cropLive = null;
     engine.ghost = false;
+    releaseHud();
     if (r.view !== d.view0) updateClip(selected, { view: r.view });
     if (r.crop !== d.crop0) {
       const z = (v: number, i: number) => (!stretch && v <= i + 1e-6 ? 0 : Math.abs(v) < 1e-6 ? 0 : v);
@@ -1000,15 +1218,15 @@ function TransformBox({ boxW: W, boxH: H }: { boxW: number; boxH: number }) {
         <polygon points={poly} />
         <line x1={at(xm, y0).x} y1={at(xm, y0).y} x2={pos.rot.x} y2={pos.rot.y} />
       </svg>
-      {!quiet && handle('t', `side h ${stretch ? 'stretch' : ''}`)}
-      {!quiet && handle('b', `side h ${stretch ? 'stretch' : ''}`)}
-      {!quiet && handle('l', `side v ${stretch ? 'stretch' : ''}`)}
-      {!quiet && handle('r', `side v ${stretch ? 'stretch' : ''}`)}
-      {!quiet && handle('tl', 'corner')}
-      {!quiet && handle('tr', 'corner')}
-      {!quiet && handle('br', 'corner')}
-      {!quiet && handle('bl', 'corner')}
-      {!quiet && handle('rot', 'rotor')}
+      {!quiet && handle('t', `side h ${stretch && editing ? 'stretch' : ''}`)}
+      {!quiet && handle('b', `side h ${stretch && editing ? 'stretch' : ''}`)}
+      {!quiet && handle('l', `side v ${stretch && editing ? 'stretch' : ''}`)}
+      {!quiet && handle('r', `side v ${stretch && editing ? 'stretch' : ''}`)}
+      {!quiet && handle('tl', editing ? 'corner crop' : 'corner')}
+      {!quiet && handle('tr', editing ? 'corner crop' : 'corner')}
+      {!quiet && handle('br', editing ? 'corner crop' : 'corner')}
+      {!quiet && handle('bl', editing ? 'corner crop' : 'corner')}
+      {!quiet && !editing && handle('rot', 'rotor')}
     </>
   );
 }

@@ -7,11 +7,12 @@ import { deleteClip, deselect, duplicateClip, getState, importFiles, redo, resto
 import { CanvasSheet } from './CanvasSheet.tsx';
 import { HelpSheet } from './HelpSheet.tsx';
 import { ExportSheet } from './ExportSheet.tsx';
-import { Copy, Gear, Help, Plus, Redo, Shrink, Trash, Undo } from './icons.tsx';
+import { Camera, Copy, Gear, Help, Plus, Redo, Shrink, Trash, Undo } from './icons.tsx';
 import { FilePicker, PickLabel } from './Picker.tsx';
 import { Preview } from './Preview.tsx';
 import { Drawer, TabBar } from './Drawer.tsx';
 import { SettingsSheet } from './SettingsSheet.tsx';
+import { saveFrame } from '../frame.ts';
 import { Timeline } from './Timeline.tsx';
 import { browserInfo, checkSupport } from '../support.ts';
 
@@ -301,6 +302,9 @@ function FocusBar() {
       </button>
       <button class="tl-btn" disabled={!has} onClick={() => (engine.pause(), duplicateClip(selected))} aria-label="Duplicate the selected clip">
         <Copy />
+      </button>
+      <button class="tl-btn" onClick={() => (engine.pause(), void saveFrame())} aria-label="Save this frame as a picture">
+        <Camera />
       </button>
       <button class="tl-btn exit" onClick={() => (window.dispatchEvent(new CustomEvent('pc-tl-height', { detail: 200 })), set({ focus: false }))} aria-label="Leave full preview">
         <Shrink />
