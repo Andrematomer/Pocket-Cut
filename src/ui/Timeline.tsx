@@ -582,6 +582,15 @@ export function Timeline() {
     if (d.armed && e.type === 'pointerup') return openFocus();
     saveTlH();
   };
+  /** Play deselects everything first; the layout settles for a couple of frames (the timeline would read that as a hand scroll and stop) and then it plays */
+  const startStop = () => {
+    if (getState().playing) return engine.pause();
+    const g = getState();
+    const needs = g.selected >= 0 || g.multi.length > 0 || !!g.gap || !!g.drawer;
+    if (!needs) return void engine.play();
+    deselect();
+    requestAnimationFrame(() => requestAnimationFrame(() => void engine.play()));
+  };
   const gapRow = gap ? lanes.indexOf(gap.track) : -1;
 
   const step = [0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300].find((s) => s * pps >= 56) ?? 300;
@@ -591,7 +600,7 @@ export function Timeline() {
   return (
     <div class={`tl ${move ? 'dragging' : ''}`}>
       <div class="tl-bar" onPointerDown={barDown} onPointerMove={barMove} onPointerUp={barUp} onPointerCancel={barUp}>
-        <button class="play" onClick={() => (playing ? engine.pause() : (deselect(), void engine.play()))} aria-label={playing ? 'Pause' : 'Play'}>
+        <button class="play" onClick={startStop} aria-label={playing ? 'Pause' : 'Play'}>
           {playing ? <Pause /> : <Play />}
         </button>
         <div class="tl-left">

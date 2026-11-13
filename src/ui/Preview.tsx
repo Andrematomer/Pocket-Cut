@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { engine } from '../engine.ts';
 import { baseScale, clampView, fitSegment, shownBox, tapCell, clampZoom, dragView, fitZoom, normAngle, outputSize, pinchView, snapEightCropped, snapView, snapViewCropped, type Pt } from '../geometry.ts';
-import { deselect, getState, selectClip, set, setCrop, setViews, updateClip, useStore } from '../store.ts';
+import { deselect, getState, selectClip, set, setCrop, setMulti, setViews, toggleMulti, updateClip, useStore } from '../store.ts';
 import { localPoint } from '../turn.ts';
 import { activeAt, fmtTime, totalOf } from '../timeline.ts';
 import type { Crop, View } from '../types.ts';
@@ -105,6 +105,7 @@ export function Preview() {
 
 
 const fmtDeg = (d: number) => `${Math.round(d)}°`;
+const MULTI_HOLD_MS = 550; // a still finger on empty canvas or on another picture starts a multi-selection
 const HOLD_MS = 900; // on the preview fine control takes twice as long: it is too easy to trigger by accident here
 const JITTER = 10;
 const FINE = 0.1;
@@ -142,9 +143,10 @@ function Gestures({ boxW, boxH }: { boxW: number; boxH: number }) {
   };
   const fine = useRef(false);
   const tap = useRef<{ t: number; x: number; y: number; moved: boolean; multi: boolean } | null>(null);
-  const lastTap = useRef<{ t: number; x: number; y: number; prev: number } | null>(null);
+  const lastTap = useRef<{ t: number; x: number; y: number; prev: number; prevMulti: string[] } | null>(null);
   const timer = useRef(0);
   const cropTimer = useRef(0);
+  const holdTimer = useRef(0);
   const frame = useRef(0);
   const sizes = useRef({ boxW, boxH });
   sizes.current = { boxW, boxH };
@@ -206,6 +208,7 @@ function Gestures({ boxW, boxH }: { boxW: number; boxH: number }) {
     clearTimeout(timer.current);
     pts.current.clear();
     arm.current.clear();
+    clearTimeout(holdTimer.current);
     base.current = null;
     guides(null);
     setFineLook(false);
@@ -272,10 +275,9 @@ function Gestures({ boxW, boxH }: { boxW: number; boxH: number }) {
     const p = localPoint(r, cx, cy);
     return { x: p.x - sizes.current.boxW / 2, y: p.y - sizes.current.boxH / 2 };
   };
-  /** a tap on the picture selects the top-most strip under the finger (a drag never changes the selection) */
-  const pickAt = (cx: number, cy: number) => {
+  /** the top-most visible strip under a point (client coordinates), or -1 for empty canvas */
+  const hitAt = (cx: number, cy: number): number => {
     const st0 = getState();
-    if (st0.multi.length > 0) return;
     const visible = activeAt(st0.project.clips, st0.playhead);
     const q = relClient(cx, cy);
     const { boxW: W, boxH: H } = sizes.current;
@@ -294,10 +296,31 @@ function Gestures({ boxW, boxH }: { boxW: number; boxH: number }) {
       const ly = -dx * Math.sin(a) + dy * Math.cos(a);
       const pw = m.width * sc;
       const ph = m.height * sc;
-      if (lx >= -pw / 2 + k.l * pw && lx <= pw / 2 - k.r * pw && ly >= -ph / 2 + k.t * ph && ly <= ph / 2 - k.b * ph) {
-        if (i !== st0.selected) selectClip(i, { keepPlayhead: true });
-        return;
-      }
+      if (lx >= -pw / 2 + k.l * pw && lx <= pw / 2 - k.r * pw && ly >= -ph / 2 + k.t * ph && ly <= ph / 2 - k.b * ph) return i;
+    }
+    return -1;
+  };
+  /** a tap on the picture: a strip under the finger is selected (or, in multi-selection, added or taken out); empty canvas selects nothing */
+  const pickAt = (cx: number, cy: number) => {
+    const st0 = getState();
+    const i = hitAt(cx, cy);
+    if (i < 0) return deselect();
+    if (st0.multi.length > 0) return toggleMulti(i);
+    if (i !== st0.selected) selectClip(i, { keepPlayhead: true });
+  };
+  /** a finger held still on empty canvas or on a strip that is not the picked one starts (or grows) a multi-selection */
+  const holdPick = (cx: number, cy: number, selBefore: number) => {
+    const st = getState();
+    const i = hitAt(cx, cy);
+    const idOf = (k: number) => st.project.clips[k]?.id;
+    const ids = new Set(st.multi.length > 0 ? st.multi : selBefore >= 0 && idOf(selBefore) ? [idOf(selBefore)!] : []);
+    if (i >= 0) ids.add(idOf(i)!);
+    if (ids.size === 0) return;
+    setMulti([...ids]);
+    try {
+      navigator.vibrate?.(12);
+    } catch {
+      /* not supported */
     }
   };
   const lastEv = useRef<Event | null>(null);
@@ -325,6 +348,7 @@ function Gestures({ boxW, boxH }: { boxW: number; boxH: number }) {
     if (e.isPrimary && pts.current.size > 0) flush();
     // work on the clip that is on screen (playback may have moved on from the selected one)
     const st0 = getState();
+    const selBefore = st0.selected;
     const visible = activeAt(st0.project.clips, st0.playhead);
     if (!visible.includes(getState().selected)) {
       const shown = engine.currentIndex();
@@ -344,6 +368,23 @@ function Gestures({ boxW, boxH }: { boxW: number; boxH: number }) {
     if (c && !live.current) live.current = c.clip.view;
     rebase();
     startTimer();
+    // holding on the picked picture is fine control (above). Holding on empty canvas or on another picture picks it too
+    clearTimeout(holdTimer.current);
+    if (pts.current.size === 1) {
+      const hit = hitAt(e.clientX, e.clientY);
+      const cs = st0.project.clips;
+      const active = st0.multi.length > 0 ? hit >= 0 && st0.multi.includes(cs[hit]!.id) : hit >= 0 && hit === selBefore;
+      if (!active) {
+        const x = e.clientX;
+        const y = e.clientY;
+        holdTimer.current = window.setTimeout(() => {
+          if (pts.current.size !== 1 || fine.current || tap.current?.moved) return;
+          clearTimeout(timer.current);
+          if (tap.current) tap.current.multi = true; // this touch was a hold, not a tap
+          holdPick(x, y, selBefore);
+        }, MULTI_HOLD_MS);
+      }
+    }
   };
   const move = (e: PointerEvent) => {
     if (lastEv.current === e) return; // the same event reaches the layer and the window
@@ -352,7 +393,7 @@ function Gestures({ boxW, boxH }: { boxW: number; boxH: number }) {
     if (e.pointerType === 'mouse' && e.buttons === 0) return flush(); // button released somewhere we did not see
     pts.current.set(e.pointerId, rel(e));
     const tp = tap.current;
-    if (tp && Math.hypot(e.clientX - tp.x, e.clientY - tp.y) > JITTER) tp.moved = true;
+    if (tp && Math.hypot(e.clientX - tp.x, e.clientY - tp.y) > JITTER) (tp.moved = true), clearTimeout(holdTimer.current);
     const b = base.current;
     const c = current();
     if (!b || !c) return;
@@ -448,12 +489,14 @@ function Gestures({ boxW, boxH }: { boxW: number; boxH: number }) {
         lastTap.current = null;
         clearTimeout(cropTimer.current);
         // a double tap works on what was selected before it: the first touch of the pair must not have switched the selection
-        if (getState().selected !== lt.prev) (lt.prev >= 0 ? selectClip(lt.prev, { keepPlayhead: true }) : deselect());
+        if (lt.prevMulti.length > 0) setMulti(lt.prevMulti);
+        else if (getState().selected !== lt.prev || getState().multi.length > 0) (lt.prev >= 0 ? selectClip(lt.prev, { keepPlayhead: true }) : deselect());
         doubleTap(lt.x, lt.y);
       } else {
         const prev = getState().selected;
+        const prevMulti = getState().multi;
         pickAt(tp.x, tp.y);
-        lastTap.current = { t: tp.t, x: tp.x, y: tp.y, prev };
+        lastTap.current = { t: tp.t, x: tp.x, y: tp.y, prev, prevMulti };
       }
     }
   };
