@@ -19,9 +19,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: main
-          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -29,13 +26,6 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npm run build
-      # an experimental branch, if there is one, is published next to the app at /nla/ (it rides along with every deploy of main, because the github-pages environment only accepts main)
-      - name: Build the nla branch into dist/nla
-        run: |
-          if git ls-remote --exit-code --heads origin nla >/dev/null 2>&1; then
-            git worktree add ../nla-src origin/nla
-            (cd ../nla-src && npm ci && npm test && npx vite build --outDir "$GITHUB_WORKSPACE/dist/nla" --emptyOutDir)
-          fi
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist

@@ -2,7 +2,7 @@ name: Deploy to Firebase Hosting
 
 on:
   push:
-    branches: [nla]
+    branches: [main]
   workflow_dispatch:
 
 concurrency:
