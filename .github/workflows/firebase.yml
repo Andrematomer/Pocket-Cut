@@ -12,6 +12,8 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    env:
+      FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -21,7 +23,8 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npm run build
-      - name: Deploy
+      - name: Deploy (skipped until the FIREBASE_TOKEN secret exists)
+        if: ${{ env.FIREBASE_TOKEN != '' }}
         run: npx --yes firebase-tools@latest deploy --only hosting --project videowren --non-interactive
         env:
           FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
